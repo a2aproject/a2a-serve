@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"context"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func lookupOwnerToken(t *testing.T, creds *credstore.Store, url string) string {
@@ -165,7 +165,7 @@ func TestOwnerTokenOfOriginalKeptWhenRestoredCopyStarts(t *testing.T) {
 	orig := startServer(t, serverOpts{name: "proj", credentials: creds})
 	dir := orig.dir.Root
 	orig.stop()
-	copyDir := shortTempDir(t)
+	copyDir := testutil.ShortTempDir(t)
 	copyAgent(t, dir, copyDir)
 	orig = startServer(t, serverOpts{dir: dir, credentials: creds})
 	origToken := lookupOwnerToken(t, creds, orig.localURL())
@@ -209,15 +209,7 @@ func TestOwnerTokenWorksOnlyOnLocalURL(t *testing.T) {
 
 func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {
 	t.Parallel()
-	d, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("removing %s: %v", d, err)
-		}
-	})
+	d := testutil.ShortTempDir(t)
 	dir, err := agentdir.Open(d)
 	if err != nil {
 		t.Fatal(err)

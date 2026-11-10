@@ -56,6 +56,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // testHTTP has a transport of its own: httptest.Server.Close closes the idle
@@ -121,7 +122,7 @@ var testTimings = Timings{
 }
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "fakeacp")
+	dir, err := testutil.MkdirShortTemp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -216,7 +217,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		o.name = "coder"
 	}
 	if o.dir == "" {
-		o.dir = shortTempDir(t)
+		o.dir = testutil.ShortTempDir(t)
 	}
 	dir, err := agentdir.Open(o.dir)
 	if err != nil {
@@ -278,24 +279,6 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 }
 
-// leftFiles lists the files under dir, which a writer that outlived the
-// server left there.
-// shortTempDir returns a temp dir for an agent, removed when the test ends.
-// Unix socket paths are short, so the agent lives in a short temp dir.
-func shortTempDir(t *testing.T) string {
-	t.Helper()
-	d, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
-		}
-	})
-	return d
-}
-
 // copyAgent copies the agent directory src to dst with the modes of its
 // files, as a restore or a move does.
 func copyAgent(t *testing.T, src, dst string) {
@@ -327,17 +310,6 @@ func copyAgent(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatalf("copying %s to %s: %v", src, dst, err)
 	}
-}
-
-func leftFiles(dir string) []string {
-	var left []string
-	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
-		left = append(left, path)
-		return err
-	}); err != nil {
-		left = append(left, err.Error())
-	}
-	return left
 }
 
 // Agents keep their port across restarts. Ports are picked below the

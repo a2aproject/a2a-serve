@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // binDir holds a2a, a2a-serve, fakeacp and, for the harness tests, mcpecho;
@@ -70,7 +71,7 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "a2a-e2e-bin-")
+	dir, err := testutil.MkdirShortTemp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e:", err)
 		return 1

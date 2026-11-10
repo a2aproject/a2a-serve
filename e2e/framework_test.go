@@ -30,9 +30,10 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
-	"github.com/google/go-cmp/cmp"
 )
 
 const cmdTimeout = time.Minute
@@ -50,15 +51,7 @@ func newUser(t *testing.T) *user {
 	if _, marked := sandboxTests.Load(topName(t)); sandbox == "docker" && !marked {
 		t.Skip("doesn't depend on the sandbox; mark it with dependsOnSandbox to run it with E2E_SANDBOX=docker")
 	}
-	home, err := os.MkdirTemp("", "a2a-e2e-home-")
-	if err != nil {
-		t.Fatalf("os.MkdirTemp() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(home); err != nil {
-			t.Errorf("os.RemoveAll(%q) error = %v", home, err)
-		}
-	})
+	home := testutil.ShortTempDir(t)
 	runtimeDir := filepath.Join(home, "run")
 	if err := os.Mkdir(runtimeDir, 0o700); err != nil {
 		t.Fatalf("os.Mkdir() error = %v", err)

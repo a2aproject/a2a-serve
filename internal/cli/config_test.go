@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func newTestAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
@@ -278,15 +279,7 @@ func TestSecretReader(t *testing.T) {
 // TestConfigRunningAgent runs serially, like TestServerPairAndSend.
 func TestConfigRunningAgent(t *testing.T) {
 	fake := buildFakeACP(t)
-	dir, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("removing %s: %v", dir, err)
-		}
-	})
+	dir := testutil.ShortTempDir(t)
 	d, err := agentdir.Open(dir)
 	if err != nil {
 		t.Fatal(err)
