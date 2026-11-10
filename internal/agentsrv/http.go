@@ -113,12 +113,13 @@ func (s *Server) routes(l listener) http.Handler {
 		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) }, unauthenticated.Handler)
 	}
 	if l.kind == network.ListenerPrivate {
-		s.registerGossip(mux)
+		s.registerGossip(mux, unauthenticated.Handler)
 	}
 	if l.inspector {
 		s.inspector.Register(mux)
 	}
-	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
+	members := func(h http.Handler) http.Handler { return s.roleRequests[l.kind].Handler(auth.RoleMember, h) }
+	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) }, members)
 	bodies := newGuestBodies(maxGuestBodies, jsonhttp.ReadIdleTimeout)
 	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, bodies, jsonrpc))
 	mux.Handle("/", s.a2aRoute(l.kind, protocolREST, bodies, rest))
@@ -159,9 +160,17 @@ func (s *Server) listenerURL(kind string) string {
 	return ""
 }
 
+// newRoleShares returns the shares of one listener's requests for members
+// and guests. The owner has no share, so the others leave it room.
+func newRoleShares() *httpserver.Shares {
+	return httpserver.NewShares(map[string]int{auth.RoleMember: httpserver.MaxMemberRequests, auth.RoleGuest: httpserver.MaxGuestRequests})
+}
+
 // authenticate resolves the principal of a request with the auth chain: 401
 // for a caller without a credential, and 403 naming a known caller whom
-// the policy refuses.
+// the policy refuses. The request then holds one of its role's share of
+// the listener's requests until it ends, and gets 503 when the share is in
+// use.
 func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.chain.Authenticate(r.Context(), auth.Request{Listener: kind, RemoteAddr: r.RemoteAddr, Header: r.Header})
@@ -195,6 +204,13 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			// An agent calls through its server, at a URL only that server knows.
 			agentURL = "<agent URL>"
 		}
+		release, ok := s.roleRequests[kind].Acquire(p.Role)
+		if !ok {
+			httpserver.SetBusy(w.Header())
+			proto.writeError(w, http.StatusServiceUnavailable, a2a.ErrInternalError, httpserver.BusyMessage)
+			return
+		}
+		defer release()
 		ctx := context.WithValue(auth.WithPrincipal(r.Context(), p), agentURLKey{}, agentURL)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

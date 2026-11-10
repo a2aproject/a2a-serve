@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -109,6 +110,90 @@ func TestKeyedLimiter(t *testing.T) {
 	}
 	if after.Code != http.StatusOK {
 		t.Fatalf("KeyedLimiter.Handler() request after the key's request ended status = %d, want %d", after.Code, http.StatusOK)
+	}
+}
+
+func TestSharesHandler(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	shares := NewShares(map[string]int{"member": 1})
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/block" {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	serve := func(path, class string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		shares.Handler(class, ok).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+	blocked := make(chan int)
+	go func() { blocked <- serve("/block", "member").Code }()
+	<-entered
+
+	over := serve("/", "member")
+	uncapped := serve("/", "owner")
+	close(release)
+	if code := <-blocked; code != http.StatusOK {
+		t.Fatalf("Shares.Handler() blocking request status = %d, want %d", code, http.StatusOK)
+	}
+	after := serve("/", "member")
+
+	if over.Code != http.StatusServiceUnavailable || over.Header().Get("Retry-After") != "1" || over.Header().Get("Connection") != "close" {
+		t.Fatalf("Shares.Handler() request over the share = %d with headers %v, want %d with Retry-After 1 and Connection close", over.Code, over.Header(), http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(over.Body.String(), BusyMessage) {
+		t.Fatalf("Shares.Handler() request over the share body = %s, want it to contain %q", over.Body, BusyMessage)
+	}
+	if uncapped.Code != http.StatusOK {
+		t.Fatalf("Shares.Handler() request of a class without a share status = %d, want %d", uncapped.Code, http.StatusOK)
+	}
+	if after.Code != http.StatusOK {
+		t.Fatalf("Shares.Handler() request after the share was given back status = %d, want %d", after.Code, http.StatusOK)
+	}
+}
+
+func TestSharesLeaveTheOwnerRequests(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	var held sync.WaitGroup
+	shares := NewShares(map[string]int{"unauthenticated": MaxUnauthenticated, "member": MaxMemberRequests, "guest": MaxGuestRequests})
+	h := LimitConcurrency(MaxConcurrent, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		shares.Handler(r.Header.Get("X-Class"), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/block" {
+				held.Done()
+				<-release
+			}
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, r)
+	}))
+	serve := func(path, class string) int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("X-Class", class)
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	var done sync.WaitGroup
+	for class, n := range map[string]int{"unauthenticated": MaxUnauthenticated, "member": MaxMemberRequests, "guest": MaxGuestRequests} {
+		held.Add(n)
+		for range n {
+			done.Go(func() { serve("/block", class) })
+		}
+	}
+	held.Wait()
+	defer done.Wait()
+	defer close(release)
+
+	for _, class := range []string{"unauthenticated", "member", "guest"} {
+		if got := serve("/", class); got != http.StatusServiceUnavailable {
+			t.Fatalf("request of %s over its share status = %d, want %d", class, got, http.StatusServiceUnavailable)
+		}
+	}
+	if got := serve("/", "owner"); got != http.StatusOK {
+		t.Fatalf("request of the owner while the other shares are in use status = %d, want %d", got, http.StatusOK)
 	}
 }
 

@@ -37,6 +37,17 @@ const (
 	MaxUnauthenticated = 256
 	// MaxUnauthenticatedPerClient is how many of those one client may make.
 	MaxUnauthenticatedPerClient = 32
+	// MaxMemberRequests is how many of a server's requests the callers of
+	// the member role may make together once they authenticate.
+	MaxMemberRequests = 512
+	// MaxGuestRequests is how many the callers of the guest role may make.
+	// With the unauthenticated requests, members and guests leave the
+	// owner at least 128 of MaxConcurrent, and guests can't take the
+	// requests of members.
+	MaxGuestRequests = 128
+
+	// BusyMessage is the error of a request refused for lack of room.
+	BusyMessage = "the server is busy; try again later"
 
 	readHeaderTimeout = 30 * time.Second
 	idleTimeout       = 2 * time.Minute
@@ -75,7 +86,7 @@ func LimitConcurrency(n int, next http.Handler) http.Handler {
 		case slots <- struct{}{}:
 		default:
 			w.Header().Set("Retry-After", "1")
-			jsonhttp.Error(w, http.StatusServiceUnavailable, "the server is busy; try again later")
+			jsonhttp.Error(w, http.StatusServiceUnavailable, BusyMessage)
 			return
 		}
 		defer func() { <-slots }()
@@ -108,14 +119,11 @@ func (l *KeyedLimiter) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := l.key(r)
 		if code := l.acquire(key); code != 0 {
-			msg := "the server is busy; try again later"
+			msg := BusyMessage
 			if code == http.StatusTooManyRequests {
 				msg = "too many requests at once from this client; try again later"
 			}
-			w.Header().Set("Retry-After", "1")
-			// Closing spares the server from draining a body the caller
-			// may never finish, which no deadline bounds yet.
-			w.Header().Set("Connection", "close")
+			SetBusy(w.Header())
 			jsonhttp.Error(w, code, msg)
 			return
 		}
@@ -146,6 +154,63 @@ func (l *KeyedLimiter) release(key string) {
 	if l.keys[key]--; l.keys[key] == 0 {
 		delete(l.keys, key)
 	}
+}
+
+// SetBusy sets the headers of a request refused for lack of room: try
+// again in a second, on a new connection. Closing spares the server from
+// draining a body the caller may never finish.
+func SetBusy(h http.Header) {
+	h.Set("Retry-After", "1")
+	h.Set("Connection", "close")
+}
+
+// Shares limits the requests in progress of each class of callers, such as
+// a role. Classes without a share are left to the limit of the server.
+type Shares struct {
+	caps map[string]int
+
+	mu    sync.Mutex
+	inUse map[string]int
+}
+
+// NewShares returns shares of caps requests at once for each class.
+func NewShares(caps map[string]int) *Shares {
+	return &Shares{caps: caps, inUse: map[string]int{}}
+}
+
+// Acquire takes a request of class's share and returns the function that
+// gives it back, or false when the share is in use.
+func (s *Shares) Acquire(class string) (release func(), ok bool) {
+	limit, capped := s.caps[class]
+	if !capped {
+		return func() {}, true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inUse[class] >= limit {
+		return nil, false
+	}
+	s.inUse[class]++
+	return sync.OnceFunc(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.inUse[class]--
+	}), true
+}
+
+// Handler serves next within the share of class, and answers requests over
+// it with 503.
+func (s *Shares) Handler(class string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		release, ok := s.Acquire(class)
+		if !ok {
+			SetBusy(w.Header())
+			jsonhttp.Error(w, http.StatusServiceUnavailable, BusyMessage)
+			return
+		}
+		defer release()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // PublicCORS lets pages of any origin read the public resource that next

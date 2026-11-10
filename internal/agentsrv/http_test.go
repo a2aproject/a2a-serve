@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
@@ -373,6 +375,14 @@ func TestPairBodyLimit(t *testing.T) {
 // only the start of its body, and keeps it open until the test ends.
 func stallPair(t *testing.T, u string) net.Conn {
 	t.Helper()
+	return stallPost(t, u, "/pair", nil)
+}
+
+// stallPost starts a JSON POST of path with header on a new connection to
+// u that sends only the start of its body, and keeps it open until the
+// test ends.
+func stallPost(t *testing.T, u, path string, header http.Header) net.Conn {
+	t.Helper()
 	parsed, err := url.Parse(u)
 	if err != nil {
 		t.Fatal(err)
@@ -386,7 +396,11 @@ func stallPair(t *testing.T, u string) net.Conn {
 			t.Errorf("closing the connection: %v", err)
 		}
 	})
-	req := fmt.Sprintf("POST /pair HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{", parsed.Host)
+	var lines strings.Builder
+	if err := header.Write(&lines); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n%s\r\n{", path, parsed.Host, lines.String())
 	if _, err := io.WriteString(conn, req); err != nil {
 		t.Fatal(err)
 	}
@@ -397,20 +411,35 @@ func stallPair(t *testing.T, u string) net.Conn {
 // conn, or 0 when none comes within wait.
 func stalledStatus(t *testing.T, conn net.Conn, wait time.Duration) int {
 	t.Helper()
+	resp, _ := stalledResponse(t, conn, wait)
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
+}
+
+// stalledResponse returns the response to a stalled request on conn and its
+// body, or nil when none comes within wait.
+func stalledResponse(t *testing.T, conn net.Conn, wait time.Duration) (*http.Response, string) {
+	t.Helper()
 	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if errors.Is(err, os.ErrDeadlineExceeded) {
-		return 0
+		return nil, ""
 	}
 	if err != nil {
 		t.Fatalf("reading the response to a stalled request: %v", err)
 	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the response body to a stalled request: %v", err)
+	}
 	if err := resp.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode
+	return resp, string(body)
 }
 
 func TestUnauthenticatedClientLimit(t *testing.T) {
@@ -441,6 +470,60 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	}
 	if owner != http.StatusOK {
 		t.Fatalf("POST / of the owner while the client's pairing requests stall status = %d, want %d", owner, http.StatusOK)
+	}
+}
+
+func TestMembersAndGuestsLeaveRequestsToTheOwner(t *testing.T) {
+	t.Parallel()
+	ts := startPublicServer(t, nil)
+	jsonType := http.Header{"Content-Type": {"application/json"}}
+	owner := http.Header{"Authorization": {"Bearer " + ts.pair("me", auth.RoleOwner)}}
+	member := http.Header{"Authorization": {"Bearer " + ts.pair("bob", auth.RoleMember)}}
+	tests := []struct {
+		name    string
+		url     string
+		caller  http.Header
+		held    int
+		through map[string]http.Header
+	}{
+		{name: "members", url: ts.localURL(), caller: member, held: httpserver.MaxMemberRequests, through: map[string]http.Header{"owner": owner}},
+		{name: "guests", url: ts.publicURL(), caller: http.Header{}, held: httpserver.MaxGuestRequests, through: map[string]http.Header{"owner": owner, "member": member}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for range tc.held {
+				stallPost(t, tc.url, "/", tc.caller)
+			}
+			// Until all stalled requests reach the server, more may get in too.
+			var refused *http.Response
+			var body string
+			for deadline := time.Now().Add(time.Minute); refused == nil && time.Now().Before(deadline); {
+				refused, body = stalledResponse(t, stallPost(t, tc.url, "/", tc.caller), time.Second)
+			}
+
+			if refused == nil || refused.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("POST / over the stalled requests of %s = %v, want status %d", tc.name, refused, http.StatusServiceUnavailable)
+			}
+			if got := refused.Header.Get("Retry-After"); got != "1" {
+				t.Fatalf("POST / over the stalled requests of %s Retry-After = %q, want %q", tc.name, got, "1")
+			}
+			var got rpcErrorResponse
+			if err := json.Unmarshal([]byte(body), &got); err != nil {
+				t.Fatalf("POST / over the stalled requests of %s body = %s, want JSON: %v", tc.name, body, err)
+			}
+			want := rpcError{Code: -32603, Message: httpserver.BusyMessage}
+			if diff := cmp.Diff(want, got.Error, cmpopts.IgnoreFields(rpcError{}, "Data")); diff != "" {
+				t.Fatalf("POST / over the stalled requests of %s wrong error (-want +got) diff = %s", tc.name, diff)
+			}
+			for who, caller := range tc.through {
+				header := caller.Clone()
+				maps.Copy(header, jsonType)
+				if got := statusOf(t, http.MethodPost, tc.url+"/", listTasksRPC, header); got != http.StatusOK {
+					t.Fatalf("POST / of the %s while the requests of %s stall status = %d, want %d", who, tc.name, got, http.StatusOK)
+				}
+			}
+		})
 	}
 }
 
