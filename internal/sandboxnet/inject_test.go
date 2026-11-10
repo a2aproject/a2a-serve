@@ -48,7 +48,7 @@ type seen struct {
 // injectUpstream serves TLS for injectHost with a certificate that roots
 // trust, and answers each request with what it saw. It answers /upload
 // before it reads the request body.
-func injectUpstream(t *testing.T) (port uint16, roots *x509.CertPool) {
+func injectUpstream(t *testing.T, configure ...func(*http.Server)) (port uint16, roots *x509.CertPool) {
 	t.Helper()
 	ca, err := NewCA([]string{injectHost})
 	if err != nil {
@@ -93,6 +93,9 @@ func injectUpstream(t *testing.T) (port uint16, roots *x509.CertPool) {
 	}))
 	srv.EnableHTTP2 = true
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{*cert}}
+	for _, c := range configure {
+		c(srv.Config)
+	}
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	ap, err := net.ResolveTCPAddr("tcp", srv.Listener.Addr().String())
@@ -313,6 +316,72 @@ func TestBoundaryForwardsAnAnswerThatComesBeforeTheBody(t *testing.T) {
 	if got.Path != "/upload" {
 		t.Fatalf("upstream got the path %q, want %q", got.Path, "/upload")
 	}
+}
+
+func TestBoundaryKeepsTheConnectionAfterAnAnswerThatComesBeforeTheBody(t *testing.T) {
+	t.Parallel()
+	// The host answers without reading the body and opens a window of the
+	// initial size only, so the boundary forwards a part of the body and
+	// leaves the rest unread when the answer ends.
+	port, roots := injectUpstream(t, func(s *http.Server) {
+		s.HTTP2 = &http.HTTP2Config{MaxReceiveBufferPerStream: 64<<10 - 1}
+	})
+	inj := Injection{Host: injectHost, Port: port, Header: "Authorization", Value: "Bearer real"}
+	_, client := injectBoundary(t, inj, roots, &logRecords{}, false)
+	tr := client.Transport.(*http.Transport)
+	authority := net.JoinHostPort(injectHost, strconv.Itoa(int(port)))
+	raw, err := tr.DialContext(t.Context(), "tcp", authority)
+	if err != nil {
+		t.Fatalf("dialing the tunnel error = %v", err)
+	}
+	conn := tls.Client(raw, &tls.Config{RootCAs: tr.TLSClientConfig.RootCAs, ServerName: injectHost, NextProtos: []string{"http/1.1"}})
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection error = %v", err)
+		}
+	})
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	request := func(body string) string {
+		return "POST /repos/x HTTP/1.1\r\nHost: " + authority + "\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+	}
+	written := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(conn, request(strings.Repeat(" ", 200<<10)))
+		written <- err
+	}()
+	if status, err := readAnswer(br); err != nil || status != http.StatusOK {
+		t.Fatalf("first answer status = %d, error = %v, want 200", status, err)
+	}
+	if err := <-written; err != nil {
+		t.Fatalf("writing the first request error = %v", err)
+	}
+
+	if _, err := io.WriteString(conn, request("{}")); err != nil {
+		t.Fatalf("writing the second request error = %v", err)
+	}
+	status, err := readAnswer(br)
+
+	if err != nil {
+		t.Fatalf("reading the second answer on the kept connection error = %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("second answer status = %d, want 200", status)
+	}
+}
+
+// readAnswer reads an answer to a POST and its body from br.
+func readAnswer(br *bufio.Reader) (int, error) {
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodPost})
+	if err != nil {
+		return 0, err
+	}
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return 0, err
+	}
+	return resp.StatusCode, resp.Body.Close()
 }
 
 // lateReader returns its first part at once, and each next part and its
