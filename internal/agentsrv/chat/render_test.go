@@ -339,14 +339,15 @@ func TestRendererRepliesWithTranscriptAndSendsVoiceReply(t *testing.T) {
 	}
 	var got []string
 	for _, m := range ch.Transcript() {
-		line := m.Text
+		var line strings.Builder
+		line.WriteString(m.Text)
 		for _, f := range m.Files {
-			line += fmt.Sprintf("[%s %s voice=%v]", f.Name, f.MediaType, f.Voice)
+			fmt.Fprintf(&line, "[%s %s voice=%v]", f.Name, f.MediaType, f.Voice)
 		}
 		if m.ReplyTo != voiceNote {
-			line += " (not a reply)"
+			line.WriteString(" (not a reply)")
 		}
-		got = append(got, line)
+		got = append(got, line.String())
 	}
 	want := []string{`🎤 "what changed?"`, "I gave each case its own buffer.", "[reply.ogg audio/ogg voice=true]"}
 	if diff := cmp.Diff(want, got); diff != "" {
