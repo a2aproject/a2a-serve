@@ -363,6 +363,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			if failSetup == "agent" {
 				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
 			}
+			if _, setup := errors.AsType[*EgressSetupError](perr); perr != nil && !setup {
+				return nil, errors.Join(fmt.Errorf("checking the egress setup of the agent's container: %w", perr), closeFn(), dr.Stop(ctx))
+			}
 			if perr != nil {
 				decision = probeFailed(spec.egressConfig(), perr)
 				dr.Egress, fallback = nil, nil
