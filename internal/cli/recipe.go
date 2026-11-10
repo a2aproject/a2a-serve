@@ -250,7 +250,7 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	if err != nil {
 		return err
 	}
-	if err := r.printReview(name, fetched, rec, preview, displayPath(target)); err != nil {
+	if err := r.printReview(name, fetched, rec, agentdir.Dir{Root: target}, preview); err != nil {
 		return err
 	}
 	if r.dryRun {
@@ -266,7 +266,7 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 			return wizard.ErrCanceled
 		}
 	}
-	off, err := r.ask(rec, preview)
+	off, err := r.ask(d, target, rec, preview)
 	if err != nil {
 		return err
 	}
@@ -364,14 +364,16 @@ func (r *recipeRun) preview(d agentdir.Dir, rec *recipe.Recipe, base *agentdir.C
 	return cfg, nil
 }
 
-func (r *recipeRun) printReview(name string, f *recipe.Fetched, rec *recipe.Recipe, cfg *agentdir.Config, workspace string) error {
+// printReview prints what the agent of rec will run in the agent directory
+// target.
+func (r *recipeRun) printReview(name string, f *recipe.Fetched, rec *recipe.Recipe, target agentdir.Dir, cfg *agentdir.Config) error {
 	var sb strings.Builder
 	from := r.src.Describe()
 	if f.Commit != "" {
 		from = f.Source.Describe() + " (" + shortCommit(f.Commit) + ")"
 	}
 	fmt.Fprintf(&sb, "%s from %s will run:\n", name, from)
-	for _, line := range recipe.Review(rec, cfg, workspace) {
+	for _, line := range recipe.Review(rec, target, cfg, displayPath(target.Root)) {
 		label := line.Label
 		for _, item := range line.Items {
 			text := item.Text
@@ -395,8 +397,9 @@ func (r *recipeRun) printReview(name string, f *recipe.Fetched, rec *recipe.Reci
 
 // ask gets the values the agent needs: the secrets of the recipe's config,
 // a model API key, and the variables of the MCP servers it uses. It
-// returns the MCP servers left off.
-func (r *recipeRun) ask(rec *recipe.Recipe, cfg *agentdir.Config) (off []string, err error) {
+// returns the MCP servers left off. The agent is in d, which moves to
+// target.
+func (r *recipeRun) ask(d agentdir.Dir, target string, rec *recipe.Recipe, cfg *agentdir.Config) (off []string, err error) {
 	var missing []string
 	serverMissing := false
 	need := func(v recipe.Var, required bool) (bool, error) {
@@ -440,7 +443,7 @@ func (r *recipeRun) ask(rec *recipe.Recipe, cfg *agentdir.Config) (off []string,
 		}
 		optional := rec.Manifest.Optional(srv.Name)
 		vars := rec.ServerVars(srv, func(name string) bool { return r.provided(cfg, name) })
-		use, err := r.useServer(rec, cfg, srv.Name, optional, vars)
+		use, err := r.useServer(d, target, rec, cfg, srv.Name, optional, vars)
 		if err != nil {
 			return nil, err
 		}
@@ -471,11 +474,14 @@ func (r *recipeRun) ask(rec *recipe.Recipe, cfg *agentdir.Config) (off []string,
 // useServer asks whether to use an optional MCP server new to the agent.
 // Without asking, one is used when its variables have values. One whose
 // tied mounts have no source stays off.
-func (r *recipeRun) useServer(rec *recipe.Recipe, cfg *agentdir.Config, name string, optional bool, vars []recipe.Var) (bool, error) {
+func (r *recipeRun) useServer(d agentdir.Dir, target string, rec *recipe.Recipe, cfg *agentdir.Config, name string, optional bool, vars []recipe.Var) (bool, error) {
 	if !optional || slices.Contains(r.known, name) {
 		return true, nil
 	}
-	if missing := rec.MissingMounts(cfg, name); len(missing) > 0 {
+	if missing := rec.MissingMounts(d, cfg, name); len(missing) > 0 {
+		for i, p := range missing {
+			missing[i] = movedPath(p, d.Root, target)
+		}
 		return false, r.printf("  %s stays off: it needs %s, which doesn't exist\n", name, strings.Join(missing, ", "))
 	}
 	if r.prompter == nil {
@@ -525,6 +531,15 @@ func moveDir(stage, target string) error {
 		return err
 	}
 	return os.Rename(stage, target)
+}
+
+// movedPath returns where p is once the directory from moves to to.
+func movedPath(p, from, to string) string {
+	rel, err := filepath.Rel(from, p)
+	if err != nil || !filepath.IsLocal(rel) {
+		return p
+	}
+	return filepath.Join(to, rel)
 }
 
 // displayPath writes p relative to the current directory when it is inside

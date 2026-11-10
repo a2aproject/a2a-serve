@@ -40,6 +40,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **With `--sandbox local`, secrets and storage rules don't confine the agent.** Local mode runs the agent on the host as the user, and the docs say so. At most the output needs to say that a rule doesn't apply there.
 - **A member can send `X-A2A-Serve-Hops` and `X-A2A-Serve-Caller` and pose as a calling agent with several people behind it** (from #407, at `d6b2c44`: `internal/auth/auth.go:295-298`). Each invented caller gets an agent process and a home, so one member can hold most of the member processes and a lot of disk. Members are trusted callers, and the limit of 8 unfinished tasks per pairing and of 32 caller homes per pairing bounds it.
 - **Many callers with private workspace copies can fill the disk** (from #355). Sizing the shared directory and the disk is the owner's job. The copy cap and its error are enough.
+- **A recipe's relative mount source can leave the recipe, such as `../../.ssh`** (from #457). A recipe can already mount any absolute or `~` path. The review shows the host path the agent mounts and marks read-write mounts, and the user confirms it.
 
 ### Correctness
 

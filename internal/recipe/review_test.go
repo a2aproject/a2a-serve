@@ -40,6 +40,13 @@ func loadTestRecipe(t *testing.T, config string, extra map[string]string) *Recip
 	return r
 }
 
+// testAgentDir returns the directory of an agent, which isn't the current
+// directory.
+func testAgentDir(t *testing.T) agentdir.Dir {
+	t.Helper()
+	return agentdir.Dir{Root: filepath.Join(t.TempDir(), "agents", "o11y")}
+}
+
 func TestReview(t *testing.T) {
 	t.Parallel()
 	r := loadTestRecipe(t, testConfig+"port: 8123\nnetwork:\n  private: tailscale\n", map[string]string{
@@ -55,7 +62,7 @@ func TestReview(t *testing.T) {
 	cfg.Limits.Memory = "8g"
 	cfg.MCP.Disabled = []string{"grafana"}
 
-	got := Review(r, cfg, "./o11y")
+	got := Review(r, testAgentDir(t), cfg, "./o11y")
 
 	want := []Line{
 		{Label: "agent", Items: []Item{{Text: "opencode"}}},
@@ -146,7 +153,7 @@ func TestReviewWarnings(t *testing.T) {
 			cfg := r.NewConfig("o11y")
 			tc.edit(cfg)
 
-			for _, line := range Review(r, cfg, "./o11y") {
+			for _, line := range Review(r, testAgentDir(t), cfg, "./o11y") {
 				if line.Label != tc.label {
 					continue
 				}
@@ -157,6 +164,66 @@ func TestReviewWarnings(t *testing.T) {
 			}
 			t.Fatalf("Review() has no %s line", tc.label)
 		})
+	}
+}
+
+func TestReviewRelativeMounts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mount   string
+		wantSrc func(d agentdir.Dir) string
+		wantDst string
+	}{
+		{
+			name:    "in the agent directory",
+			mount:   "data:/data:ro",
+			wantSrc: func(d agentdir.Dir) string { return filepath.Join(d.Root, "data") },
+			wantDst: "/data",
+		},
+		{
+			name:    "next to the agent directory",
+			mount:   "../shared:/shared:ro",
+			wantSrc: func(d agentdir.Dir) string { return filepath.Join(filepath.Dir(d.Root), "shared") },
+			wantDst: "/shared",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := loadTestRecipe(t, testConfig, nil)
+			cfg := r.NewConfig("o11y")
+			cfg.Mounts = []string{tc.mount}
+			d := testAgentDir(t)
+
+			for _, line := range Review(r, d, cfg, "./o11y") {
+				if line.Label != "mounts" {
+					continue
+				}
+				want := []Item{{Text: homeRel(tc.wantSrc(d)) + " → " + tc.wantDst + ", read-only"}}
+				if diff := cmp.Diff(want, line.Items); diff != "" {
+					t.Fatalf("Review() wrong mounts line (-want +got) diff = %s", diff)
+				}
+				return
+			}
+			t.Fatal("Review() has no mounts line")
+		})
+	}
+}
+
+func TestMissingMountsRelative(t *testing.T) {
+	t.Parallel()
+	r := loadTestRecipe(t, testConfig, nil)
+	cfg := r.NewConfig("o11y")
+	cfg.Mounts = []string{"kube:/kube:ro"}
+	d := testAgentDir(t)
+
+	if diff := cmp.Diff([]string{filepath.Join(d.Root, "kube")}, r.MissingMounts(d, cfg, "kubernetes")); diff != "" {
+		t.Fatalf("Recipe.MissingMounts() without the source wrong result (-want +got) diff = %s", diff)
+	}
+	writeFile(t, d.Root, "kube/config", "config")
+	if got := r.MissingMounts(d, cfg, "kubernetes"); len(got) != 0 {
+		t.Fatalf("Recipe.MissingMounts() with the source = %v, want none", got)
 	}
 }
 
@@ -177,10 +244,10 @@ func TestRecipePlan(t *testing.T) {
 	if got := r.ServerVars(grafana, func(name string) bool { return name == "GRAFANA_URL" }); len(got) != 1 || got[0].Name != "GRAFANA_TOKEN" {
 		t.Fatalf("Recipe.ServerVars() with GRAFANA_URL provided = %v, want GRAFANA_TOKEN", got)
 	}
-	if got := r.MissingMounts(cfg, "kubernetes"); len(got) != 1 {
+	if got := r.MissingMounts(testAgentDir(t), cfg, "kubernetes"); len(got) != 1 {
 		t.Fatalf("Recipe.MissingMounts(kubernetes) = %v, want the missing source", got)
 	}
-	if got := r.MissingMounts(cfg, "grafana"); len(got) != 0 {
+	if got := r.MissingMounts(testAgentDir(t), cfg, "grafana"); len(got) != 0 {
 		t.Fatalf("Recipe.MissingMounts(grafana) = %v, want none", got)
 	}
 	cfg.Mounts = append(cfg.Mounts, "/srv/data:/data")
@@ -266,7 +333,7 @@ func TestReviewAgentConfigThroughLinks(t *testing.T) {
 			cfg := r.NewConfig("o11y")
 			cfg.Sandbox = agentdir.SandboxLocal
 			var got []Item
-			for _, line := range Review(r, cfg, "./o11y") {
+			for _, line := range Review(r, testAgentDir(t), cfg, "./o11y") {
 				if line.Label == "agent config" {
 					got = line.Items
 				}
