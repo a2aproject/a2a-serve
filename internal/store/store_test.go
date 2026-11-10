@@ -1785,6 +1785,51 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestPruneForgetsCallTasksOfPrunedTasksInLiveContext(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	s.SetTaskTTL(24 * time.Hour)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	pruned := newTask("pruned", "chat")
+	pruned.Status.State = a2a.TaskStateCompleted
+	if _, err := ts.Create(owner, pruned); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	now = start.Add(2 * time.Hour)
+	recent := newTask("recent", "chat")
+	recent.Status.State = a2a.TaskStateCompleted
+	if _, err := ts.Create(owner, recent); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, c := range []CallTask{
+		{ContextID: "chat", Agent: "anna", TaskID: "t1", RemoteContextID: "r1", OriginTaskID: "pruned"},
+		{ContextID: "chat", Agent: "anna", TaskID: "t2", RemoteContextID: "r1", OriginTaskID: "recent"},
+		{ContextID: "chat", Agent: "anna", TaskID: "t3", RemoteContextID: "r1"},
+	} {
+		if err := s.PutCallTask(ctx, c); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+
+	now = start.Add(25 * time.Hour)
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	got, err := s.CallTasks(ctx, "chat", "anna", "")
+	if err != nil {
+		t.Fatalf("CallTasks() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"t3", "t2"}, got); diff != "" {
+		t.Fatalf("CallTasks() after Prune wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestPruneKeepsPairingOfTakenCode(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

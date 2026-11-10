@@ -186,6 +186,32 @@ func TestEntriesExpireWithoutRefresh(t *testing.T) {
 	}
 }
 
+func TestWithdrawnEntryIsForgottenAfterTTL(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	ben := openTable(t, "ben", c)
+	if err := ben.Advertise("grok", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ben.Withdraw("grok"); err != nil {
+		t.Fatal(err)
+	}
+
+	for elapsed := time.Duration(0); elapsed <= 2*TTL; elapsed += Refresh {
+		c.t = c.t.Add(Refresh)
+		if err := ben.Renew(); err != nil {
+			t.Fatal(err)
+		}
+		if err := ben.Expire(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, ok := ben.Digest()["grok@ben"]; ok {
+		t.Fatalf("Digest() after twice the TTL = %v, want grok@ben forgotten", ben.Digest())
+	}
+}
+
 func TestMergeRefuses(t *testing.T) {
 	t.Parallel()
 	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}

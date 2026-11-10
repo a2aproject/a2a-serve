@@ -249,24 +249,47 @@ func TestSchedulesDueRunReplacesARefusedRun(t *testing.T) {
 
 func TestSchedulesStopRetryingWhenTheUserLosesAccess(t *testing.T) {
 	t.Parallel()
-	fx := newSchedulesFixture(t)
-	if _, err := fx.store.EnsurePairing(fx.ctx, store.Pairing{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
-		t.Fatalf("store.EnsurePairing() error = %v", err)
-	}
 	due := time.Now().Add(-time.Minute).Truncate(time.Second)
-	fx.addScheduleAs(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due}, "pair:anna")
-	fx.sc.RunDue(fx.ctx)
-	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
-
-	if err := fx.store.DeletePairing(fx.ctx, "anna"); err != nil {
-		t.Fatalf("store.DeletePairing() error = %v", err)
+	tests := []struct {
+		name         string
+		sched        store.Schedule
+		refuseFirst  bool
+		wantNextZero bool
+	}{
+		{name: "recurring", sched: store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due}, refuseFirst: true},
+		{name: "one-time", sched: store.Schedule{Name: "once", At: due, NextRun: due}, wantNextZero: true},
 	}
-	fx.sc.RunDue(fx.ctx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newSchedulesFixture(t)
+			if _, err := fx.store.EnsurePairing(fx.ctx, store.Pairing{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
+				t.Fatalf("store.EnsurePairing() error = %v", err)
+			}
+			fx.addScheduleAs(t, tt.sched, "pair:anna")
+			wantTurns := 0
+			if tt.refuseFirst {
+				fx.sc.RunDue(fx.ctx)
+				fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+				wantTurns = 1
+			}
 
-	if got := len(fx.turns.turns()); got != 1 {
-		t.Fatalf("turns posted after the user lost access = %d, want 1", got)
-	}
-	if got := fx.schedule(t, "hourly").LastError; !strings.Contains(got, "can no longer call this agent") {
-		t.Fatalf("Schedule().LastError = %q, want that the user lost access", got)
+			if err := fx.store.DeletePairing(fx.ctx, "anna"); err != nil {
+				t.Fatalf("store.DeletePairing() error = %v", err)
+			}
+			fx.sc.RunDue(fx.ctx)
+			fx.sc.RunDue(fx.ctx)
+
+			if got := len(fx.turns.turns()); got != wantTurns {
+				t.Fatalf("turns posted after the user lost access = %d, want %d", got, wantTurns)
+			}
+			got := fx.schedule(t, tt.sched.Name)
+			if !strings.Contains(got.LastError, "can no longer call this agent") {
+				t.Fatalf("Schedule().LastError = %q, want that the user lost access", got.LastError)
+			}
+			if tt.wantNextZero && !got.NextRun.IsZero() {
+				t.Fatalf("Schedule().NextRun = %v, want none", got.NextRun)
+			}
+		})
 	}
 }

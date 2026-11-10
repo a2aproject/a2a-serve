@@ -288,14 +288,15 @@ func (t *Table) Advertised(name string) bool {
 	return ok
 }
 
-// Renew advertises again the entries of this agent older than Refresh.
+// Renew advertises again the entries of this agent older than Refresh. A
+// withdrawn entry isn't renewed, so that it expires.
 func (t *Table) Renew() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	changed := false
 	now := t.now()
 	for k, e := range t.entries {
-		if e.Host != t.self || now.Sub(time.Unix(0, e.Version)) < Refresh {
+		if e.Host != t.self || e.Removed || now.Sub(time.Unix(0, e.Version)) < Refresh {
 			continue
 		}
 		e.Version, e.Expires = t.version(k), now.Add(TTL)
