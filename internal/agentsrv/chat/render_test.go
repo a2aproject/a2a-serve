@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 )
 
 func TestRendererSplitsStreamToMessengerLimit(t *testing.T) {
@@ -311,5 +312,42 @@ func TestRendererRetriesQuestion(t *testing.T) {
 	got := ch.Transcript()
 	if len(got) != 1 || got[0].Question == nil {
 		t.Fatalf("renderer.onStatus() sent %+v, want the question once", got)
+	}
+}
+
+func TestRendererRepliesWithTranscriptAndSendsVoiceReply(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ch := messengertest.NewMessenger("fake")
+	a := &ChatApprovals{config: func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }, timings: Timings{SendRetry: time.Millisecond}}
+	voiceNote := messenger.Ref{Conv: "conv", ID: "7"}
+	rd := newRenderer(a, ch, "conv", voiceNote, auth.Principal{})
+	task := &a2a.Task{ID: "t1", ContextID: "c1"}
+	transcript := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(`🎤 "what changed?"`))
+	transcript.Metadata = map[string]any{speech.TranscriptKey: "what changed?"}
+	voice := a2a.NewRawPart([]byte("OggS"))
+	voice.Filename, voice.MediaType = "reply.ogg", "audio/ogg"
+	for _, ev := range []a2a.Event{
+		a2a.NewStatusUpdateEvent(task, a2a.TaskStateWorking, transcript),
+		a2a.NewArtifactEvent(task, a2a.NewTextPart("I gave each case its own buffer.")),
+		a2a.NewArtifactEvent(task, voice),
+		a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil),
+	} {
+		rd.onEvent(ctx, ev)
+	}
+	var got []string
+	for _, m := range ch.Transcript() {
+		line := m.Text
+		for _, f := range m.Files {
+			line += "[" + f.Name + " " + f.MediaType + "]"
+		}
+		if m.ReplyTo != voiceNote {
+			line += " (not a reply)"
+		}
+		got = append(got, line)
+	}
+	want := []string{`🎤 "what changed?"`, "I gave each case its own buffer.", "[reply.ogg audio/ogg]"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("renderer sent wrong messages (-want +got) diff = %s", diff)
 	}
 }

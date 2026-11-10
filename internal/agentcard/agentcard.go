@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 )
 
 // Listener is the listener a card is served on.
@@ -59,6 +60,10 @@ func Build(cfg *agentdir.Config, l Listener) *a2a.AgentCard {
 		DefaultInputModes:  []string{"text/plain", "application/octet-stream"},
 		DefaultOutputModes: []string{"text/plain", "application/json"},
 		Skills:             skills(cfg),
+	}
+	if cfg.Voice.On() {
+		card.DefaultInputModes = append(card.DefaultInputModes, speech.InputModes...)
+		card.DefaultOutputModes = append(card.DefaultOutputModes, speech.OutputModes...)
 	}
 	if !NeedsPairing(cfg.Policy, l.Kind) {
 		return card

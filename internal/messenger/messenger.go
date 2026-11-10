@@ -237,6 +237,14 @@ type Outbound struct {
 	Literal bool
 }
 
+// Command is a chat command that messengers with a command menu list.
+type Command struct {
+	Name        string
+	Description string
+	// Choices are the values its argument takes, if it takes one.
+	Choices []string
+}
+
 // Question is a decision offered with buttons.
 type Question struct {
 	ID      string

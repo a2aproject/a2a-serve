@@ -37,6 +37,8 @@ type Options struct {
 	// SaveSecret, if set, stores a secret that a messenger replaced, such as
 	// a rotated OAuth refresh token.
 	SaveSecret func(name, value string) error
+	// Commands are the chat commands the messengers list in their menus.
+	Commands []messenger.Command
 }
 
 // All creates the messengers of the config.
@@ -76,7 +78,7 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 		if err != nil {
 			return nil, fmt.Errorf("telegram: %w", err)
 		}
-		ch := telegram.New(tok)
+		ch := telegram.New(tok, opts.Commands)
 		if opts.TelegramURL != "" {
 			ch.ServerURL = opts.TelegramURL
 		}
@@ -89,7 +91,7 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 		if err != nil {
 			return nil, fmt.Errorf("discord: %w", err)
 		}
-		return discord.New(tok, opts.KV), nil
+		return discord.New(tok, opts.KV, opts.Commands), nil
 	case agentdir.MessengerEmail:
 		ec := cfg.Messengers.Email
 		if ec == nil {

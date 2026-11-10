@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/configured"
 )
@@ -30,5 +31,5 @@ func (s *Server) buildMessenger(cfg *agentdir.Config, secrets agentdir.Secrets, 
 }
 
 func (s *Server) messengerOptions() configured.Options {
-	return configured.Options{KV: s.store.MessengerState(), TelegramURL: s.telegramServerURL, SaveSecret: s.rt.ReplaceSecret}
+	return configured.Options{KV: s.store.MessengerState(), TelegramURL: s.telegramServerURL, SaveSecret: s.rt.ReplaceSecret, Commands: chat.Commands()}
 }

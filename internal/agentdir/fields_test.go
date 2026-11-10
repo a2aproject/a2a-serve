@@ -337,6 +337,8 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 	}
 	// The inject flags take rules, and also store the secrets they name.
 	ruleValues := map[string]string{InjectHeaderSetting: "h.example=X-Token: $V", InjectModelKeySetting: "openrouter=V"}
+	// --voice takes a service name or a URL.
+	scalarValues := map[string]string{"voice": "openai"}
 	for _, fl := range (&Settings{}).Flags(all) {
 		t.Run(fl.Name, func(t *testing.T) {
 			t.Parallel()
@@ -346,6 +348,9 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 			switch v := flags[slices.IndexFunc(flags, func(f Flag) bool { return f.Name == fl.Name })].Value.(type) {
 			case *string:
 				*v = "V"
+				if sv, ok := scalarValues[fl.Name]; ok {
+					*v = sv
+				}
 			case *int:
 				*v = 7
 			case *[]string:

@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -252,6 +253,7 @@ func (c *Config) Validate() error {
 		add("--google-client-id needs --allow-email: people sign in with your Google app only when the agent allows their email")
 	}
 	errs = append(errs, c.Backup.validate()...)
+	errs = append(errs, c.Voice.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -333,6 +335,22 @@ func (b BackupConfig) validate() []error {
 		if _, err := ParseDays(b.Retention); err != nil {
 			errs = append(errs, &FieldError{Flag: "backup-retention", Entry: b.Retention, Reason: reasonOf(err)})
 		}
+	}
+	return errs
+}
+
+func (v VoiceConfig) validate() []error {
+	var errs []error
+	if v.Service != "" {
+		if err := speech.ParseService(v.Service); err != nil {
+			errs = append(errs, &FieldError{Flag: "voice", Entry: v.Service, Reason: err.Error()})
+		}
+	}
+	if v.Service == speech.OpenAI && v.Key == "" {
+		errs = append(errs, errors.New("--voice openai needs --voice-key, such as --voice-key env:OPENAI_API_KEY"))
+	}
+	if v.Service == "" && v.Key != "" {
+		errs = append(errs, errors.New("--voice-key needs --voice"))
 	}
 	return errs
 }

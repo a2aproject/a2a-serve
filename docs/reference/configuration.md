@@ -178,6 +178,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--backup-key` | `backup.key` | `config set` |
 | `--backup-interval` | `backup.interval` | `config set` |
 | `--backup-retention` | `backup.retention` | `config set` |
+| `--voice` | `voice.service` | `config set` |
+| `--voice-key` | `voice.key` | `config set` |
 | `--task-ttl` | `taskTTL` | `config set` |
 | `--contact-refresh` | `contactRefresh` | `config set` |
 <!-- /generated:settings -->

@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -304,6 +305,12 @@ func toolEntries(values []string) []string {
 		}
 	}
 	return out
+}
+
+// parseVoice checks the speech service of --voice.
+func parseVoice(_ Dir, v string) (string, error) {
+	v = strings.TrimSpace(v)
+	return v, speech.ParseService(v)
 }
 
 // parseNetwork reads "none" as no provider.
@@ -665,6 +672,18 @@ var fields = []field{
 		access: str(func(c *Config) *string { return &c.Backup.Retention }, func(s *Settings) *string { return &s.BackupRetention }),
 		flag:   "backup-retention", path: "backup.retention", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
 		usage: "How long snapshots are kept, a `duration` in hours or days such as 48h or 7d; the latest is always kept (default 7d)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Voice.Service }, func(s *Settings) *string { return &s.Voice }),
+		flag:   "voice", path: "voice.service", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: parseVoice,
+		usage:  "Speech `service` that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1",
+		values: speech.Services,
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Voice.Key }, func(s *Settings) *string { return &s.VoiceKey }),
+		flag:   "voice-key", path: "voice.key", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		secret: SecretVoiceKey,
+		usage:  "API key of the --voice service, which the agent doesn't get",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.TaskTTL }, func(s *Settings) *string { return &s.TaskTTL }),

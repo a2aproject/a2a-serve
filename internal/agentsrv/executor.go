@@ -641,6 +641,9 @@ type observedExecutor struct {
 	stopping context.Context
 	// answers saves what answers to permission questions allow.
 	answers *ruleAnswers
+	// voice transcribes recordings and speaks replies; nil without a
+	// speech service.
+	voice *voiceTurns
 }
 
 var (
@@ -785,10 +788,19 @@ func (e *observedExecutor) serverOptions(execCtx *a2asrv.ExecutorContext, ev a2a
 	return ev
 }
 
-// turn runs a turn of the agent, with the line of the agents it may call
-// and the earlier messages of a moved conversation added to the prompt and
-// kept out of the task store.
+// turn runs a turn of the agent, with its recordings as text and its reply
+// spoken when voice is set up.
 func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	if e.voice == nil {
+		return e.agentTurn(ctx, execCtx)
+	}
+	return e.voice.turn(ctx, execCtx, e.agentTurn)
+}
+
+// agentTurn runs a turn of the agent, with the line of the agents it may
+// call and the earlier messages of a moved conversation added to the prompt
+// and kept out of the task store.
+func (e *observedExecutor) agentTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	ctx, withLine := e.claims.withAgentsLine(ctx, execCtx)
 	if execCtx.Message != nil {
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
@@ -988,6 +1000,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	msg, ok := req.Payload.(*a2a.SendMessageRequest)
 	if !ok || msg.Message == nil {
 		return ctx, nil, nil
+	}
+	if msg.Config != nil {
+		ctx = withAcceptedModes(ctx, msg.Config.AcceptedOutputModes)
 	}
 	if err := i.checkConversation(ctx, p, msg.Message.ContextID); err != nil {
 		return ctx, nil, err

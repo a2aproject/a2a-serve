@@ -85,7 +85,23 @@ type Config struct {
 	Auth   AuthConfig   `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup BackupConfig `yaml:"backup,omitempty" json:"backup,omitzero"`
 	MCP    MCPConfig    `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+	Voice  VoiceConfig  `yaml:"voice,omitempty" json:"voice,omitzero"`
 }
+
+// VoiceConfig is the speech service that transcribes voice notes and speaks
+// replies.
+type VoiceConfig struct {
+	// Service is openai, or the URL of a server with the OpenAI audio API.
+	// Empty turns voice off.
+	Service string `yaml:"service,omitempty" json:"service,omitempty"`
+	// Key references the API key of the service, which the agent doesn't
+	// get.
+	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+}
+
+// On reports whether voice is set up, which adds the audio modes to the
+// agent card and has the server transcribe and speak.
+func (v VoiceConfig) On() bool { return v.Service != "" }
 
 // EgressConfig decides where the Docker sandbox may connect.
 type EgressConfig struct {

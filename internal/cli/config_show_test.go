@@ -60,6 +60,7 @@ func fullConfig() *agentdir.Config {
 		Auth:      agentdir.AuthConfig{GoogleClientID: "google-id-x", GoogleClientSecret: "secret:google-client"},
 		Backup:    agentdir.BackupConfig{To: "/backups-x", Key: "secret:backup-key", Interval: "10m", Retention: "3d"},
 		MCP:       agentdir.MCPConfig{Disabled: []string{"github-x"}},
+		Voice:     agentdir.VoiceConfig{Service: "http://speech-x.example.com/v1", Key: "secret:voice-key"},
 		Egress:    agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas-x.lan"}},
 		Inject:    []agentdir.InjectRule{{Host: "api-x.example", Header: "X-Token-X: $API_KEY"}, {Model: "openrouter", Key: "API_KEY"}},
 	}

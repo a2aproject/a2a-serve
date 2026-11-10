@@ -330,6 +330,11 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		_, err := tx.ExecContext(ctx, `CREATE TABLE server_keys (name TEXT PRIMARY KEY, key BLOB NOT NULL)`)
 		return err
 	},
+	// 25: the people who turned voice replies on with /voice.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TABLE voice_replies (user_id TEXT PRIMARY KEY, created INTEGER NOT NULL)`)
+		return err
+	},
 }
 
 const schemaV21 = `

@@ -59,6 +59,8 @@ const (
 type Messenger struct {
 	token string
 	kv    messenger.KV
+	// commands are registered as slash commands besides /join.
+	commands []messenger.Command
 
 	connMu sync.Mutex
 	s      *discordgo.Session
@@ -101,14 +103,14 @@ var (
 var noMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}}
 
 // New returns a messenger for the bot with token. kv keeps the last message
-// seen per conversation.
-func New(token string, kv messenger.KV) *Messenger {
-	return newMessenger(token, kv, time.Second)
+// seen per conversation, and commands are its slash commands besides /join.
+func New(token string, kv messenger.KV, commands []messenger.Command) *Messenger {
+	return newMessenger(token, kv, commands, time.Second)
 }
 
-func newMessenger(token string, kv messenger.KV, catchUpRetry time.Duration) *Messenger {
+func newMessenger(token string, kv messenger.KV, commands []messenger.Command, catchUpRetry time.Duration) *Messenger {
 	return &Messenger{
-		token: token, kv: kv, queue: newOrderedQueue(),
+		token: token, kv: kv, commands: commands, queue: newOrderedQueue(),
 		threadRetry: 500 * time.Millisecond, catchUpRetry: catchUpRetry,
 		catching: map[string]uint64{},
 	}
@@ -250,21 +252,35 @@ func (c *Messenger) ready(api readyAPI, st *discordgo.State, appID string) {
 		id := c.beginCatchUp(conv)
 		c.queue.do(conv, func() { c.runCatchUp(api, st, conv, last, id, c.catchUpRetry) })
 	}
-	go registerCommands(api, appID)
+	go registerCommands(api, appID, c.commands)
 }
 
-func registerCommands(api readyAPI, appID string) {
-	cmds := []*discordgo.ApplicationCommand{
+func registerCommands(api readyAPI, appID string, commands []messenger.Command) {
+	if _, err := api.ApplicationCommandBulkOverwrite(appID, "", slashCommands(commands)); err != nil {
+		slog.Warn("discord: registering commands", "error", err)
+	}
+}
+
+// slashCommands are /join, which links a Discord account with a pairing
+// code, and commands, a command with choices taking one as its option.
+func slashCommands(commands []messenger.Command) []*discordgo.ApplicationCommand {
+	out := []*discordgo.ApplicationCommand{
 		{Name: "join", Description: "Join with a pairing code from the agent's owner", Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionString, Name: "code", Description: "The pairing code", Required: true},
 		}},
-		{Name: "new", Description: "Start a new conversation"},
-		{Name: "stop", Description: "Stop the current task"},
-		{Name: "allowed", Description: "Show and remove what runs without asking for you"},
 	}
-	if _, err := api.ApplicationCommandBulkOverwrite(appID, "", cmds); err != nil {
-		slog.Warn("discord: registering commands", "error", err)
+	for _, cmd := range commands {
+		ac := &discordgo.ApplicationCommand{Name: cmd.Name, Description: cmd.Description}
+		if len(cmd.Choices) > 0 {
+			opt := &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "choice", Description: "One of: " + strings.Join(cmd.Choices, ", ")}
+			for _, c := range cmd.Choices {
+				opt.Choices = append(opt.Choices, &discordgo.ApplicationCommandOptionChoice{Name: c, Value: c})
+			}
+			ac.Options = []*discordgo.ApplicationCommandOption{opt}
+		}
+		out = append(out, ac)
 	}
+	return out
 }
 
 func lastKey(conv string) string { return "discord:last:" + conv }
@@ -710,8 +726,11 @@ func (c *Messenger) onInteraction(s *discordgo.Session, i *discordgo.Interaction
 	case discordgo.InteractionApplicationCommand:
 		data := i.ApplicationCommandData()
 		in.Text = "/" + data.Name
-		if data.Name == "join" && len(data.Options) > 0 {
+		switch {
+		case data.Name == "join" && len(data.Options) > 0:
 			in.Text = "join " + data.Options[0].StringValue()
+		case len(data.Options) > 0:
+			in.Text += " " + data.Options[0].StringValue()
 		}
 		go respond(s, i, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,

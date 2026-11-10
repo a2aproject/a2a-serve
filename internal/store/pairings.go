@@ -136,9 +136,9 @@ func removedTasksOf(users []PairingUser) (string, []any) {
 
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
 // its webhook node and the node's watches. users are the users the pairing
-// acts as. Their schedules, watches, questions and allowed tool calls go
-// with it, and so do their tasks and every task of the conversations that
-// run in their agent processes. The messenger conversations, agent sessions
+// acts as. Their schedules, watches, questions, allowed tool calls and
+// voice replies go with it, and so do their tasks and every task of the
+// conversations that run in their agent processes. The messenger conversations, agent sessions
 // and handles of the contexts left without tasks go too, so a new pairing
 // with the same name starts with none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, users ...PairingUser) error {
@@ -156,6 +156,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, users ...Pairing
 				`DELETE FROM tool_taps WHERE user_id = ?`,
 				`DELETE FROM tool_suggestions WHERE user_id = ?`,
 				`DELETE FROM user_identities WHERE user_id = ?`,
+				`DELETE FROM voice_replies WHERE user_id = ?`,
 			} {
 				if _, err := tx.ExecContext(ctx, del, u.Principal); err != nil {
 					return err

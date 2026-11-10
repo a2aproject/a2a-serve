@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 )
 
 // renderer shows one task in a conversation. Messengers which stream get one
@@ -157,6 +158,14 @@ func (rd *renderer) onStatus(ctx context.Context, st a2a.TaskStatus) bool {
 	case a2a.TaskStateSubmitted:
 		return false
 	case a2a.TaskStateWorking:
+		if transcript, ok := transcriptOf(st.Message); ok {
+			// A reply to the voice note, which stays in the chat after the
+			// result replaces the progress. Mail gets only the result.
+			if rd.caps.Stream && transcript != "" {
+				rd.send(ctx, a2atext.Parts(st.Message.Parts))
+			}
+			return false
+		}
 		if st.Message != nil {
 			if text := a2atext.Parts(st.Message.Parts); text != "" {
 				rd.mu.Lock()
@@ -181,10 +190,24 @@ func (rd *renderer) onStatus(ctx context.Context, st a2a.TaskStatus) bool {
 	return false
 }
 
+// transcriptOf returns the transcript of a status message that shows what
+// a recording said.
+func transcriptOf(msg *a2a.Message) (string, bool) {
+	if msg == nil {
+		return "", false
+	}
+	t, ok := msg.Metadata[speech.TranscriptKey].(string)
+	return t, ok
+}
+
 func (rd *renderer) text() string {
 	var sb strings.Builder
-	for i, a := range rd.artifacts {
-		if i > 0 && sb.Len() > 0 {
+	for _, a := range rd.artifacts {
+		// Artifacts of files only, such as a voice reply, add no text.
+		if a.text.Len() == 0 {
+			continue
+		}
+		if sb.Len() > 0 {
 			sb.WriteString("\n\n")
 		}
 		sb.WriteString(a.text.String())
