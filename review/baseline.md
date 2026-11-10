@@ -36,6 +36,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Defaults give trusted callers broad access** (from #355). Pairings and private-network members get what the owner's agent gets unless a rule narrows it. Only guests start narrowed. Ease of setup outweighs least privilege for callers the owner chose.
 - **Values passed with `--secret` are readable inside the sandbox.** The docs say so, and #16 tracks keeping model keys on the server.
 - **With `--sandbox local`, secrets and storage rules don't confine the agent.** Local mode runs the agent on the host as the user, and the docs say so. At most the output needs to say that a rule doesn't apply there.
+- **A member can send `X-A2A-Serve-Hops` and `X-A2A-Serve-Caller` and pose as a calling agent with several people behind it** (from #407, at `d6b2c44`: `internal/auth/auth.go:295-298`). Each invented caller gets an agent process and a home, so one member can hold most of the member processes and a lot of disk. Members are trusted callers, and the limit of 8 unfinished tasks per pairing and of 32 caller homes per pairing bounds it.
 - **Many callers with private workspace copies can fill the disk** (from #355). Sizing the shared directory and the disk is the owner's job. The copy cap and its error are enough.
 
 ### Correctness

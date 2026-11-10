@@ -61,8 +61,18 @@ command -v docker >/dev/null || die "docker is not on PATH"
 command -v go >/dev/null || die "go is not on PATH"
 command -v jq >/dev/null || die "jq is not on PATH"
 
-mkdir -p "$ROOT/bin" "$ROOT/lanes"
+mkdir -p "$ROOT/bin" "$ROOT/lanes" "$ROOT/tmp"
 chmod 700 "$ROOT"
+
+# Servers and lanes open the default browser, for example in
+# `a2a-serve inspect`. The browser outlives the run and keeps its directory
+# in use, so the run gets an xdg-open that only prints the URL.
+cat > "$ROOT/bin/xdg-open" <<'EOF'
+#!/bin/sh
+echo "xdg-open: the simulation doesn't open a browser for $*" >&2
+exit 1
+EOF
+chmod +x "$ROOT/bin/xdg-open"
 
 if [[ "$REF" == checkout ]]; then
   SRC="$REPO_ROOT"
@@ -104,6 +114,9 @@ export HOME="\$SIM_LANE/users/\$_user"
 mkdir -p "\$HOME"
 export XDG_CONFIG_HOME="\$HOME/.config" XDG_DATA_HOME="\$HOME/.local/share" XDG_STATE_HOME="\$HOME/.local/state" XDG_CACHE_HOME="\$HOME/.cache"
 export PATH="$ROOT/bin:\$PATH"
+# A killed server leaves its temporary files behind, some with the model key,
+# so they go in the run directory, which cleanup.sh --delete removes.
+export TMPDIR="$ROOT/tmp"
 ${DOCKER_ENDPOINT:+export DOCKER_HOST="$DOCKER_ENDPOINT"}
 export SIM_AGENT="$SIM_AGENT" SIM_MODEL="$SIM_MODEL" SIM_SECRET="$SIM_SECRET"
 export $SIM_SECRET="\$(cat "$ROOT/secret")"
