@@ -214,6 +214,12 @@ func (b *Boundary) forward(w http.ResponseWriter, r *http.Request, inj Injection
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	// An HTTP/1.1 server closes the rest of the request body once the
+	// answer starts, which aborts the upstream request that still sends
+	// it and cuts its answer off. HTTP/2 is always full duplex.
+	if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		b.log.write(slog.LevelWarn, "egress request may be cut off", "destination", target, "error", err)
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxInjectBody)
 	proxy.ServeHTTP(w, r.WithContext(ctx))
 }

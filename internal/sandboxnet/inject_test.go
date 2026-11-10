@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -45,7 +46,8 @@ type seen struct {
 }
 
 // injectUpstream serves TLS for injectHost with a certificate that roots
-// trust, and answers each request with what it saw.
+// trust, and answers each request with what it saw. It answers /upload
+// before it reads the request body.
 func injectUpstream(t *testing.T) (port uint16, roots *x509.CertPool) {
 	t.Helper()
 	ca, err := NewCA([]string{injectHost})
@@ -59,12 +61,24 @@ func injectUpstream(t *testing.T) (port uint16, roots *x509.CertPool) {
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/stream" {
 			w.WriteHeader(http.StatusOK)
+			// The flush can report the stream closed after it sent the
+			// headers, when the boundary closes right then; the client then
+			// has its answer.
 			if err := http.NewResponseController(w).Flush(); err != nil {
-				t.Errorf("flushing the headers error = %v", err)
 				return
 			}
 			<-r.Context().Done()
 			return
+		}
+		if r.URL.Path == "/upload" {
+			w.WriteHeader(http.StatusOK)
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				t.Errorf("flushing the headers error = %v", err)
+				return
+			}
+			if _, err := io.ReadAll(r.Body); err != nil {
+				return
+			}
 		}
 		got := seen{Proto: r.Proto, Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Host: r.Host, Headers: map[string]string{}}
 		for _, h := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "X-Other"} {
@@ -274,6 +288,52 @@ func TestBoundaryInjectsModelKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBoundaryForwardsAnAnswerThatComesBeforeTheBody(t *testing.T) {
+	t.Parallel()
+	port, roots := injectUpstream(t)
+	inj := Injection{Host: injectHost, Port: port, Header: "Authorization", Value: "Bearer real"}
+	_, client := injectBoundary(t, inj, roots, &logRecords{}, false)
+	url := "https://" + net.JoinHostPort(injectHost, strconv.Itoa(int(port))) + "/upload"
+
+	resp, err := client.Post(url, "application/json", &lateReader{parts: []string{"{", " ", " ", "}"}, delay: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Client.Post() error = %v", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Errorf("closing the body error = %v", err)
+		}
+	}()
+	var got seen
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding the answer error = %v", err)
+	}
+	if got.Path != "/upload" {
+		t.Fatalf("upstream got the path %q, want %q", got.Path, "/upload")
+	}
+}
+
+// lateReader returns its first part at once, and each next part and its
+// end after delay.
+type lateReader struct {
+	parts []string
+	delay time.Duration
+	read  bool
+}
+
+func (r *lateReader) Read(p []byte) (int, error) {
+	if r.read {
+		time.Sleep(r.delay)
+	}
+	r.read = true
+	if len(r.parts) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.parts[0])
+	r.parts = r.parts[1:]
+	return n, nil
 }
 
 func TestBoundaryInjectRefusesOtherNames(t *testing.T) {
