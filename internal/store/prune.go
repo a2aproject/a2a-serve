@@ -34,7 +34,8 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // task TTL, with their events, snapshots, questions and attachments;
 // questions of remote agents as old whose task nobody watches; the messenger
 // conversations, agent sessions, handles, call tasks, grants and suggestions
-// of contexts left without tasks; the counts of taps on "Always allow" older
+// of contexts left without tasks; the call tasks of deleted tasks in the
+// contexts that remain; the counts of taps on "Always allow" older
 // than their retention; and the dedup keys of messages older than the
 // retention.
 func (s *Store) Prune(ctx context.Context) error {
@@ -69,6 +70,10 @@ func (s *Store) Prune(ctx context.Context) error {
 			return err
 		}
 		if err := forgetTasks(ctx, tx, pruned); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM call_tasks WHERE origin_task_id != ''
+			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = call_tasks.context_id AND tasks.id = call_tasks.origin_task_id)`); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND created < ?

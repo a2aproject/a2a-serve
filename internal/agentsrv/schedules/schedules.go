@@ -185,7 +185,7 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 
 // runOnce starts the run of a one-time schedule, which stays due until the
 // agent accepts its turn. A run that fails stays due, so that the next
-// check retries it.
+// check retries it, unless its user can no longer call the agent.
 func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
 	sc.setPending(s.Name, true)
 	err := sc.start(ctx, s, false, func(err error) {
@@ -196,9 +196,16 @@ func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) 
 		}
 		sc.finish(context.WithoutCancel(sc.ctx), s.Name)
 	})
-	if err != nil {
-		sc.setPending(s.Name, false)
-		sc.record(ctx, s.Name, now, err)
+	if err == nil {
+		return
+	}
+	sc.setPending(s.Name, false)
+	sc.record(ctx, s.Name, now, err)
+	if !errors.Is(err, errNoAccess) {
+		return
+	}
+	if err := sc.store.SetScheduleNextRun(ctx, s.Name, time.Time{}); err != nil {
+		slog.Error("clearing the run of a schedule whose user lost access", "schedule", s.Name, "error", err)
 	}
 }
 
