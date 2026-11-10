@@ -263,8 +263,9 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 	return ctx, nil, nil
 }
 
-// Register adds the node routes to a listener's mux.
-func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request) string) {
+// Register adds the node routes to a listener's mux. members bounds the
+// requests to the mailbox API, which nodes make as members.
+func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request) string, members func(http.Handler) http.Handler) {
 	serveNode := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("node")
 		rest := "/" + r.PathValue("rest")
@@ -288,10 +289,10 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	node := jsonhttp.RequireJSON(jsonhttp.LimitBody(http.HandlerFunc(serveNode)))
 	mux.Handle("/n/{node}", node)
 	mux.Handle("/n/{node}/{rest...}", node)
-	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))
-	mux.Handle("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", jsonhttp.RequireJSON(n.nodeAPI(base, n.handleEvent)))
-	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
-	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
+	mux.Handle("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, members, n.handleGetNode))
+	mux.Handle("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", jsonhttp.RequireJSON(jsonhttp.LimitBody(n.nodeAPI(base, members, n.handleEvent))))
+	mux.Handle("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, members, n.handleGetTask))
+	mux.Handle("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, members, n.handleInbox))
 }
 
 // serveCard serves the card of a node. The card of an advertised node is
@@ -368,8 +369,9 @@ func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	}
 }
 
-// nodeAPI authenticates a node by its node token.
-func (n *Host) nodeAPI(base func(*http.Request) string, h func(http.ResponseWriter, *http.Request, string, store.Node)) http.HandlerFunc {
+// nodeAPI authenticates a node by its node token, and serves h within
+// members.
+func (n *Host) nodeAPI(base func(*http.Request) string, members func(http.Handler) http.Handler, h func(http.ResponseWriter, *http.Request, string, store.Node)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok, _ := auth.BearerToken(r.Header.Get("Authorization"))
 		if _, _, ok := mailboxapi.ParseNodeToken(tok); !ok {
@@ -385,7 +387,7 @@ func (n *Host) nodeAPI(base func(*http.Request) string, h func(http.ResponseWrit
 			jsonhttp.Error(w, http.StatusUnauthorized, "invalid node token")
 			return
 		}
-		h(w, r, base(r), node)
+		members(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h(w, r, base(r), node) })).ServeHTTP(w, r)
 	}
 }
 

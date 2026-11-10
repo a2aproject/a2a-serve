@@ -129,6 +129,10 @@ type Server struct {
 	chain   *auth.Chain
 	bus     *chat.Bus
 
+	// roleRequests are the shares of each listener kind's requests that
+	// authenticated members and guests may hold.
+	roleRequests map[string]*httpserver.Shares
+
 	private  network.Provider
 	public   network.Provider
 	newRelay func(network.RelayConfig) (network.Provider, error)
@@ -427,6 +431,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
+	s.roleRequests = map[string]*httpserver.Shares{}
+	for _, kind := range []string{network.ListenerLocal, network.ListenerPrivate, network.ListenerPublic} {
+		s.roleRequests[kind] = newRoleShares()
+	}
 	s.sandboxes = newSandboxes(s.rt.Config, s.store)
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {

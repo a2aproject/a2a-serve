@@ -68,16 +68,17 @@ type gossipEntries struct {
 // private network reach it; an advertisement only names a pairing, and a
 // call to it goes to the host found on the private network. The
 // entries a caller sends of its own host replace the ones others relayed.
-func (s *Server) registerGossip(mux *http.ServeMux) {
-	mux.Handle("POST "+gossipPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// limit bounds the requests, which come before authentication.
+func (s *Server) registerGossip(mux *http.ServeMux, limit func(http.Handler) http.Handler) {
+	mux.Handle("POST "+gossipPath, limit(jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req gossipRequest
 		if !jsonhttp.Read(w, r, &req) {
 			return
 		}
 		newer, want := s.ads.Compare(s.gossipPeer(r).Name, req.Digest)
 		jsonhttp.Write(w, http.StatusOK, gossipResponse{Entries: newer, Want: want})
-	})))
-	mux.Handle("POST "+gossipEntriesPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))))
+	mux.Handle("POST "+gossipEntriesPath, limit(jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req gossipEntries
 		if !jsonhttp.Read(w, r, &req) {
 			return
@@ -87,7 +88,7 @@ func (s *Server) registerGossip(mux *http.ServeMux) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	})))
+	}))))
 }
 
 // gossipPeer returns the agent on the private network which sent r, the

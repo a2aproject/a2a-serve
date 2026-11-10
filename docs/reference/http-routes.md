@@ -44,13 +44,15 @@ On every route, the server refuses state-changing requests that a browser marks 
 
 Each listener handles at most 1024 requests at once, including open streams. It answers requests over this limit with 503 and `Retry-After`.
 
-`/pair`, `/oauth/…`, `/hitl/<token>` and `/download/…` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so callers that the relay doesn't identify share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
+`/pair`, `/oauth/…`, `/hitl/<token>`, `/download/…` and `/gossip…` on the private listener serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so callers that the relay doesn't identify share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
+
+On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of its caller's role once the caller authenticates, before the server reads the body. Members share 512 slots of each listener, and guests share 128. The owner's requests count only toward the listener's limit, so members and guests always leave the owner at least 128 slots. A request over its role's slots gets 503 with `Retry-After` and the error `the server is busy; try again later`, which the A2A routes and `/n/…` send as an A2A error.
 
 | Route | Largest body | Time to send the body |
 | --- | --- | --- |
 | `POST /pair`, `/hitl/<token>` | 4 KiB | 10 seconds in total |
 | `POST /oauth/token` | 64 KiB | 10 seconds in total |
-| A2A routes, `/n/…` | 32 MiB | 30 seconds without progress |
+| A2A routes, `/n/…`, `POST /mailbox/api/tasks/<id>/events` | 32 MiB | 30 seconds without progress |
 
 A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
 
