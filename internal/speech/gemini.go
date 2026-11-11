@@ -36,9 +36,13 @@ const (
 	maxGeminiInput = 14 << 20
 )
 
+// noSpeech is what the model replies for a recording without words. The
+// model makes up words for quiet recordings when asked for an empty reply.
+const noSpeech = "NO_SPEECH"
+
 const transcribePrompt = "Transcribe the speech in this recording word for word, in the language spoken. " +
 	"Reply with the transcript only, without labels, timestamps or comments. " +
-	"If the recording has no speech, reply with nothing."
+	"If the recording has no spoken words, reply with exactly " + noSpeech + "."
 
 // geminiInputTypes are the media types the Gemini API takes for the audio
 // types callers send.
@@ -133,7 +137,8 @@ func (c *geminiClient) Transcribe(ctx context.Context, a Audio) (string, error) 
 			text.WriteString(p.Text)
 		}
 	}
-	if t := strings.TrimSpace(text.String()); t != "" {
+	t := strings.TrimSpace(text.String())
+	if t != "" && !strings.EqualFold(strings.TrimRight(t, "."), noSpeech) {
 		return t, nil
 	}
 	return "", &Error{Reason: "the speech service heard no words", NoWords: true}
