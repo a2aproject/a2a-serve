@@ -99,6 +99,9 @@ type Env struct {
 	LookupEnv   func(string) (string, bool)
 	LookPath    func(string) (string, error)
 	Executable  func() (string, error)
+	// DirWritable reports whether this user can write files into a
+	// directory. Optional: without it no directory counts as writable.
+	DirWritable func(dir string) bool
 	// CheckLauncher checks that Docker can run the a2a-serve binary at a
 	// path as the launcher of containers, as [harness.CheckLauncher] does.
 	CheckLauncher func(exe string) (string, error)
@@ -137,6 +140,7 @@ func System() (Env, error) {
 		LookupEnv:          os.LookupEnv,
 		LookPath:           exec.LookPath,
 		Executable:         os.Executable,
+		DirWritable:        dirWritable,
 		CheckLauncher:      harness.CheckLauncher,
 		CheckTUN:           harness.CheckTUN,
 		CheckInternetRoute: sandboxnet.CheckInternetRoute,
@@ -152,6 +156,21 @@ func System() (Env, error) {
 			return control.NewSocketClient(d.SocketPath(), 5*time.Second).Status(ctx)
 		},
 	}, nil
+}
+
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".a2a-serve-doctor-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		slog.Warn("closing the probe file", "path", name, "err", err)
+	}
+	if err := os.Remove(name); err != nil {
+		slog.Warn("removing the probe file", "path", name, "err", err)
+	}
+	return true
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {

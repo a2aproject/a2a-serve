@@ -57,6 +57,8 @@ type fakeMachine struct {
 	launcher, tun error
 	// route is why this host has no route to the internet.
 	route error
+	// writable is the directories that the user can write to.
+	writable map[string]bool
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -107,6 +109,7 @@ func (m *fakeMachine) Env() Env {
 			return "", exec.ErrNotFound
 		},
 		Executable:         func() (string, error) { return m.self, nil },
+		DirWritable:        func(dir string) bool { return m.writable[dir] },
 		CheckTUN:           func() error { return m.tun },
 		CheckInternetRoute: func() error { return m.route },
 		CheckLauncher: func(exe string) (string, error) {
