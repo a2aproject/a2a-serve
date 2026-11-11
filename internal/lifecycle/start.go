@@ -70,16 +70,19 @@ type StartOptions struct {
 	Credentials *credstore.Store
 	// Ready, if set, is called once the agent serves in the foreground.
 	Ready func()
+	// Services is the service manager, which a start as a service needs.
+	Services ServiceManager
 }
 
 // Start runs the agent of dir. In the foreground it runs until ctx ends;
 // detached or as a service it returns once the agent serves, and an agent
-// which already serves is left running.
+// which already serves is left running. As a service, an agent which
+// already serves without one fails [CheckServiceStart].
 func Start(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
 	if opts.Mode == Foreground {
 		return foreground(ctx, dir, opts)
 	}
-	return background(ctx, dir, opts.Mode == Service, opts.Quiet, opts.Out)
+	return background(ctx, dir, opts.Services, opts.Mode == Service, opts.Quiet, opts.Out)
 }
 
 // foreground logs to state/server.log, and also to stderr when verbose.
@@ -152,9 +155,22 @@ func checkNotRunning(dir agentdir.Dir) error {
 	return release()
 }
 
+// CheckServiceStart fails for a start as a service of the agent named name
+// in dir, which runs, when no user service is installed: the agent would
+// keep running, and nothing would start it at login.
+func CheckServiceStart(dir agentdir.Dir, services ServiceManager, name string) error {
+	if services.Installed(dir.ServiceName()) {
+		return nil
+	}
+	e := clierr.UsageNoHint(name + " is already running without a user service")
+	e.Hint = "run `a2a-serve stop`, then `a2a-serve start --service`"
+	return e
+}
+
 // background starts the agent detached from the terminal, or as a user
-// service when asService, and relays its progress to out until it serves.
-func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, out io.Writer) error {
+// service of services when asService, and relays its progress to out until
+// it serves.
+func background(ctx context.Context, dir agentdir.Dir, services ServiceManager, asService, quiet bool, out io.Writer) error {
 	cfg, err := dir.LoadConfig()
 	if err != nil {
 		return err
@@ -169,11 +185,16 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	if err := dir.Init(); err != nil {
 		return err
 	}
-	exe, err := os.Executable()
+	exe, err := service.Executable()
 	if err != nil {
 		return err
 	}
 	if _, err := controlapi.NewClient(dir).Status(ctx); err == nil {
+		if asService {
+			if err := CheckServiceStart(dir, services, cfg.Name); err != nil {
+				return err
+			}
+		}
 		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cfg.Name)
 		return err
 	}

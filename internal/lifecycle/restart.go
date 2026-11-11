@@ -76,7 +76,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, ser
 			return err
 		}
 	}
-	return background(ctx, d, mode == Service, quiet, out)
+	return background(ctx, d, services, mode == Service, quiet, out)
 }
 
 // runningPID returns the PID of the server, which may still be starting.

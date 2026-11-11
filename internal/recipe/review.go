@@ -48,12 +48,12 @@ var instructionFiles = []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
 // safeKinds are the ACP tool kinds that don't change anything.
 var safeKinds = []string{"read", "search", "think"}
 
-// Review lists what the agent of the recipe will run with cfg, the recipe's
-// agent settings with the owner's flags applied, in the directory
-// workspace: the agent, sandbox, mounts, environment, MCP servers, skills,
-// instructions, agent configuration, approvals and limits, and the owner
-// settings of the recipe that aren't taken.
-func Review(r *Recipe, cfg *agentdir.Config, workspace string) []Line {
+// Review lists what the agent of the recipe will run in the agent directory
+// d with cfg, the recipe's agent settings with the owner's flags applied, in
+// the workspace shown as workspace: the agent, sandbox, mounts, environment,
+// MCP servers, skills, instructions, agent configuration, approvals and
+// limits, and the owner settings of the recipe that aren't taken.
+func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, workspace string) []Line {
 	var out []Line
 	add := func(label string, items ...Item) {
 		if len(items) > 0 {
@@ -75,7 +75,7 @@ func Review(r *Recipe, cfg *agentdir.Config, workspace string) []Line {
 		add("sandbox", Item{Text: agentdir.SandboxDocker})
 	}
 	add("workspace", Item{Text: workspace + ", read-write"})
-	add("mounts", mountItems(r, cfg)...)
+	add("mounts", mountItems(r, d, cfg)...)
 	add("environment", envItems(cfg)...)
 	add("mcp", mcpItems(r, cfg)...)
 	add("skills", skillItems(r.Skills)...)
@@ -94,10 +94,10 @@ func Review(r *Recipe, cfg *agentdir.Config, workspace string) []Line {
 	return out
 }
 
-func mountItems(r *Recipe, cfg *agentdir.Config) []Item {
+func mountItems(r *Recipe, d agentdir.Dir, cfg *agentdir.Config) []Item {
 	var out []Item
 	for _, spec := range cfg.Mounts {
-		m, err := agentdir.ParseMount(spec)
+		m, err := d.ParseMount(spec)
 		if err != nil {
 			out = append(out, Item{Text: spec, Warn: true})
 			continue

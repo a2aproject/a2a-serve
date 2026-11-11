@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
@@ -141,14 +142,25 @@ func (r *DockerRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error
 // fallbackScript starts a container as startScript does, after a check
 // of its launcher's setup. $2, $3 and $4 are the quoted arguments of
 // docker run for the check, for the container with the egress boundary,
-// and for the fallback, which has Docker's own network. A failed check
-// writes its output to marker $1, and that and every later start get the
-// fallback. The check reads no stdin, which the container gets.
-const fallbackScript = `name=$0 marker=$1
+// and for the fallback, which has Docker's own network. A check that
+// finds the setup can't work on this host writes its output to marker $1,
+// and that and every later start get the fallback. Any other failure of
+// the check fails the start. The check reads no stdin, which the
+// container gets.
+var fallbackScript = `name=$0 marker=$1
 docker rm -f "$name" "$name-check" >/dev/null 2>&1
-if [ ! -e "$marker" ] && ! out=$(eval "docker run --name \"\$name-check\" $2" </dev/null 2>&1); then
-  printf '%s\n' "$out" >"$marker"
-  printf 'a2a-serve: egress control is off, as the container can'"'"'t set up its network: %s\n' "$out" >&2
+if [ ! -e "$marker" ]; then
+  out=$(eval "docker run --name \"\$name-check\" $2" </dev/null 2>&1)
+  code=$?
+  case $code:$out in
+  0:*) ;;
+  ` + setupFailedPattern() + `)
+    printf '%s\n' "$out" >"$marker"
+    printf 'a2a-serve: egress control is off, as the container can'"'"'t set up its network: %s\n' "$out" >&2 ;;
+  *)
+    printf 'a2a-serve: checking the network setup of the container failed with status %s: %s\n' "$code" "$out" >&2
+    exit "$code" ;;
+  esac
 fi
 if [ -e "$marker" ]; then eval "exec docker run --name \"\$name\" $4"; fi
 eval "exec docker run --name \"\$name\" $3"`
@@ -181,19 +193,85 @@ func shellQuote(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-// probeTimeout bounds the check of a container's egress setup.
-const probeTimeout = time.Minute
+// EgressSetupError is the failure of a container to set up its network on
+// this host, which the server answers by giving the container Docker's
+// own network.
+type EgressSetupError struct{ Reason string }
+
+func (e *EgressSetupError) Error() string { return e.Reason }
+
+// runtimeFailedExits are the exit codes of docker run when the container's
+// command didn't run, and setupRefusals what its output names when the
+// runtime refuses the device or the capability that the boundary takes.
+var (
+	runtimeFailedExits = []int{125, 126, 127}
+	setupRefusals      = []string{"/dev/net/tun", "NET_ADMIN"}
+)
+
+// setupFailed reports whether a check that exited with code and printed
+// out found that the container can't set up its network on this host: the
+// launcher says so, or the runtime refuses what the boundary takes.
+func setupFailed(code int, out string) bool {
+	if code == sandboxnet.SetupFailedExit {
+		return true
+	}
+	if !slices.Contains(runtimeFailedExits, code) {
+		return false
+	}
+	return slices.ContainsFunc(setupRefusals, func(s string) bool { return strings.Contains(out, s) })
+}
+
+// setupFailedPattern is the sh case pattern of "code:output" for which
+// setupFailed reports true.
+func setupFailedPattern() string {
+	patterns := []string{strconv.Itoa(sandboxnet.SetupFailedExit) + ":*"}
+	for _, code := range runtimeFailedExits {
+		for _, s := range setupRefusals {
+			patterns = append(patterns, strconv.Itoa(code)+":*"+s+"*")
+		}
+	}
+	return strings.Join(patterns, "|")
+}
+
+// probeTimeout bounds each check of a container's egress setup, and
+// probeAttempts the checks that fail for another reason, such as an error
+// of the Docker daemon, probeRetryDelay apart.
+const (
+	probeTimeout    = time.Minute
+	probeAttempts   = 3
+	probeRetryDelay = time.Second
+)
 
 // Probe runs a container with the flags of r's container whose launcher
-// only sets up the network and drops its capabilities, and returns why
-// that failed.
+// only sets up the network and drops its capabilities. It returns an
+// [*EgressSetupError] when the setup can't work on this host, and another
+// error when the check kept failing for another reason. A check that runs
+// out of time isn't run again, which would only multiply the wait.
 func (r *DockerRunner) Probe(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
 	envFile, err := r.writeEnvFile(slices.Clone(r.Env))
 	if err != nil {
 		return err
 	}
+	for attempt := 1; ; attempt++ {
+		err := r.probe(ctx, envFile)
+		if _, setup := errors.AsType[*EgressSetupError](err); err == nil || setup {
+			return err
+		}
+		if attempt == probeAttempts || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return err
+		}
+		slog.Warn("checking the egress setup of the agent's container failed; trying again", "error", err)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(probeRetryDelay):
+		}
+	}
+}
+
+func (r *DockerRunner) probe(ctx context.Context, envFile string) error {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	name := r.Name + "-check"
 	if err := removeContainer(ctx, name); err != nil {
 		return err
@@ -202,10 +280,16 @@ func (r *DockerRunner) Probe(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("the check didn't finish: %w", ctx.Err())
+	}
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && setupFailed(ee.ExitCode(), string(out)) {
+		return &EgressSetupError{Reason: reasonOf(string(out))}
+	}
 	if len(bytes.TrimSpace(out)) == 0 {
 		return err
 	}
-	return errors.New(reasonOf(string(out)))
+	return fmt.Errorf("%w: %s", err, reasonOf(string(out)))
 }
 
 // envFilePrefix starts the names of the env files.

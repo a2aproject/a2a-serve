@@ -113,6 +113,8 @@ a2a-serve config set --private tailscale --restart
 a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN
 ```
 
+Open the `t.me` link it prints and press **Start**.
+
 Optionally, send a digest every weekday morning:
 
 ```bash

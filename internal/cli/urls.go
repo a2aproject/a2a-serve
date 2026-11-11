@@ -84,7 +84,8 @@ func checkInspectorScope(scope string) error {
 }
 
 // inspectorURL returns the URL to open the web inspector at in scope: the
-// local URL, or the private URL, where it is served only over HTTPS.
+// local URL, or the private URL where the server serves it, on a tailnet.
+// A server that doesn't report it serves it only over HTTPS.
 func inspectorURL(s *controlapi.Status, scope string) (string, error) {
 	if err := checkInspectorScope(scope); err != nil {
 		return "", err
@@ -96,7 +97,7 @@ func inspectorURL(s *controlapi.Status, scope string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(u, "https://") {
+	if !s.PrivateInspector && !strings.HasPrefix(u, "https://") {
 		return "", fmt.Errorf("the inspector isn't served on %s, because its login link and session would cross the network unencrypted; run `a2a-serve inspect --url local` on the agent's machine", u)
 	}
 	return u, nil

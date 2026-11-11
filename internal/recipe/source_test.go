@@ -168,6 +168,7 @@ func TestParseSourceRefused(t *testing.T) {
 		{name: "tree URL without ref", in: "https://github.com/acme/agents/tree/", wantErr: "no ref after /tree/"},
 		{name: "tree URL with fragment", in: "https://github.com/acme/agents/tree/main#x", wantErr: "takes no #<ref>:<path>"},
 		{name: "path out of the repository", in: "git@github.com:acme/agents.git#main:../x", wantErr: "leaves the repository"},
+		{name: "option-like ref", in: "file:///tmp/agents#--upload-pack=x", wantErr: "invalid recipe source"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

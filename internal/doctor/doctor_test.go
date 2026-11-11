@@ -57,6 +57,8 @@ type fakeMachine struct {
 	launcher, tun error
 	// route is why this host has no route to the internet.
 	route error
+	// writable is the directories that the user can write to.
+	writable map[string]bool
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -107,6 +109,7 @@ func (m *fakeMachine) Env() Env {
 			return "", exec.ErrNotFound
 		},
 		Executable:         func() (string, error) { return m.self, nil },
+		DirWritable:        func(dir string) bool { return m.writable[dir] },
 		CheckTUN:           func() error { return m.tun },
 		CheckInternetRoute: func() error { return m.route },
 		CheckLauncher: func(exe string) (string, error) {
@@ -163,6 +166,62 @@ func TestCheckServeBinaryMissingFix(t *testing.T) {
 	got := checkServeBinary(m.Env())
 	if want := "CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest"; got.Fix != want {
 		t.Fatalf("checkServeBinary().Fix = %q, want %q", got.Fix, want)
+	}
+}
+
+func TestDockerFix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		agent   bool
+		breakIt func(*fakeMachine)
+		want    string
+	}{
+		{
+			name:    "unreachable outside an agent",
+			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
+			want:    "start Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+		},
+		{
+			name:    "not installed outside an agent",
+			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
+			want:    "install Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+		},
+		{
+			name:    "unreachable in an agent",
+			agent:   true,
+			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
+			want:    "start Docker, or a2a-serve config set --sandbox local",
+		},
+		{
+			name:    "not installed in an agent",
+			agent:   true,
+			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
+			want:    "install Docker, or a2a-serve config set --sandbox local",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newFakeMachine(t)
+			tc.breakIt(m)
+			var opts Options
+			if tc.agent {
+				d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+				opts.Dir = &d
+			}
+
+			for _, r := range Run(t.Context(), m.Env(), opts) {
+				if r.ID != "docker" {
+					continue
+				}
+				if r.Fix != tc.want {
+					t.Fatalf("Run() docker fix = %q, want %q", r.Fix, tc.want)
+				}
+				return
+			}
+			t.Fatal("Run() has no docker check")
+		})
 	}
 }
 
@@ -887,6 +946,31 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
 				m.unit = writeFile(t, "ExecStart=/usr/bin/a2a-serve start --dir "+d.Root+"\n")
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusOK}},
+		},
+		{
+			name: "service at the PATH link of this binary",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				root := t.TempDir()
+				m.self = filepath.Join(root, "Cellar", "a2a-serve", "1.0.0", "bin", "a2a-serve")
+				if err := os.MkdirAll(filepath.Dir(m.self), 0o755); err != nil {
+					t.Fatalf("os.MkdirAll() error = %v", err)
+				}
+				if err := os.WriteFile(m.self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+				link := filepath.Join(root, "bin", "a2a-serve")
+				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+					t.Fatalf("os.MkdirAll() error = %v", err)
+				}
+				if err := os.Symlink(m.self, link); err != nil {
+					t.Fatalf("os.Symlink() error = %v", err)
+				}
+				m.paths["a2a-serve"] = link
+				m.unit = writeFile(t, "ExecStart="+link+" start --dir "+d.Root+"\n")
 			},
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusOK}},
 		},

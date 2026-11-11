@@ -10,9 +10,11 @@
 #   A2A_SERVE_VERSION  a release tag such as v0.1.0 (default: the latest)
 #   A2A_CLI_VERSION    a release tag of the a2a CLI (default: the latest)
 #   A2A_NO_SETUP=1     skip doctor --fix and the setup question
+#   A2A_CLI_ONLY=1     install only the a2a CLI, and skip doctor --fix and the
+#                      setup question, for example to upgrade a2a on its own
 set -eu
 
-INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
+INSTALL_DIR=${INSTALL_DIR:-"${HOME:?set INSTALL_DIR or HOME}/.local/bin"}
 SERVE_REPO=https://github.com/a2aproject/a2a-serve
 CLI_REPO=https://github.com/a2aproject/a2a-cli
 # Overridable for tests: the base URL of a release's downloads, without the tag.
@@ -85,9 +87,11 @@ main() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT INT TERM
 
-  serve_tag=${A2A_SERVE_VERSION:-$(latest "$SERVE_REPO")}
   cli_tag=${A2A_CLI_VERSION:-$(latest "$CLI_REPO")}
-  fetch a2a-serve "$SERVE_DOWNLOAD" "$serve_tag"
+  if [ "${A2A_CLI_ONLY:-}" != 1 ]; then
+    serve_tag=${A2A_SERVE_VERSION:-$(latest "$SERVE_REPO")}
+    fetch a2a-serve "$SERVE_DOWNLOAD" "$serve_tag"
+  fi
   fetch a2a "$CLI_DOWNLOAD" "$cli_tag"
 
   case ":$PATH:" in
@@ -100,13 +104,25 @@ main() {
   esac
 
   [ "${A2A_NO_SETUP:-}" = 1 ] && return 0
+  [ "${A2A_CLI_ONLY:-}" = 1 ] && return 0
   say ""
   # doctor exits non-zero when something is left to fix, such as Docker; it
   # says what, so the install carries on.
   "$INSTALL_DIR/a2a-serve" doctor --fix || true
 
   say ""
-  if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+  # start needs HOME, and refuses a workspace that holds the home directory,
+  # where `curl | sh` runs from a new terminal, so the offer is only made in
+  # a project directory.
+  offer=false
+  if [ -n "${HOME:-}" ] && home=$(cd "$HOME" 2>/dev/null && pwd -P); then
+    here=$(pwd -P)
+    case "$home/" in
+      "$here"/*) ;;
+      *) [ "$here" = / ] || offer=true ;;
+    esac
+  fi
+  if $offer && [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
     printf 'Set up an agent in %s now? [y/N] ' "$PWD" >/dev/tty
     read -r answer </dev/tty || answer=
     case "$answer" in

@@ -124,7 +124,7 @@ A conversation runs in the container of the user who started it. When someone el
 In Docker, every connection the agent opens goes through the server ([where it applies](#where-it-applies)). By default:
 
 - The agent reaches the public internet.
-- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through another route than the internet, such as a split-tunnel VPN or a bridge. Behind a full-tunnel VPN or a Tailscale exit node, the internet is still the internet.
+- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the cloud metadata services, the addresses of this machine, and every network this machine reaches through another route than the internet, such as a split-tunnel VPN or a bridge. Behind a full-tunnel VPN or a Tailscale exit node, the internet is still the internet.
 - `host.docker.internal` reaches the ports that other containers publish on all addresses of this machine, such as with `-p 5432:5432`. With Docker Desktop, it also reaches the ports published on `127.0.0.1`. `--egress-allow host.docker.internal:11434` opens another port of this machine, such as one that a container publishes on `127.0.0.1` on Linux.
 
 The server resolves each name itself and checks every address it gets, so a public name can't lead to a private address. The agent calls other agents through its socket to the server, as before. A blocked connection fails in the agent's tools like a refused one.
@@ -145,7 +145,7 @@ The next connection uses the new rule; the agent keeps running. A rule is one of
 
 Each can end with a port, such as `:22`. Without a port, the rule allows every port. An IPv6 address takes brackets before a port, such as `[fd00::1]:22`. A pasted URL, such as `http://grafana.lan:3000/d/x`, gives its host and port. Remove a rule with `a2a-serve config unset egress-allow nas.lan:22`.
 
-A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`. A rule with a tailnet IPv4 address isn't accepted.
+A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses, the Azure WireServer or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`. A rule with a tailnet IPv4 address isn't accepted.
 
 | To reach | Run |
 | --- | --- |
@@ -231,7 +231,7 @@ The server routes the sandbox's connections with Docker, rootless Docker and Doc
 
 Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. With `--egress allowlist`, the agent doesn't start.
 
-At each start, the server also runs a short check: a container with the agent's settings whose launcher sets up the network, drops its capabilities and exits. When that fails, egress control is off until the server stops, and the sandbox keeps Docker's own network. This happens with a runtime that refuses `NET_ADMIN` or `/dev/net/tun`, such as some Podman setups. `start` and the log say what failed, and so do `status` and `doctor`. The next start checks again, so the boundary comes back once the cause is fixed. Each start of an agent's container checks the same way. With `--egress allowlist`, the agent doesn't start, and `--egress unrestricted` skips the check.
+At each start, the server also runs a short check: a container with the agent's settings whose launcher sets up the network, drops its capabilities and exits. When the launcher can't set up the network, or the runtime refuses `NET_ADMIN` or `/dev/net/tun`, egress control is off until the server stops, and the sandbox keeps Docker's own network. This happens with some Podman setups. `start` and the log say what failed, and so do `status` and `doctor`. The next start checks again, so the boundary comes back once the cause is fixed. When the check fails for another reason, such as an error of the Docker daemon, the server runs it again a few times, and then the agent doesn't start. Each start of an agent's container checks the same way, and a check that fails for another reason fails that start of the container. With `--egress allowlist`, the agent doesn't start, and `--egress unrestricted` skips the check.
 
 On Windows, the server doesn't read the routing table: it counts the subnets of its own interfaces as private, and misses networks that a VPN routes.
 

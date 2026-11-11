@@ -193,6 +193,7 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err := PrepareHome(spec); err != nil {
 		return nil, err
 	}
+	spec.Env = withProviderKeys(spec.Profile, spec.Env)
 	nested, err := nestedAgents(spec)
 	var warnings []string
 	switch {
@@ -362,6 +363,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			perr := probeEgress(spec, func() error { return dr.Probe(ctx) })
 			if failSetup == "agent" {
 				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
+			}
+			if _, setup := errors.AsType[*EgressSetupError](perr); perr != nil && !setup {
+				return nil, errors.Join(fmt.Errorf("checking the egress setup of the agent's container: %w", perr), closeFn(), dr.Stop(ctx))
 			}
 			if perr != nil {
 				decision = probeFailed(spec.egressConfig(), perr)

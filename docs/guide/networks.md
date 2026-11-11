@@ -5,7 +5,7 @@ The agent is reachable on localhost by default. Network flags add a private URL,
 | Flag | Reachable from | Callers identified by |
 | --- | --- | --- |
 | *(none)* | localhost and messengers | pairing tokens |
-| `--private tailscale` | your tailnet, as `https://<name>.<tailnet>.ts.net` | Tailscale identity |
+| `--private tailscale` | your tailnet, as `https://<name>.<tailnet>.ts.net` (`http://` with Headscale) | Tailscale identity |
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public <relay-url>` | the internet, at a URL on the relay | pairing tokens |
@@ -25,7 +25,7 @@ a2a-serve start opencode --private tailscale
 - enable HTTPS certificates for the tailnet;
 - for Funnel, add the `funnel` node attribute to the tailnet policy.
 
-`--tailscale-control-url` points at a Headscale server.
+`--tailscale-control-url` points at a Headscale server. Headscale issues no HTTPS certificates, so the private URL is `http://<name>.<base domain>`, at the MagicDNS name of the machine. WireGuard encrypts the traffic on the tailnet when the caller resolves the name with MagicDNS. On a device without MagicDNS, the name may resolve through public DNS, and requests with tokens would cross the internet unencrypted. Pick a Headscale base domain that you control, or one that doesn't resolve on the internet. The agent answers only requests for its MagicDNS name, so a web page can't reach it under a name of its own. Headscale offers no Funnel, so `--public tailscale` needs Tailscale's own control server.
 
 ## Agent Mesh relays (experimental)
 

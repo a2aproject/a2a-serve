@@ -52,6 +52,12 @@ func newTestRecipe(t *testing.T) string {
 		".mcp.json": testRecipeMCP,
 		"AGENTS.md": "instructions",
 	}
+	writeRecipeFiles(t, dir, files)
+	return dir
+}
+
+func writeRecipeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
 	for name, content := range files {
 		p := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -61,7 +67,6 @@ func newTestRecipe(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	return dir
 }
 
 func recipeConfig(terminal bool, stdin *os.File, env map[string]string) *globalConfig {
@@ -249,6 +254,52 @@ func TestRecipeWithoutTerminal(t *testing.T) {
 			}
 			if kubeOn := !cfg.MCPDisabled("kubernetes"); kubeOn != (len(cfg.Mounts) == 1) {
 				t.Fatalf("a2a-serve recipe mounts = %v with kubernetes on %v, want the tied mount to follow the server", cfg.Mounts, kubeOn)
+			}
+		})
+	}
+}
+
+func TestRecipeRelativeMount(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		shipped bool
+		wantOff bool
+	}{
+		{name: "source in the recipe", shipped: true},
+		{name: "source missing", wantOff: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				".a2a/config.yaml": "name: o11y\nagent: opencode\nmounts: [\"kube:/kube:ro\"]\n",
+				".a2a/recipe.yaml": "mcp:\n  kubernetes:\n    optional: true\n    mounts: [/kube]\n",
+				".mcp.json":        `{"mcpServers": {"kubernetes": {"command": "npx", "args": ["kubernetes-mcp-server"], "env": {"KUBECONFIG": "/kube/config"}}}}`,
+			}
+			if tc.shipped {
+				files["kube/config"] = "config"
+			}
+			src := filepath.Join(t.TempDir(), "o11y")
+			writeRecipeFiles(t, src, files)
+			target := filepath.Join(t.TempDir(), "agents", "obs")
+			env := map[string]string{"OPENROUTER_API_KEY": "sk-env"}
+
+			out, err := runCMDWith(t, recipeConfig(false, nil, env), "recipe", src, "--dir", target, "--yes")
+			if err != nil {
+				t.Fatalf("a2a-serve recipe error = %v\n%s", err, out)
+			}
+
+			if want := filepath.Join("agents", "obs", "kube") + " → /kube, read-only"; !strings.Contains(out, want) {
+				t.Fatalf("a2a-serve recipe output = %s, want the mount source in the agent directory %q", out, want)
+			}
+			hint := "kubernetes stays off: it needs " + filepath.Join(target, "kube") + ", which doesn't exist"
+			if strings.Contains(out, hint) != tc.wantOff {
+				t.Fatalf("a2a-serve recipe output = %s, want %q shown %v", out, hint, tc.wantOff)
+			}
+			cfg, _ := readAgent(t, target)
+			if got := cfg.MCPDisabled("kubernetes"); got != tc.wantOff {
+				t.Fatalf("a2a-serve recipe kubernetes off = %v, want %v\n%s", got, tc.wantOff, out)
 			}
 		})
 	}

@@ -89,7 +89,7 @@ func (r *recipeRun) update(ctx context.Context, d agentdir.Dir, record *recipe.R
 			return wizard.ErrCanceled
 		}
 	}
-	off, err := r.ask(up, preview)
+	off, err := r.ask(d, d.Root, up, preview)
 	if err != nil {
 		return err
 	}

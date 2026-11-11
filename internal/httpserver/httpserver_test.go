@@ -15,14 +15,18 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestLimitConcurrency(t *testing.T) {
@@ -279,5 +283,127 @@ func TestNewWithConnContext(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET status = %d, want %d: the request context lacks the value of WithConnContext", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestKeyedLimiterLimitsUnkeyedRequestsOnlyInTotal(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	l := NewKeyedLimiter(2, 1, func(r *http.Request) string { return "" })
+	h := l.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/block" {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	serve := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+	blocked := make(chan int, 2)
+	for i := range 2 {
+		go func() { blocked <- serve("/block").Code }()
+		select {
+		case <-entered:
+		case code := <-blocked:
+			t.Fatalf("KeyedLimiter.Handler() unkeyed request %d status = %d, want it served", i+1, code)
+		}
+	}
+
+	full := serve("/")
+
+	if full.Code != http.StatusServiceUnavailable {
+		t.Fatalf("KeyedLimiter.Handler() unkeyed request over the total limit status = %d, want %d", full.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// rawGet sends a GET of path on conn.
+func rawGet(t *testing.T, conn net.Conn, path string) {
+	t.Helper()
+	if _, err := io.WriteString(conn, "GET "+path+" HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteTimeout(t *testing.T) {
+	t.Parallel()
+	ended := make(chan error, 1)
+	srv := httptest.NewServer(WriteTimeout(50*time.Millisecond, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 64<<10)
+		for {
+			if _, err := w.Write(chunk); err != nil {
+				ended <- err
+				return
+			}
+		}
+	})))
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+
+	rawGet(t, conn, "/")
+
+	select {
+	case err := <-ended:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("WriteTimeout() write to a client that doesn't read error = %v, want %v", err, os.ErrDeadlineExceeded)
+		}
+	case <-time.After(time.Minute):
+		t.Fatalf("WriteTimeout() response to a client that doesn't read still written after a minute")
+	}
+}
+
+func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
+	t.Parallel()
+	// The first response must finish within the deadline, also on a loaded
+	// runner, so the deadline is long and the test sleeps past it.
+	const timeout = time.Second
+	srv := httptest.NewServer(WriteTimeout(timeout, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			t.Errorf("writing: %v", err)
+		}
+	})))
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	br := bufio.NewReader(conn)
+	read := func() string {
+		t.Helper()
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatalf("reading the response: %v", err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading the response body: %v", err)
+		}
+		return string(body)
+	}
+	rawGet(t, conn, "/")
+	read()
+	time.Sleep(timeout + timeout/2)
+
+	rawGet(t, conn, "/")
+	got := read()
+
+	if got != "ok" {
+		t.Fatalf("WriteTimeout() second response on the connection = %q, want %q", got, "ok")
 	}
 }

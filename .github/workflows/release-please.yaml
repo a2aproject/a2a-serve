@@ -8,6 +8,13 @@ on:
     branches:
       - main
 
+# Runs for pushes in quick succession update the same release branch, and the
+# later ones fail to update its ref. Run them one at a time, and never cancel
+# a run that may be tagging a release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write

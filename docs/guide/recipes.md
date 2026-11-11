@@ -89,6 +89,8 @@ Commit the files that define the agent:
 
 The command copies everything except `.git` and `.a2a`, from which it reads only `config.yaml` and `recipe.yaml`. Symlinks must be relative and stay inside the recipe. A recipe holds at most 10,000 files and 100 MB.
 
+A relative mount source in `config.yaml` is relative to the agent directory. A recipe mounts a directory it ships this way, such as `mounts: ["data:/data:ro"]`.
+
 `config.yaml` may only use settings the user's a2a-serve knows. An older a2a-serve refuses a recipe with newer settings, and asks the user to upgrade.
 
 List in `secrets` only what the agent itself needs. The command asks for the variables of `.mcp.json` per server. Leave the model's API key to the user, unless the recipe pins a model: the command asks for one when `secrets` names none.

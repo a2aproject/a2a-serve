@@ -46,6 +46,7 @@ type senderCall struct {
 	req       *a2a.SendMessageRequest
 	caller    auth.Principal
 	inProcess bool
+	groupChat bool
 }
 
 // fakeTurnSender records what ChatTurns asks the agent to do and answers
@@ -77,7 +78,7 @@ func newFakeTurnSender() *fakeTurnSender {
 
 func callOf(ctx context.Context, req *a2a.SendMessageRequest) senderCall {
 	caller, _ := auth.Caller(ctx)
-	return senderCall{req: req, caller: caller, inProcess: auth.IsInProcess(ctx)}
+	return senderCall{req: req, caller: caller, inProcess: auth.IsInProcess(ctx), groupChat: auth.IsGroupChat(ctx)}
 }
 
 func (s *fakeTurnSender) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
@@ -549,6 +550,24 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 		t.Error("unattended.Has(c-schedule) = false, want true")
 	}
 	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsInjectTurnMarksGroupChat(t *testing.T) {
+	t.Parallel()
+	for name, groupChat := range map[string]bool{"direct chat": false, "group chat": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fx := newTurnsFixture(t)
+
+			if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it", GroupChat: groupChat}); err != nil {
+				t.Fatalf("turns.InjectTurn() error = %v", err)
+			}
+
+			if got := fx.sender.nextSend(t).groupChat; got != groupChat {
+				t.Fatalf("SendMessage() in a group chat = %v, want %v", got, groupChat)
+			}
+		})
+	}
 }
 
 func TestChatTurnsInjectTurnAttachesFiles(t *testing.T) {

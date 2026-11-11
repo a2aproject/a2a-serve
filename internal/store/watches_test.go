@@ -129,6 +129,22 @@ func TestPutWatchAgainStartsAGeneration(t *testing.T) {
 	}
 }
 
+func TestPutWatchKeepsGroupChat(t *testing.T) {
+	t.Parallel()
+	s, ctx := openStore(t), context.Background()
+	if err := s.PutWatch(ctx, Watch{Contact: "coder", TaskID: "t1", OriginContextID: "c1", OnBehalfOf: "pair:anna", GroupChat: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Watch(ctx, "coder", "t1")
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	if !got.GroupChat {
+		t.Fatalf("Watch() GroupChat = %v, want true", got.GroupChat)
+	}
+}
+
 func TestSetWatchState(t *testing.T) {
 	t.Parallel()
 	s, ctx := openStore(t), context.Background()

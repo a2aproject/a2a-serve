@@ -877,6 +877,12 @@ func ParseMount(spec string) (Mount, error) {
 	return parseMount(spec, "")
 }
 
+// ParseMount parses a src[:dst][:ro] spec of the agent's config. A relative
+// src is relative to the agent directory.
+func (d Dir) ParseMount(spec string) (Mount, error) {
+	return parseMount(spec, d.Root)
+}
+
 // parseMount parses spec, resolving a relative src against base, or the
 // current directory if base is empty.
 func parseMount(spec, base string) (Mount, error) {
@@ -935,7 +941,7 @@ func (d Dir) WorkspaceMount(cfg *Config) (Mount, error) {
 	if cfg.Workspace == "" {
 		return Mount{Src: d.Root, Dst: d.Root}, nil
 	}
-	m, err := parseMount(cfg.Workspace, d.Root)
+	m, err := d.ParseMount(cfg.Workspace)
 	if err != nil {
 		return Mount{}, fmt.Errorf("workspace: %w", err)
 	}
@@ -950,7 +956,7 @@ func (d Dir) Mounts(cfg *Config) ([]Mount, error) {
 	}
 	out := []Mount{ws}
 	for _, spec := range cfg.Mounts {
-		m, err := parseMount(spec, d.Root)
+		m, err := d.ParseMount(spec)
 		if err != nil {
 			return nil, err
 		}

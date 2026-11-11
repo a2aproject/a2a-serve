@@ -92,6 +92,9 @@ type QuestionTasks interface {
 	// End ends the tasks in contextID that ask a question of agent's task,
 	// once that task no longer waits for an answer.
 	End(ctx context.Context, contextID, agent, taskID string)
+	// EndOrphaned ends the tasks that ask a question of an agent's task for
+	// which watched reports no watch.
+	EndOrphaned(ctx context.Context, watched func(agent, taskID string) bool)
 }
 
 // NewWatches returns the watches of deps, which poll until ctx ends.
@@ -197,6 +200,17 @@ func (ws *Watches) Resume(ctx context.Context) {
 		slog.Error("loading watches", "error", err)
 		return
 	}
+	// A watch removed with its contact or node while the server was down
+	// leaves its question tasks waiting for good. The watch is looked up when
+	// a task is judged, since a turn may start a watch and its question task
+	// meanwhile.
+	ws.asked.EndOrphaned(ctx, func(agent, taskID string) bool {
+		_, err := ws.store.Watch(ctx, agent, taskID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("reading a watch", "agent", agent, "task", taskID, "error", err)
+		}
+		return !errors.Is(err, store.ErrNotFound)
+	})
 	for _, w := range all {
 		ws.watch(w)
 	}
@@ -246,6 +260,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		// again.
 		cur, err := ws.store.Watch(ctx, w.Contact, w.TaskID)
 		if errors.Is(err, store.ErrNotFound) {
+			ws.endQuestions(ctx, w)
 			ws.endToCaller(w, reasonRemoved)
 			return
 		}
@@ -512,7 +527,7 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	turnText, files := resultTurn(text)
-	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, Accepted: accepted, Quiet: again}
+	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, GroupChat: w.GroupChat, Accepted: accepted, Quiet: again}
 	if ws.resultToCaller(t) {
 		return true
 	}

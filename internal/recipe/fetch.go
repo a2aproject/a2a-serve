@@ -108,8 +108,8 @@ func (f Fetcher) Fetch(ctx context.Context, src Source, workDir string) (*Fetche
 	}
 	steps := [][]string{
 		{"init", "-q"},
-		{"remote", "add", "origin", src.Repo},
-		{"fetch", "-q", "--depth=1", "--filter=blob:none", "origin", ref},
+		{"remote", "add", "--end-of-options", "origin", src.Repo},
+		{"fetch", "-q", "--depth=1", "--filter=blob:none", "--end-of-options", "origin", ref},
 	}
 	if src.Path != "" {
 		steps = append(steps, []string{"sparse-checkout", "set", "--no-cone", "/" + escapePattern(src.Path) + "/"})
@@ -166,7 +166,7 @@ func (f Fetcher) resolve(ctx context.Context, src Source) (Source, error) {
 	}
 	rest := src.treeRest
 	src.treeRest = ""
-	out, err := f.Git(ctx, "", "ls-remote", "--heads", "--tags", src.Repo)
+	out, err := f.Git(ctx, "", "ls-remote", "--heads", "--tags", "--end-of-options", src.Repo)
 	if err != nil {
 		return Source{}, fmt.Errorf("listing the branches and tags of %s: %w", src.Repo, err)
 	}

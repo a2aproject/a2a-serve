@@ -49,6 +49,9 @@ type PostedTurn struct {
 	// Quiet keeps a refusal out of the conversation's chat, for a turn
 	// posted again after the agent refused it.
 	Quiet bool
+	// GroupChat sends the turn as one from a group chat, such as the run of
+	// a schedule the agent made in one.
+	GroupChat bool
 }
 
 // Parts are the message parts of the turn.
@@ -272,6 +275,9 @@ func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv m
 	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts([]*waitingMessage{{in: messenger.Inbound{Text: t.text(), Files: t.Files}}})...)
 	msg.ContextID = t.ContextID
 	ctx = auth.Posted(ctx)
+	if t.GroupChat {
+		ctx = auth.InGroupChat(ctx)
+	}
 	ch := c.supervisor.Messenger(chName)
 	if ch == nil {
 		c.unattended.Add(t.ContextID)

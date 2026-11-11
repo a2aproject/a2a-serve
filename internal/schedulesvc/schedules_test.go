@@ -98,6 +98,41 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 	}
 }
 
+func TestAddScheduleRecordsGroupChat(t *testing.T) {
+	t.Parallel()
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Pairing: "anna"}}
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		contextID string
+		want      bool
+	}{
+		{name: "in a group chat", ctx: auth.InGroupChat(context.Background()), contextID: "ctx1", want: true},
+		{name: "in a direct chat", ctx: context.Background(), contextID: "ctx1"},
+		{name: "by the owner outside a conversation", ctx: auth.InGroupChat(context.Background())},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			by := anna
+			if tc.contextID == "" {
+				by = auth.Owner()
+			}
+			if _, err := (Service{Store: s}).Add(tc.ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "brief me"}, by, tc.contextID); err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+			got, err := s.Schedule(context.Background(), "brief")
+			if err != nil {
+				t.Fatalf("Schedule() error = %v", err)
+			}
+			if got.GroupChat != tc.want {
+				t.Fatalf("Schedule() GroupChat = %v, want %v", got.GroupChat, tc.want)
+			}
+		})
+	}
+}
+
 func TestAddScheduleWithinLimits(t *testing.T) {
 	t.Parallel()
 	limits := Limits{PerUser: 2, MinInterval: 5 * time.Minute}

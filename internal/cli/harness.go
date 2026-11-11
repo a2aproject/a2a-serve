@@ -26,7 +26,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 // newHarnessCmd builds `a2a-serve start <agent>`, which creates the agent on
@@ -80,6 +82,14 @@ workspace unless --allow-broad-mount names it.
 				return err
 			}
 			if res.Running {
+				if mode.service {
+					if err := lifecycle.CheckServiceStart(d, service.System{}, res.Name); err != nil {
+						if perr := printConfigResult(cfg, res, false); perr != nil {
+							return perr
+						}
+						return err
+					}
+				}
 				return printStartRunning(cfg, res)
 			}
 			if !res.Created {

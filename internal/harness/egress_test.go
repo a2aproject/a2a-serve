@@ -33,7 +33,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 func TestDockerRunnerCommandWithEgress(t *testing.T) {
@@ -425,25 +424,32 @@ func TestProbeFailed(t *testing.T) {
 func TestCommandWithFallback(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		checkFail bool
-		want      []string
+		name string
+		// checks are what the successive checks do.
+		checks     []string
+		wantFailed []bool
+		want       []string
+		wantReason string
 	}{
-		{name: "check passes", want: []string{"check", "egress", "check", "egress"}},
-		{name: "check fails", checkFail: true, want: []string{"check", "fallback", "fallback"}},
+		{name: "check passes", checks: []string{"exit 0", "exit 0"}, wantFailed: []bool{false, false}, want: []string{"check", "egress", "check", "egress"}},
+		{name: "launcher can't set up the network", checks: []string{launcherNoTUN}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: "no tun"},
+		{name: "runtime refuses the TUN device", checks: []string{tunMissing}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: `docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory`},
+		{name: "daemon error", checks: []string{daemonError, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
+		{name: "launcher crash naming the device", checks: []string{launcherCrashTUN, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			calls := filepath.Join(dir, "calls")
-			fail := "exit 0"
-			if tc.checkFail {
-				fail = "echo \"a2a-init: setting up the sandbox's network: no tun\" >&2; exit " + fmt.Sprint(sandboxnet.SetupFailedExit)
+			var checks strings.Builder
+			for i, c := range tc.checks {
+				fmt.Fprintf(&checks, "%d) %s;;\n", i+1, c)
 			}
 			fakeDocker := "#!/bin/sh\n" +
 				"[ \"$1\" = run ] || exit 0\n" +
-				"case \"$*\" in *--check*) echo check >>" + calls + "; " + fail + ";;\n" +
+				"case \"$*\" in *--check*) echo check >>" + calls + "\n" +
+				"case $(grep -c check " + calls + ") in\n" + checks.String() + "esac;;\n" +
 				"*sandbox-init*) echo egress >>" + calls + ";;\n" +
 				"*) echo fallback >>" + calls + ";; esac\n"
 			if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fakeDocker), 0o700); err != nil {
@@ -452,14 +458,15 @@ func TestCommandWithFallback(t *testing.T) {
 			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
 			fallback := &DockerRunner{Name: "a2a-coder-1", Image: "img:1"}
 			marker := filepath.Join(dir, "fallback")
-			for range 2 {
+			for i, wantFailed := range tc.wantFailed {
 				cmd, err := r.CommandWithFallback(context.Background(), Command{Path: "agent", Args: []string{"it's"}}, fallback, marker)
 				if err != nil {
 					t.Fatalf("CommandWithFallback() error = %v", err)
 				}
 				cmd.Env = append(cmd.Env, "PATH="+dir+":/usr/bin:/bin")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("starting the container error = %v: %s", err, out)
+				out, err := cmd.CombinedOutput()
+				if failed := err != nil; failed != wantFailed {
+					t.Fatalf("start %d of the container error = %v: %s, want failed %v", i+1, err, out, wantFailed)
 				}
 			}
 			data, err := os.ReadFile(calls)
@@ -469,10 +476,15 @@ func TestCommandWithFallback(t *testing.T) {
 			if diff := cmp.Diff(tc.want, strings.Fields(string(data))); diff != "" {
 				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
 			}
-			if tc.checkFail {
-				if got := setupReason(marker); got != "no tun" {
-					t.Fatalf("setupReason() = %q, want %q", got, "no tun")
+			_, statErr := os.Stat(marker)
+			if tc.wantReason == "" {
+				if statErr == nil {
+					t.Fatalf("fallback marker exists after %q, want none: %s", tc.name, setupReason(marker))
 				}
+				return
+			}
+			if got := setupReason(marker); got != tc.wantReason {
+				t.Fatalf("setupReason() = %q, want %q", got, tc.wantReason)
 			}
 		})
 	}

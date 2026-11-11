@@ -666,6 +666,9 @@ func senderOf(ctx context.Context, agent string) mailboxapi.Sender {
 	if strings.HasPrefix(p.ID, "agent:") {
 		return mailboxapi.Sender{Kind: mailboxapi.SenderAgent, Name: agent, OnBehalfOf: p.OnBehalfOf}
 	}
+	if !p.IsOwner() {
+		return mailboxapi.Sender{Kind: mailboxapi.SenderMember, Name: p.ID}
+	}
 	return mailboxapi.Sender{Kind: mailboxapi.SenderOwner, Name: p.ID}
 }
 

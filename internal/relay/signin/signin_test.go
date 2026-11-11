@@ -104,6 +104,7 @@ func (r *relay) restart(t *testing.T, o relayOptions) {
 		URL: r.url, Secret: o.secret, AllowEmails: o.allow,
 		ClientID: googleApp, ClientSecret: r.google.Secret, Google: r.google.Endpoints(),
 		HTTP: r.hc, Now: r.clock.Now,
+		Client: func(req *http.Request) string { return req.Header.Get(clientHeader) },
 	})
 	if err != nil {
 		t.Fatalf("signin.New() error = %v", err)
@@ -155,6 +156,45 @@ func (r *relay) startSignIn(t *testing.T) deviceResponse {
 		t.Fatal(err)
 	}
 	return d
+}
+
+// clientHeader names the client of a request to the test relay.
+const clientHeader = "X-Test-Client"
+
+// startSignInAs starts a sign-in as client and returns the status and the
+// error code of the answer.
+func (r *relay) startSignInAs(t *testing.T, client string) (int, string) {
+	t.Helper()
+	form := url.Values{"client_id": {signin.ClientID}, "scope": {"openid email"}}
+	req, err := http.NewRequest(http.MethodPost, signin.URL(r.url)+"/device/authorize", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(clientHeader, client)
+	resp, err := r.hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeBody(t, resp)
+	var out tokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding /device/authorize: %v", err)
+	}
+	return resp.StatusCode, out.Error
+}
+
+// startSignInsUntilRefused starts sign-ins as client until the relay
+// refuses one, and returns that refusal.
+func (r *relay) startSignInsUntilRefused(t *testing.T, client string) (int, string) {
+	t.Helper()
+	for range signin.MaxPending {
+		if status, code := r.startSignInAs(t, client); status != http.StatusOK {
+			return status, code
+		}
+	}
+	t.Fatalf("%d sign-ins of one client were all started, want a refusal", signin.MaxPending)
+	return 0, ""
 }
 
 func (r *relay) poll(t *testing.T, deviceCode string) (int, tokenResponse) {
@@ -418,6 +458,58 @@ func TestRefusedRenewalsLeaveRoomForOthers(t *testing.T) {
 	if status, got := r.refresh(t, other.RefreshToken); status != http.StatusOK {
 		t.Fatalf("refresh of another token = %d %q, want 200", status, got.Error)
 	}
+}
+
+func TestRefusedSignInStartsLeaveRoomForOthers(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	if status, code := r.startSignInsUntilRefused(t, "spender"); status != http.StatusTooManyRequests || code != "slow_down" {
+		t.Fatalf("sign-in start over the client's share = %d %q, want 429 slow_down", status, code)
+	}
+	for range 300 {
+		if status, code := r.startSignInAs(t, "spender"); status != http.StatusTooManyRequests {
+			t.Fatalf("repeated sign-in start = %d %q, want 429", status, code)
+		}
+	}
+
+	if status, code := r.startSignInAs(t, "other"); status != http.StatusOK {
+		t.Fatalf("sign-in start of another client = %d %q, want 200", status, code)
+	}
+}
+
+func TestPendingSignInsOfAClientAreCapped(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	r.startSignInsUntilRefused(t, "spender")
+
+	r.clock.advance(signin.DeviceTTL / 2)
+
+	if status, code := r.startSignInAs(t, "spender"); status != http.StatusTooManyRequests || code != "slow_down" {
+		t.Fatalf("sign-in start while the client's sign-ins are pending = %d %q, want 429 slow_down", status, code)
+	}
+	if status, code := r.startSignInAs(t, "other"); status != http.StatusOK {
+		t.Fatalf("sign-in start of another client = %d %q, want 200", status, code)
+	}
+	r.clock.advance(signin.DeviceTTL)
+	if status, code := r.startSignInAs(t, "spender"); status != http.StatusOK {
+		t.Fatalf("sign-in start after the client's sign-ins expired = %d %q, want 200", status, code)
+	}
+}
+
+func TestSignInStartsOfAllClientsAreCapped(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	for n := range signin.MaxPending {
+		status, code := r.startSignInAs(t, fmt.Sprint("client-", n))
+		if status == http.StatusOK {
+			continue
+		}
+		if status != http.StatusServiceUnavailable || code != "slow_down" {
+			t.Fatalf("sign-in start over the relay's limit = %d %q, want 503 slow_down", status, code)
+		}
+		return
+	}
+	t.Fatalf("%d sign-ins of distinct clients were all started, want a refusal", signin.MaxPending)
 }
 
 func TestDeviceFlowAnswers(t *testing.T) {
