@@ -50,8 +50,10 @@ type Front struct {
 	onboarding *httpserver.KeyedLimiter
 	// enrollments and ingress limit how often each client may call the
 	// routes that Agent Mesh limits for all the relay's callers together,
-	// since they all reach it from the relay's address.
-	enrollments, ingress *httpserver.KeyedRate
+	// since they all reach it from the relay's address. ingressClient
+	// limits each client across agents, so that one client can't add keys
+	// to ingress faster than it forgets them.
+	enrollments, ingress, ingressClient *httpserver.KeyedRate
 	// transport is shared by the proxies of each Open, so a reopened front
 	// reuses its connections.
 	transport *http.Transport
@@ -80,6 +82,11 @@ const (
 	// caller's.
 	ingressRate  = 20
 	ingressBurst = 100
+	// One client may call three agents at their full rate. Keys of ingress
+	// last up to twice their refill time, so one client holds at most about
+	// 900 of them.
+	ingressClientRate  = 60
+	ingressClientBurst = 300
 	// maxRateClients bounds the clients that the rate limits track at once.
 	maxRateClients = 10000
 )
@@ -93,13 +100,14 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
 	f := &Front{
-		info:        info,
-		control:     unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
-		proxied:     httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
-		onboarding:  httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
-		enrollments: httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
-		ingress:     httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, clientOfAgent),
-		transport:   upstreamTransport(),
+		info:          info,
+		control:       unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied:       httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		onboarding:    httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
+		enrollments:   httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
+		ingress:       httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, clientOfAgent),
+		ingressClient: httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client),
+		transport:     upstreamTransport(),
 	}
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
@@ -206,7 +214,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case enrollment(p):
 		h = f.enrollments.Handler(h)
 	case under(p, "/ingress"):
-		h = f.ingress.Handler(h)
+		h = f.ingressClient.Handler(f.ingress.Handler(h))
 	}
 	h.ServeHTTP(w, r)
 }
@@ -246,10 +254,15 @@ func Client(r *http.Request) string {
 }
 
 // clientOfAgent identifies the client of a request together with the agent
-// whose public URL it calls, as Agent Mesh does for its ingress limit.
+// whose public URL it calls, as Agent Mesh does for its ingress limit. The
+// requests of a client to paths that name no agent share one key.
 func clientOfAgent(r *http.Request) string {
 	rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
-	peer, _, _ := strings.Cut(rest, "/")
+	seg, _, _ := strings.Cut(rest, "/")
+	peer, ok := canonicalPeer(seg)
+	if !ok {
+		return client(r)
+	}
 	return client(r) + " " + peer
 }
 

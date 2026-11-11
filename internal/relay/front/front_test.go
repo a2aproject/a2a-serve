@@ -16,6 +16,7 @@ package front_test
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multibase"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
@@ -426,37 +430,117 @@ func TestFrontLimitsTheRateOfEachClient(t *testing.T) {
 	}
 }
 
-func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
-	t.Parallel()
-	f, _ := newFront(t)
+// newPeer returns a new peer ID, as an agent on the relay has.
+func newPeer(t *testing.T) peer.ID {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// ingressTryer sends GET requests to an open front from one client and
+// returns their status.
+func ingressTryer(t *testing.T, forwardedFor string) (f *front.Front, serve func(segment string) int) {
+	t.Helper()
+	f, _ = newFront(t)
 	f.Open(upstream(t))
-	serve := func(path string) int {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+	return f, func(segment string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ingress/"+url.PathEscape(segment)+"/a2a/coder/tasks", nil)
 		req.RemoteAddr = "127.0.0.1:1000"
-		req.Header.Set("X-Forwarded-For", "198.51.100.1")
+		req.Header.Set("X-Forwarded-For", forwardedFor)
 		rec := httptest.NewRecorder()
 		f.ServeHTTP(rec, req)
 		return rec.Code
 	}
+}
+
+// refusedWithin sends n requests that cycle through segments and reports
+// whether one got 429.
+func refusedWithin(serve func(string) int, segments []string, n int) bool {
+	for i := range n {
+		if serve(segments[i%len(segments)]) == http.StatusTooManyRequests {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
+	t.Parallel()
+	limited, other := newPeer(t), newPeer(t)
+	tests := []struct {
+		name     string
+		segments []string
+		other    string
+	}{
+		{name: "an agent", segments: []string{limited.String()}, other: other.String()},
+		{name: "spellings of one agent", segments: append([]string{limited.String()}, spellings(t, limited)...), other: peer.ToCid(other).String()},
+		{name: "segments that aren't agents", segments: []string{"not-a-peer", "also-not-a-peer", "1" + strings.Repeat("z", 1000)}, other: limited.String()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, serve := ingressTryer(t, "198.51.100.1")
+
+			refused := refusedWithin(serve, tt.segments, 200)
+			got := serve(tt.other)
+
+			if !refused {
+				t.Fatalf("GET /ingress/<%s> 200 times status = %d, want %d past one agent's burst", tt.name, http.StatusOK, http.StatusTooManyRequests)
+			}
+			if got != http.StatusOK {
+				t.Fatalf("GET /ingress/%.20s… of another agent status = %d, want %d", tt.other, got, http.StatusOK)
+			}
+		})
+	}
+}
+
+// spellings returns the CID forms of id in every multibase that fits in a
+// path segment, which Agent Mesh reads as id.
+func spellings(t *testing.T, id peer.ID) []string {
+	t.Helper()
+	var all []string
+	for base := range multibase.EncodingToStr {
+		s, err := peer.ToCid(id).StringOfBase(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if base == multibase.Identity || strings.Contains(s, "/") {
+			continue
+		}
+		all = append(all, s)
+	}
+	return all
+}
+
+func TestFrontLimitsTheIngressRateOfEachClientAcrossAgents(t *testing.T) {
+	t.Parallel()
+	f, serve := ingressTryer(t, "198.51.100.1")
+
 	refused := false
-	for range 200 {
-		if serve("/ingress/12D3A/a2a/coder/tasks") == http.StatusTooManyRequests {
+	for range 1000 {
+		if serve(newPeer(t).String()) == http.StatusTooManyRequests {
 			refused = true
 			break
 		}
 	}
+	req := httptest.NewRequest(http.MethodGet, "/ingress/"+newPeer(t).String()+"/a2a/coder/tasks", nil)
+	req.RemoteAddr = "127.0.0.1:1001"
+	req.Header.Set("X-Forwarded-For", "198.51.100.2")
+	rec := httptest.NewRecorder()
+	f.ServeHTTP(rec, req)
+
 	if !refused {
-		t.Fatalf("GET /ingress/12D3A/... past the client's burst status = %d, want %d", http.StatusOK, http.StatusTooManyRequests)
+		t.Fatalf("GET /ingress/<new agent> from a client spraying agents status = %d, want %d", http.StatusOK, http.StatusTooManyRequests)
 	}
-
-	sameAgent := serve("/ingress/12D3A/a2a/reviewer/tasks")
-	otherAgent := serve("/ingress/12D3B/a2a/coder/tasks")
-
-	if sameAgent != http.StatusTooManyRequests {
-		t.Fatalf("GET another service of the limited agent status = %d, want %d", sameAgent, http.StatusTooManyRequests)
-	}
-	if otherAgent != http.StatusOK {
-		t.Fatalf("GET another agent from the limited client status = %d, want %d", otherAgent, http.StatusOK)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ingress/<new agent> from another client status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 
