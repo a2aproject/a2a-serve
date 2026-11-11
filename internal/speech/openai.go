@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Bounds of each call of the speech service.
@@ -70,6 +71,9 @@ func newOpenAIClient(cfg Config) *openAIClient {
 	}
 	if cfg.Service == OpenAI {
 		c.base, c.transcribe, c.speak = openAIURL, "gpt-4o-mini-transcribe", "gpt-4o-mini-tts"
+	}
+	if cfg.Voice != "" {
+		c.voice = cfg.Voice
 	}
 	return c
 }
@@ -131,6 +135,18 @@ func (c *openAIClient) Transcribe(ctx context.Context, a Audio) (string, error) 
 		return "", &Error{Reason: "the speech service heard no words", NoWords: true}
 	}
 	return text, nil
+}
+
+// Truncate cuts s to at most n bytes without splitting a character, and
+// marks the cut.
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 // formats are the response formats of /audio/speech, by media type.
@@ -263,8 +279,14 @@ func statusError(resp *http.Response) error {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(data, &body) == nil && body.Error.Message != "" {
-		e.err = errors.New(body.Error.Message)
+	if json.Unmarshal(data, &body) != nil || body.Error.Message == "" {
+		return e
+	}
+	e.err = errors.New(body.Error.Message)
+	// A refused request, such as one with an unknown voice, says what to
+	// change. Refused keys and failures say nothing the owner can act on.
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+		e.Reason = "the speech service refused the request: " + Truncate(body.Error.Message, 200)
 	}
 	return e
 }

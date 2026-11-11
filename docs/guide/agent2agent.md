@@ -45,7 +45,7 @@ When a [speech service](voice.md) is set up, callers can send audio and ask for 
 
 A message with an `audio/*` file part that holds raw bytes is transcribed before the agent sees it. The transcript arrives as the first `working` status of the task. Its message text is `🎤 "<transcript>"`, and its metadata has the transcript under the key `a2a-serve/transcript`.
 
-A caller that lists `audio/ogg` in the `acceptedOutputModes` of its request gets the reply as an extra artifact named "Voice reply", before the task completes. The artifact has one file part, `reply.ogg` with the type `audio/ogg`. A caller that accepts only `audio/mpeg` or `audio/wav` gets `reply.mp3` or `reply.wav`. `audio/*` is accepted too. The speech calls of a caller count against the [limits](voice.md#limits) of that caller.
+A caller that lists `audio/ogg` in the `acceptedOutputModes` of its request gets the reply as an extra artifact named "Voice reply", before the task completes. The agent can choose what is spoken with a [`<speak>` block](voice.md#what-is-spoken), which the server takes out of the reply's text. The artifact has one file part, `reply.ogg` with the type `audio/ogg`. A caller that accepts only `audio/mpeg` or `audio/wav` gets `reply.mp3` or `reply.wav`. `audio/*` is accepted too. The speech calls of a caller count against the [limits](voice.md#limits) of that caller.
 
 ## Cards of other agents
 

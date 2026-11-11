@@ -37,7 +37,7 @@ func checkVoice(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secr
 	if err != nil {
 		return Result{ID: "voice", Status: StatusFail, Message: err.Error(), Fix: fixVoiceKey}, true
 	}
-	transcriber, speaker, err := speech.New(speech.Config{Service: v.Service, Key: key})
+	transcriber, speaker, err := speech.New(speech.Config{Service: v.Service, Key: key, Voice: v.Name})
 	if err != nil {
 		return Result{ID: "voice", Status: StatusFail, Message: err.Error(), Fix: "a2a-serve config set --voice <service>"}, true
 	}

@@ -88,6 +88,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--task-ttl duration` |  | How long finished tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 | `--voice service` |  | Speech service that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1 |
 | `--voice-key string` |  | API key of the --voice service, which the agent doesn't get (secret value: env:VAR, -, or the value) |
+| `--voice-name name` |  | Voice of the spoken replies, a name the --voice service has, such as nova for openai or am_michael for speaches (default: the service's own) |
 
 **Workspace flags**
 
@@ -185,7 +186,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve messenger rm`.
 
-Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, egress, egress-allow, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, inject-header, inject-model-key, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, voice, voice-key, workspace
+Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, egress, egress-allow, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, inject-header, inject-model-key, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, voice, voice-key, voice-name, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

@@ -102,6 +102,9 @@ type Config struct {
 	Service string
 	// Key is the API key of the service, empty if it needs none.
 	Key string
+	// Voice names the voice of the replies; empty takes alloy, which servers
+	// with the OpenAI shape map to a voice of their own.
+	Voice string
 }
 
 // New returns the transcriber and speaker of the configured service.

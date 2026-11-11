@@ -97,6 +97,9 @@ type VoiceConfig struct {
 	// Key references the API key of the service, which the agent doesn't
 	// get.
 	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+	// Name is the voice of the replies, a name of the service such as nova
+	// or am_michael. Empty takes the service's default.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 }
 
 // On reports whether voice is set up, which adds the audio modes to the

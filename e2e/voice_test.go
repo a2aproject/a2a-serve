@@ -45,7 +45,7 @@ func TestVoice(t *testing.T) {
 	owner := newUser(t)
 	owner.env = append(owner.env, telegram.EnvServerURL+"="+api.URL, "E2E_BOT_TOKEN=123:abc", "VOICE_KEY=sk-voice")
 	coder := owner.startAgent("coder")
-	coder.serve("config", "set", "--voice", svc.URL(), "--voice-key", "env:VOICE_KEY", "--restart")
+	coder.serve("config", "set", "--voice", svc.URL(), "--voice-key", "env:VOICE_KEY", "--voice-name", "af_heart", "--restart")
 
 	var checks []doctorCheck
 	coder.serveJSON(&checks, "doctor", "--online")
@@ -85,6 +85,23 @@ func TestVoice(t *testing.T) {
 	api.Say(me, "scheduled again")
 	c.wait(last, func(m telegramtest.Message) bool { return strings.Contains(m.Plain(), "ran scheduled again") })
 	c.wait(last, func(m telegramtest.Message) bool { return m.Voice == "reply.ogg" })
+
+	last = c.lastID()
+	api.Say(me, "speak")
+	long := c.wait(last, func(m telegramtest.Message) bool { return strings.Contains(m.Plain(), "The long answer") })
+	if strings.Contains(long.Plain(), "speak") || strings.Contains(long.Plain(), "short answer") {
+		t.Fatalf("reply = %q, want it without the <speak> block", long.Plain())
+	}
+	c.wait(last, func(m telegramtest.Message) bool { return m.Voice == "reply.ogg" })
+	var spoken []string
+	for _, r := range svc.Requests() {
+		if r.Path == "/v1/audio/speech" && r.Voice == "af_heart" {
+			spoken = append(spoken, r.Input)
+		}
+	}
+	if !slices.Contains(spoken, "The short answer.") {
+		t.Fatalf("spoken texts in voice af_heart = %q, want the <speak> block among them", spoken)
+	}
 
 	req, err := json.Marshal(map[string]any{
 		"message": map[string]any{

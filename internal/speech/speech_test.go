@@ -430,15 +430,93 @@ func TestProse(t *testing.T) {
 		{
 			name:     "long",
 			markdown: long,
-			want:     strings.TrimSpace(strings.Repeat("This sentence is ten words long and then it ends. ", 20)) + " The rest is in the text.",
+			want:     strings.TrimSpace(strings.Repeat("This sentence is ten words long and then it ends. ", 19)) + " The rest is in the text.",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := speech.Prose(tc.markdown); got != tc.want {
+			if got := speech.Prose(tc.markdown, speech.MaxSpoken); got != tc.want {
 				t.Fatalf("Prose() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestProseFitsTheLimit(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("Ünïcödé wörds without a full stop ", 300)
+	for _, limit := range []int{speech.MaxSpoken, speech.MaxSpeechText} {
+		if got := speech.Prose(text, limit); len(got) > limit || !strings.HasSuffix(got, "The rest is in the text.") {
+			t.Fatalf("Prose(%d) = %d bytes ending %q, want at most %d bytes ending with the rest note", limit, len(got), got[max(len(got)-30, 0):], limit)
+		}
+	}
+}
+
+func TestSpeakFilter(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		chunks     []string
+		want       string
+		wantSpoken string
+		wantFound  bool
+	}{
+		{name: "no block", chunks: []string{"Fixed ", "it."}, want: "Fixed it."},
+		{name: "block", chunks: []string{"Long.\n<speak>Short.</speak>"}, want: "Long.\n", wantSpoken: "Short.", wantFound: true},
+		{name: "tags split across chunks", chunks: []string{"Long.\n<spe", "ak>Sho", "rt.</sp", "eak> End."}, want: "Long.\n End.", wantSpoken: "Short.", wantFound: true},
+		{name: "last block wins", chunks: []string{"<speak>One.</speak>a<speak>Two.</speak>b"}, want: "ab", wantSpoken: "Two.", wantFound: true},
+		{name: "unclosed block", chunks: []string{"Long.<speak>Short"}, want: "Long.", wantSpoken: "Short", wantFound: true},
+		{name: "text that looks like a tag start", chunks: []string{"a <", " b <sp", "an>"}, want: "a < b <span>"},
+		{name: "tag start at the end", chunks: []string{"a <spe"}, want: "a <spe"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var f speech.SpeakFilter
+			var got strings.Builder
+			for _, c := range tc.chunks {
+				got.WriteString(f.Write(c))
+			}
+			got.WriteString(f.Flush())
+			spoken, found := f.Spoken()
+			if got.String() != tc.want || spoken != tc.wantSpoken || found != tc.wantFound {
+				t.Fatalf("SpeakFilter = %q, spoken %q, %v, want %q, spoken %q, %v", got.String(), spoken, found, tc.want, tc.wantSpoken, tc.wantFound)
+			}
+		})
+	}
+}
+
+func TestSpeakWithVoice(t *testing.T) {
+	t.Parallel()
+	srv := speechtest.NewServer(t, speechtest.Options{})
+	_, sp, err := speech.New(speech.Config{Service: srv.URL(), Voice: "am_michael"})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	if _, err := sp.Speak(t.Context(), "Done.", []string{"audio/ogg"}); err != nil {
+		t.Fatalf("Speak() error = %v, want nil", err)
+	}
+	if got := srv.Requests()[0].Voice; got != "am_michael" {
+		t.Fatalf("Speak() voice = %q, want am_michael", got)
+	}
+}
+
+func TestSpeakRefusedRequestSaysWhy(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write([]byte(`{"error":{"message":"Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."}}`)); err != nil {
+			t.Logf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, sp, err := speech.New(speech.Config{Service: srv.URL, Voice: "robot"})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	_, err = sp.Speak(t.Context(), "Done.", []string{"audio/ogg"})
+	if want := "the speech service refused the request: Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."; speech.Reason(err) != want {
+		t.Fatalf("Speak() error = %v, want %q", err, want)
 	}
 }
