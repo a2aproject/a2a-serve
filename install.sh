@@ -12,7 +12,7 @@
 #   A2A_NO_SETUP=1     skip doctor --fix and the setup question
 set -eu
 
-INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
+INSTALL_DIR=${INSTALL_DIR:-"${HOME:?set INSTALL_DIR or HOME}/.local/bin"}
 SERVE_REPO=https://github.com/a2aproject/a2a-serve
 CLI_REPO=https://github.com/a2aproject/a2a-cli
 # Overridable for tests: the base URL of a release's downloads, without the tag.
@@ -106,19 +106,18 @@ main() {
   "$INSTALL_DIR/a2a-serve" doctor --fix || true
 
   say ""
-  # start refuses a workspace that holds the home directory, where `curl | sh`
-  # runs from a new terminal, so the offer is only made in a project
-  # directory.
-  home=$(cd "${HOME:-/}" 2>/dev/null && pwd -P || echo /)
-  here=$(pwd -P)
-  holds_home=false
-  if [ "$here" = / ]; then
-    holds_home=true
+  # start needs HOME, and refuses a workspace that holds the home directory,
+  # where `curl | sh` runs from a new terminal, so the offer is only made in
+  # a project directory.
+  offer=false
+  if [ -n "${HOME:-}" ] && home=$(cd "$HOME" 2>/dev/null && pwd -P); then
+    here=$(pwd -P)
+    case "$home/" in
+      "$here"/*) ;;
+      *) [ "$here" = / ] || offer=true ;;
+    esac
   fi
-  case "$home/" in
-    "$here"/*) holds_home=true ;;
-  esac
-  if ! $holds_home && [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+  if $offer && [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
     printf 'Set up an agent in %s now? [y/N] ' "$PWD" >/dev/tty
     read -r answer </dev/tty || answer=
     case "$answer" in
