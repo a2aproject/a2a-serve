@@ -372,6 +372,60 @@ func TestFrontLimitsEachClient(t *testing.T) {
 	}
 }
 
+func TestFrontLimitsTheRateOfEachClient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, method, path string
+		burst              int
+	}{
+		{name: "registration", method: http.MethodPost, path: "/register", burst: 10},
+		{name: "enrollment", method: http.MethodPost, path: "/enroll", burst: 10},
+		{name: "enrollment status", method: http.MethodGet, path: "/enroll/status", burst: 10},
+		{name: "agent's public URL", method: http.MethodGet, path: "/ingress/12D3/a2a/coder/tasks", burst: 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, _ := newFront(t)
+			f.Open(upstream(t))
+			serve := func(c client) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(tt.method, tt.path, nil)
+				req.RemoteAddr = c.remoteAddr
+				req.Header.Set("X-Forwarded-For", c.forwardedFor)
+				rec := httptest.NewRecorder()
+				f.ServeHTTP(rec, req)
+				return rec
+			}
+			a := client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1"}
+			b := client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2"}
+
+			for i := range tt.burst {
+				if got := serve(a).Code; got != http.StatusOK {
+					t.Fatalf("%s %s %d of a client status = %d, want %d", tt.method, tt.path, i+1, got, http.StatusOK)
+				}
+			}
+			var refused *httptest.ResponseRecorder
+			for range tt.burst {
+				if rec := serve(a); rec.Code != http.StatusOK {
+					refused = rec
+					break
+				}
+			}
+			other := serve(b)
+
+			if refused == nil {
+				t.Fatalf("%s %s past the client's burst status = %d, want %d", tt.method, tt.path, http.StatusOK, http.StatusTooManyRequests)
+			}
+			if refused.Code != http.StatusTooManyRequests || refused.Header().Get("Retry-After") == "" || refused.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("%s %s past the client's burst = %d with Retry-After %q and Content-Type %q, want %d with Retry-After and JSON", tt.method, tt.path, refused.Code, refused.Header().Get("Retry-After"), refused.Header().Get("Content-Type"), http.StatusTooManyRequests)
+			}
+			if other.Code != http.StatusOK {
+				t.Fatalf("%s %s of another client status = %d, want %d", tt.method, tt.path, other.Code, http.StatusOK)
+			}
+		})
+	}
+}
+
 func TestFrontTellsClientsApart(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
