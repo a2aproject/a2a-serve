@@ -112,10 +112,7 @@ func (s *Store) ContextOf(ctx context.Context, messenger, conv string) (string, 
 
 // SetContext binds a messenger conversation to an A2A context.
 func (s *Store) SetContext(ctx context.Context, messenger, conv, contextID string) error {
-	_, err := s.exec(ctx, `INSERT INTO convs (messenger, conv, context_id, updated) VALUES (?, ?, ?, ?)
-		ON CONFLICT (messenger, conv) DO UPDATE SET context_id = excluded.context_id, updated = excluded.updated`,
-		messenger, conv, contextID, s.now().UnixNano())
-	return err
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.setContextTx(ctx, tx, messenger, conv, contextID) })
 }
 
 // ConvOf returns the messenger conversation bound to an A2A context.

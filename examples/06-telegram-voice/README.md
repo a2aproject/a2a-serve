@@ -8,6 +8,7 @@ This example sets up an agent that you talk to from Telegram with voice notes, a
 - How to give the server a speech service: a hosted one with an API key, or one on your machine
 - How voice notes reach the agent, and how to check what it heard
 - How to turn voice replies on and off with `/voice`
+- How to go back to an earlier conversation with `/conversations`
 - How an A2A caller finds out that the agent takes audio
 
 ## Prerequisites
@@ -128,7 +129,26 @@ bot → The recipe scaler: one page, no backend.
 
 With voice on, every answer comes as text and a voice note, also when you type. Code, tables and links stay in the text. `/voice off` goes back to text replies. The setting is yours, and other people keep their own.
 
-## 8. Check the agent card
+## 8. Go back to an earlier conversation
+
+`/new` starts a new conversation, and `/conversations` takes you back to an earlier one:
+
+```
+you → /new
+bot → Started a new conversation. /conversations lists the earlier ones.
+you → What's a good name for a recipe app?
+bot → Pinch.
+you → /conversations
+bot → Your recent conversations here:
+      [ Now: 1 turn, "What's a good name for a recip…" ]
+      [ 5 minutes ago: 2 turns, voice note ]
+you → (taps "5 minutes ago")
+bot → Switched to the conversation from 5 minutes ago.
+```
+
+The agent continues the conversation about ideas.md.
+
+## 9. Check the agent card
 
 A2A callers can send audio too. In a second terminal, from the agent's directory, print the audio types on the agent card:
 

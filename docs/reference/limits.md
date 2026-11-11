@@ -67,6 +67,7 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | --- | --- |
 | Attachment size | 20 MiB. The chat says when an attachment isn't passed to the agent. |
 | Pairing code | Works once, for 15 minutes |
+| Conversations `/conversations` lists for each person in a chat | 10 |
 
 ## Voice
 

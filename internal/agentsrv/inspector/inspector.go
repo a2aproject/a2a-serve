@@ -349,7 +349,7 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 		if j, ok := index[t.ContextID]; ok {
 			out[j].Tasks++
 			if sum.Prompt != nil {
-				out[j].Snippet = snippet(a2atext.Message(sum.Prompt))
+				out[j].Snippet = a2atext.Snippet(a2atext.Message(sum.Prompt), 100)
 			}
 			continue
 		}
@@ -358,7 +358,7 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 			c.Updated = *t.Status.Timestamp
 		}
 		if sum.Prompt != nil {
-			c.Snippet = snippet(a2atext.Message(sum.Prompt))
+			c.Snippet = a2atext.Snippet(a2atext.Message(sum.Prompt), 100)
 		}
 		if ch, _, err := in.deps.Store.ConvOf(ctx, t.ContextID); err == nil {
 			c.Chat = ch
@@ -369,14 +369,6 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 		out = append(out, c)
 	}
 	return out, nil
-}
-
-func snippet(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > 100 {
-		return string(r[:100]) + "…"
-	}
-	return s
 }
 
 type message struct {

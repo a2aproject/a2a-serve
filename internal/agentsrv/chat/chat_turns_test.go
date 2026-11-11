@@ -350,7 +350,7 @@ func TestChatTurnsKeepsContextUntilNewConversation(t *testing.T) {
 	hello()
 	hello()
 	fx.ch.Write("telegram:1", "dm1", "/new")
-	fx.ch.WaitFor(t, "dm1", messengertest.HasText("Started a new conversation."))
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText(newConversationReply))
 	hello()
 
 	if contexts[0] == "" || contexts[0] != contexts[1] {
@@ -364,7 +364,7 @@ func TestChatTurnsKeepsContextUntilNewConversation(t *testing.T) {
 	}
 }
 
-const helpList = "Commands:\n/new - Start a new conversation\n/stop - Stop the current task\n/allowed - Show and remove what runs without asking for you\n/voice - Turn voice replies on or off for you\n/help - List the commands"
+const helpList = "Commands:\n/new - Start a new conversation\n/conversations - List your recent conversations and switch back to one\n/stop - Stop the current task\n/allowed - Show and remove what runs without asking for you\n/voice - Turn voice replies on or off for you\n/help - List the commands"
 
 const startText = "Hi! I'm coder. Write what you need.\n\n" + helpList
 
@@ -410,7 +410,17 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 		{
 			name:     "new tells it started a conversation",
 			identity: "telegram:1", conv: "dm1", text: "/new",
-			want: "Started a new conversation.",
+			want: newConversationReply,
+		},
+		{
+			name:     "conversations without any yet",
+			identity: "telegram:1", conv: "dm1", text: "/conversations",
+			want: "You have no conversations here yet.",
+		},
+		{
+			name:     "conversations with a number not in the list",
+			identity: "telegram:1", conv: "dm1", text: "/conversations 3",
+			want: "Send /conversations to see your conversations, then /conversations <number> to switch to one.",
 		},
 		{
 			name:     "unknown sender is told how to link",

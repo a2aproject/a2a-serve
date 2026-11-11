@@ -97,13 +97,25 @@ func testTelegramJourney(t *testing.T, api *telegramtest.Server, token string, m
 
 	c.say("remember banana", "OK.")
 	c.say("recall", "You said: banana")
-	c.say("/new", "Started a new conversation.")
+	c.say("/new", "Started a new conversation. /conversations lists the earlier ones.")
 	c.say("recall", "You said:")
+	list := c.sayAndWait("/conversations", func(m telegramtest.Message) bool { return len(m.Buttons) == 2 })
+	if got := list.Buttons[0].Text; got != `Now: 1 turn, "recall"` {
+		t.Fatalf("first button of /conversations = %q, want the current conversation", got)
+	}
+	last := c.lastID()
+	if err := api.Press(me, list, list.Buttons[1].Text); err != nil {
+		t.Fatal(err)
+	}
+	c.wait(last, func(m telegramtest.Message) bool {
+		return strings.HasPrefix(m.Plain(), "Switched to the conversation from ") && strings.HasSuffix(m.Plain(), `: "hello".`)
+	})
+	c.say("recall", "You said: banana")
 
 	c.sayAndWait("slow", func(m telegramtest.Message) bool { return strings.Contains(m.Plain(), "...") })
 	c.say("/stop", "Stopped.")
 
-	last := c.lastID()
+	last = c.lastID()
 	coder.serve("schedule", "add", "ping", "--cron", "@daily", "--prompt", "scheduled ping", "--chat", "telegram")
 	coder.serve("schedule", "run", "ping")
 	c.wait(last, func(m telegramtest.Message) bool { return strings.Contains(m.Plain(), "scheduled ping") })

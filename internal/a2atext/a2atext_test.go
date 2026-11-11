@@ -51,6 +51,28 @@ func TestMessage(t *testing.T) {
 	}
 }
 
+func TestSnippet(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		s    string
+		want string
+	}{
+		{name: "short", s: "fix the tests", want: "fix the tests"},
+		{name: "spaces joined", s: " fix\n the\ttests ", want: "fix the tests"},
+		{name: "long cut", s: "migrate the CLI tests", want: "migrate the CLI…"},
+		{name: "cut by character", s: "привет, как дела", want: "привет, как дел…"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Snippet(tc.s, 15); got != tc.want {
+				t.Fatalf("Snippet(%q) = %q, want %q", tc.s, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergeChunks(t *testing.T) {
 	t.Parallel()
 	text := a2a.NewTextPart

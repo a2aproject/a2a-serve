@@ -347,6 +347,16 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		_, err := tx.ExecContext(ctx, `CREATE TABLE voice_replies (user_id TEXT PRIMARY KEY, created INTEGER NOT NULL)`)
 		return err
 	},
+	// 28: the recent contexts of each person in each messenger
+	// conversation, which /conversations switches between.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TABLE conv_history (
+	messenger TEXT NOT NULL, conv TEXT NOT NULL, user_id TEXT NOT NULL, context_id TEXT NOT NULL, used INTEGER NOT NULL,
+	PRIMARY KEY (messenger, conv, user_id, context_id));
+CREATE INDEX conv_history_user ON conv_history (user_id);
+CREATE INDEX conv_history_context ON conv_history (context_id)`)
+		return err
+	},
 }
 
 const schemaV21 = `

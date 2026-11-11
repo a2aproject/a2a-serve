@@ -31,7 +31,8 @@ import (
 
 // handleAction answers a question from a button click.
 func (c *ChatTurns) handleAction(ctx context.Context, ch messenger.Messenger, in messenger.Inbound) {
-	if id := in.Action.QuestionID; c.prefs != nil && (strings.HasPrefix(id, suggestionPrefix) || strings.HasPrefix(id, allowedPrefix)) {
+	id := in.Action.QuestionID
+	if strings.HasPrefix(id, conversationsPrefix) || (c.prefs != nil && (strings.HasPrefix(id, suggestionPrefix) || strings.HasPrefix(id, allowedPrefix))) {
 		p, err := c.chain.Authenticate(ctx, auth.Request{Messenger: &in})
 		if auth.Refused(err) {
 			return
@@ -40,9 +41,12 @@ func (c *ChatTurns) handleAction(ctx context.Context, ch messenger.Messenger, in
 			slog.Error("authenticating messenger action", "error", err)
 			return
 		}
-		if strings.HasPrefix(id, suggestionPrefix) {
+		switch {
+		case strings.HasPrefix(id, conversationsPrefix):
+			c.handleConversationButton(ctx, ch, in, p)
+		case strings.HasPrefix(id, suggestionPrefix):
 			c.handleSuggestion(ctx, ch, in, p)
-		} else {
+		default:
 			c.handleRemove(ctx, ch, in, p)
 		}
 		return
