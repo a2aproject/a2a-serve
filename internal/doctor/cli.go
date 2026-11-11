@@ -29,10 +29,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
-// installA2A installs the latest a2a CLI.
-const installA2A = "go install github.com/a2aproject/a2a-cli@latest" +
-	` && mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"`
-
 // installServe installs the latest a2a-serve without cgo, which the
 // launcher of the Docker sandbox's network needs.
 const installServe = "CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest"
@@ -73,11 +69,12 @@ func cliChecks(ctx context.Context, env Env) []Result {
 }
 
 func checkA2A(ctx context.Context, env Env) Result {
-	fail := func(msg, detail string) Result {
-		return Result{ID: "a2a", Status: StatusFail, Message: msg, Detail: detail, Fix: installA2A}
-	}
 	path, err := env.LookPath(a2acli.Binary)
+	fail := func(msg, detail string) Result {
+		return Result{ID: "a2a", Status: StatusFail, Message: msg, Detail: detail, Fix: env.a2aLocations().install(path)}
+	}
 	if err != nil {
+		path = ""
 		return fail("a2a not on PATH", "callers send tasks with it, and agents without a sandbox call other agents with it")
 	}
 	out, err := env.Run(ctx, path, "version", "-o", "json")
