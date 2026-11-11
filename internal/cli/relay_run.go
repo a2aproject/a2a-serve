@@ -320,7 +320,7 @@ func relayMeshLog(cfg *globalConfig, d relaydir.Dir) (io.Writer, func(), error) 
 // installRelayService installs the relay as a user service and waits until
 // it answers on its control socket.
 func installRelayService(ctx context.Context, cfg *globalConfig, d relaydir.Dir) error {
-	exe, err := os.Executable()
+	exe, err := service.Executable()
 	if err != nil {
 		return err
 	}

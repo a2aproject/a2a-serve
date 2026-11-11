@@ -947,6 +947,31 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusOK}},
 		},
 		{
+			name: "service at the PATH link of this binary",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				root := t.TempDir()
+				m.self = filepath.Join(root, "Cellar", "a2a-serve", "1.0.0", "bin", "a2a-serve")
+				if err := os.MkdirAll(filepath.Dir(m.self), 0o755); err != nil {
+					t.Fatalf("os.MkdirAll() error = %v", err)
+				}
+				if err := os.WriteFile(m.self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+				link := filepath.Join(root, "bin", "a2a-serve")
+				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+					t.Fatalf("os.MkdirAll() error = %v", err)
+				}
+				if err := os.Symlink(m.self, link); err != nil {
+					t.Fatalf("os.Symlink() error = %v", err)
+				}
+				m.paths["a2a-serve"] = link
+				m.unit = writeFile(t, "ExecStart="+link+" start --dir "+d.Root+"\n")
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusOK}},
+		},
+		{
 			name: "service without start",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
