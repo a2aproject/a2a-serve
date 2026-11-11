@@ -154,7 +154,7 @@ func TestVoiceTurn(t *testing.T) {
 			parts:     []*a2a.Part{a2a.NewTextPart("what changed?")},
 			accepted:  []string{"audio/ogg"},
 			want:      []string{"task:submitted", "status:working", "artifact:Fixed it.", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
-			wantAgent: []string{"what changed?"},
+			wantAgent: []string{speakLinePrefix, "what changed?"},
 			wantSpoke: []string{"Fixed it."},
 		},
 		{
@@ -180,7 +180,7 @@ func TestVoiceTurn(t *testing.T) {
 			parts:     []*a2a.Part{a2a.NewTextPart("what changed?")},
 			accepted:  []string{"audio/ogg"},
 			want:      []string{"task:submitted", "status:working", "artifact:Fixed it.", "artifact:(The voice reply failed: the speech service refused the key.)", "status:completed"},
-			wantAgent: []string{"what changed?"},
+			wantAgent: []string{speakLinePrefix, "what changed?"},
 			wantSpoke: []string{"Fixed it."},
 		},
 	}
@@ -209,7 +209,11 @@ func TestVoiceTurn(t *testing.T) {
 			var gotAgent []string
 			if agent.got != nil {
 				for _, p := range agent.got.Parts {
-					gotAgent = append(gotAgent, p.Text())
+					text := p.Text()
+					if strings.HasPrefix(text, speakLinePrefix) {
+						text = speakLinePrefix
+					}
+					gotAgent = append(gotAgent, text)
 				}
 			}
 			if diff := cmp.Diff(tc.wantAgent, gotAgent); diff != "" {
@@ -329,11 +333,33 @@ func TestChatVoiceTurn(t *testing.T) {
 
 	ts.ch.Write("telegram:1", "dm1", "/voice on")
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Voice replies are on."))
+	ts.ch.Write("telegram:1", "dm1", "speak")
+	_, long := ts.ch.WaitFor(t, "dm1", messengertest.HasText("The long answer, with details."))
+	if strings.Contains(long.Text, "speak") || strings.Contains(long.Text, "short answer") {
+		t.Fatalf("reply text = %q, want it without the <speak> block", long.Text)
+	}
+	ts.ch.WaitFor(t, "dm1", func(m messenger.Outbound) bool { return len(m.Files) > 0 })
 	ts.ch.Write("telegram:1", "dm1", "scheduled again")
-	_, voice := ts.ch.WaitFor(t, "dm1", func(m messenger.Outbound) bool { return len(m.Files) > 0 })
-	want := []messenger.File{{Name: "reply.ogg", MediaType: "audio/ogg", Data: speechtest.Speech, Voice: true}}
-	if diff := cmp.Diff(want, voice.Files); diff != "" {
-		t.Fatalf("voice reply wrong files (-want +got) diff = %s", diff)
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("ran scheduled again"))
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var voices [][]messenger.File
+		for _, m := range ts.ch.Transcript() {
+			if len(m.Files) > 0 {
+				voices = append(voices, m.Files)
+			}
+		}
+		if len(voices) == 2 {
+			want := []messenger.File{{Name: "reply.ogg", MediaType: "audio/ogg", Data: speechtest.Speech, Voice: true}}
+			if diff := cmp.Diff(want, voices[1]); diff != "" {
+				t.Fatalf("voice reply wrong files (-want +got) diff = %s", diff)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("voice replies = %d, want 2", len(voices))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	var spoken []string
 	for _, r := range svc.Requests() {
@@ -341,8 +367,148 @@ func TestChatVoiceTurn(t *testing.T) {
 			spoken = append(spoken, r.Input)
 		}
 	}
-	if diff := cmp.Diff([]string{"ran scheduled again."}, spoken); diff != "" {
+	if diff := cmp.Diff([]string{"The short answer.", "ran scheduled again."}, spoken); diff != "" {
 		t.Fatalf("spoken texts wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+// chunkedTurn is an agent turn that streams its reply in chunks and
+// records the message it got.
+type chunkedTurn struct {
+	chunks []string
+	got    *a2a.Message
+}
+
+func (c *chunkedTurn) run(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	c.got = execCtx.Message
+	evs := []a2a.Event{a2a.NewSubmittedTask(execCtx, execCtx.Message)}
+	first := a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(c.chunks[0]))
+	evs = append(evs, first)
+	for _, chunk := range c.chunks[1:] {
+		evs = append(evs, a2a.NewArtifactUpdateEvent(execCtx, first.Artifact.ID, a2a.NewTextPart(chunk)))
+	}
+	return eventsOf(append(evs, a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil))...)
+}
+
+func TestVoiceTurnSpeaksTheSpeakBlock(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		accepted  []string
+		stored    *a2a.Task
+		chunks    []string
+		want      []string
+		wantSpoke []string
+		wantLine  bool
+	}{
+		{
+			name:      "block split across chunks",
+			accepted:  []string{"audio/ogg"},
+			chunks:    []string{"Long answer.\n<spe", "ak>Short answer.</sp", "eak>"},
+			want:      []string{"task:submitted", "artifact:Long answer.\n", "artifact:", "artifact:", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Short answer."},
+			wantLine:  true,
+		},
+		{
+			name:      "no block speaks the start",
+			accepted:  []string{"audio/ogg"},
+			chunks:    []string{"Long answer."},
+			want:      []string{"task:submitted", "artifact:Long answer.", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Long answer."},
+			wantLine:  true,
+		},
+		{
+			name:   "block without voice reply is still removed",
+			chunks: []string{"Long answer.\n<speak>Short.</speak>"},
+			want:   []string{"task:submitted", "artifact:Long answer.\n", "status:completed"},
+		},
+		{
+			name:   "block alone without voice reply is shown",
+			chunks: []string{"<speak>Yes, the build passes.</speak>"},
+			want:   []string{"task:submitted", "artifact:", "artifact:Yes, the build passes.", "status:completed"},
+		},
+		{
+			name:      "block in code is kept",
+			accepted:  []string{"audio/ogg"},
+			chunks:    []string{"Wrap it in `<speak>` tags."},
+			want:      []string{"task:submitted", "artifact:Wrap it in `<speak>` tags.", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Wrap it in tags."},
+			wantLine:  true,
+		},
+		{
+			name:      "unfinished tag start is shown at the end",
+			accepted:  []string{"audio/ogg"},
+			chunks:    []string{"Compare:\n<sp"},
+			want:      []string{"task:submitted", "artifact:Compare:\n", "artifact:<sp", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Compare: <sp."},
+			wantLine:  true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &speechtest.Fake{}
+			v := newVoiceTurns(fake, fake, time.Now, context.Background())
+			execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("why?")), TaskID: "t1", ContextID: "c1", StoredTask: tc.stored}
+			agent := &chunkedTurn{chunks: tc.chunks}
+			ctx := withAcceptedModes(auth.WithPrincipal(t.Context(), auth.Owner()), tc.accepted)
+			var got []a2a.Event
+			for ev, err := range v.turn(ctx, execCtx, agent.run) {
+				if err != nil {
+					t.Fatalf("voiceTurns.turn() error = %v", err)
+				}
+				got = append(got, ev)
+			}
+			if diff := cmp.Diff(tc.want, describeVoice(got)); diff != "" {
+				t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantSpoke, fake.Spoken()); diff != "" {
+				t.Fatalf("voiceTurns.turn() wrong spoken texts (-want +got) diff = %s", diff)
+			}
+			gotLine := strings.HasPrefix(agent.got.Parts[0].Text(), speakLinePrefix)
+			if gotLine != tc.wantLine {
+				t.Fatalf("agent message has the speak line = %v, want %v", gotLine, tc.wantLine)
+			}
+		})
+	}
+}
+
+func TestVoiceTurnShowsBlockWhenSpeechFails(t *testing.T) {
+	t.Parallel()
+	fake := &speechtest.Fake{SpeakErr: &speech.Error{Reason: "the speech service timed out"}}
+	v := newVoiceTurns(fake, fake, time.Now, context.Background())
+	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("does it build?")), TaskID: "t1", ContextID: "c1"}
+	agent := &chunkedTurn{chunks: []string{"<speak>Yes, the build passes.</speak>"}}
+	ctx := withAcceptedModes(auth.WithPrincipal(t.Context(), auth.Owner()), []string{"audio/ogg"})
+	var got []a2a.Event
+	for ev, err := range v.turn(ctx, execCtx, agent.run) {
+		if err != nil {
+			t.Fatalf("voiceTurns.turn() error = %v", err)
+		}
+		got = append(got, ev)
+	}
+	want := []string{"task:submitted", "artifact:", "artifact:Yes, the build passes.", "artifact:(The voice reply failed: the speech service timed out.)", "status:completed"}
+	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
+		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
+	}
+}
+
+func TestVoiceTurnKeepsAnswersAlone(t *testing.T) {
+	t.Parallel()
+	fake := &speechtest.Fake{}
+	v := newVoiceTurns(fake, fake, time.Now, context.Background())
+	question := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?"))
+	stored := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: question}}
+	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("main")), TaskID: "t1", ContextID: "c1", StoredTask: stored}
+	agent := &chunkedTurn{chunks: []string{"Pushed to main."}}
+	ctx := withAcceptedModes(auth.WithPrincipal(t.Context(), auth.Owner()), []string{"audio/ogg"})
+	for _, err := range v.turn(ctx, execCtx, agent.run) {
+		if err != nil {
+			t.Fatalf("voiceTurns.turn() error = %v", err)
+		}
+	}
+	if len(agent.got.Parts) != 1 || agent.got.Parts[0].Text() != "main" {
+		t.Fatalf("agent message = %v, want the answer alone", agent.got.Parts)
 	}
 }
 

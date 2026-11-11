@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -430,15 +431,128 @@ func TestProse(t *testing.T) {
 		{
 			name:     "long",
 			markdown: long,
-			want:     strings.TrimSpace(strings.Repeat("This sentence is ten words long and then it ends. ", 20)) + " The rest is in the text.",
+			want:     strings.TrimSpace(strings.Repeat("This sentence is ten words long and then it ends. ", 19)) + " The rest is in the text.",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := speech.Prose(tc.markdown); got != tc.want {
+			if got := speech.Prose(tc.markdown, speech.MaxSpoken); got != tc.want {
 				t.Fatalf("Prose() = %q, want %q", got, tc.want)
 			}
 		})
 	}
+}
+
+func TestProseFitsTheLimit(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("Ünïcödé wörds without a full stop ", 300)
+	for _, limit := range []int{speech.MaxSpoken, speech.MaxSpeechText} {
+		got := speech.Prose(text, limit)
+		if utf8.RuneCountInString(got) > limit || len(got) > speech.MaxSpeechText || !strings.HasSuffix(got, "The rest is in the text.") {
+			t.Fatalf("Prose(%d) = %d characters, %d bytes, want at most %d characters and %d bytes, ending with the rest note", limit, utf8.RuneCountInString(got), len(got), limit, speech.MaxSpeechText)
+		}
+	}
+}
+
+func TestSpeakFilter(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		chunks     []string
+		want       string
+		wantSpoken string
+		wantFound  bool
+	}{
+		{name: "no block", chunks: []string{"Fixed ", "it."}, want: "Fixed it."},
+		{name: "block", chunks: []string{"Long.\n<speak>Short.</speak>"}, want: "Long.\n", wantSpoken: "Short.", wantFound: true},
+		{name: "tags split across chunks", chunks: []string{"Long.\n  <spe", "ak>Sho", "rt.</sp", "eak>", "\nEnd."}, want: "Long.\n\nEnd.", wantSpoken: "Short.", wantFound: true},
+		{name: "closing tag inside a line", chunks: []string{"<speak> is the SSML root.\nIt ends with </speak>, and more text."}, want: "<speak> is the SSML root.\nIt ends with </speak>, and more text."},
+		{name: "indented code", chunks: []string{"Example:\n\n    <speak>Hello</speak>\n"}, want: "Example:\n\n    <speak>Hello</speak>\n"},
+		{name: "nested fences", chunks: []string{"````md\n```xml\n<speak>Hi</speak>\n```\n````\n<speak>Short.</speak>"}, want: "````md\n```xml\n<speak>Hi</speak>\n```\n````\n", wantSpoken: "Short.", wantFound: true},
+		{name: "block past the limit is text", chunks: []string{"<speak>" + strings.Repeat("x", 20000)}, want: "<speak>" + strings.Repeat("x", 20000)},
+		{name: "last block wins", chunks: []string{"<speak>One.</speak>\n<speak>Two.</speak>\nb"}, want: "\n\nb", wantSpoken: "Two.", wantFound: true},
+		{name: "unclosed block stays text", chunks: []string{"Long.\n<speak>Short"}, want: "Long.\n<speak>Short"},
+		{name: "tag in a sentence", chunks: []string{"Wrap SSML in `<speak>`. Then call the API."}, want: "Wrap SSML in `<speak>`. Then call the API."},
+		{name: "tag in a code fence", chunks: []string{"Use:\n``", "`xml\n<speak>Hi</speak>\n```\nDone."}, want: "Use:\n```xml\n<speak>Hi</speak>\n```\nDone."},
+		{name: "block after a code fence", chunks: []string{"```\nx\n```\n<speak>Short.</speak>"}, want: "```\nx\n```\n", wantSpoken: "Short.", wantFound: true},
+		{name: "text that looks like a tag start", chunks: []string{"a <", " b <sp", "an>"}, want: "a < b <span>"},
+		{name: "non-ascii lines", chunks: []string{"Привет\nмир\n<speak>Да.</speak>"}, want: "Привет\nмир\n", wantSpoken: "Да.", wantFound: true},
+		{name: "tag start at the end of the stream", chunks: []string{"x\n<spe"}, want: "x\n<spe"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var f speech.SpeakFilter
+			var got strings.Builder
+			for _, c := range tc.chunks {
+				got.WriteString(f.Write(c))
+			}
+			got.WriteString(f.Flush())
+			spoken, found := f.Spoken()
+			if got.String() != tc.want || spoken != tc.wantSpoken || found != tc.wantFound {
+				t.Fatalf("SpeakFilter = %q, spoken %q, %v, want %q, spoken %q, %v", got.String(), spoken, found, tc.want, tc.wantSpoken, tc.wantFound)
+			}
+		})
+	}
+}
+
+func TestSpeakWithVoice(t *testing.T) {
+	t.Parallel()
+	srv := speechtest.NewServer(t, speechtest.Options{})
+	_, sp, err := speech.New(speech.Config{Service: srv.URL(), Voice: "am_michael"})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	if _, err := sp.Speak(t.Context(), "Done.", []string{"audio/ogg"}); err != nil {
+		t.Fatalf("Speak() error = %v, want nil", err)
+	}
+	if got := srv.Requests()[0].Voice; got != "am_michael" {
+		t.Fatalf("Speak() voice = %q, want am_michael", got)
+	}
+}
+
+func TestSpeakRefusedRequestSaysWhy(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write([]byte(`{"error":{"message":"Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."}}`)); err != nil {
+			t.Logf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, sp, err := speech.New(speech.Config{Service: srv.URL, Voice: "robot"})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	_, err = sp.Speak(t.Context(), "Done.", []string{"audio/ogg"})
+	if want := "the speech service refused the request: Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."; speech.Reason(err) != want {
+		t.Fatalf("Speak() error = %v, want %q", err, want)
+	}
+}
+
+func FuzzSpeakFilterIgnoresChunking(f *testing.F) {
+	f.Add("Long.\n<speak>Short.</speak> End.", uint(9))
+	f.Add("```\n<speak>x</speak>\n```\n<speak>y", uint(4))
+	f.Fuzz(func(t *testing.T, text string, split uint) {
+		run := func(chunks ...string) (string, string, bool) {
+			var sf speech.SpeakFilter
+			var out strings.Builder
+			for _, c := range chunks {
+				out.WriteString(sf.Write(c))
+			}
+			out.WriteString(sf.Flush())
+			spoken, found := sf.Spoken()
+			return out.String(), spoken, found
+		}
+		at := int(split % uint(len(text)+1))
+		wantOut, wantSpoken, wantFound := run(text)
+		gotOut, gotSpoken, gotFound := run(text[:at], text[at:])
+		if gotOut != wantOut || gotSpoken != wantSpoken || gotFound != wantFound {
+			t.Fatalf("SpeakFilter split at %d = %q, %q, %v, want %q, %q, %v", at, gotOut, gotSpoken, gotFound, wantOut, wantSpoken, wantFound)
+		}
+		if !strings.Contains(text, "<speak>") && wantOut != text {
+			t.Fatalf("SpeakFilter(%q) = %q, want the text unchanged", text, wantOut)
+		}
+	})
 }

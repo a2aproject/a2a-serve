@@ -20,7 +20,8 @@ import (
 	"unicode/utf8"
 )
 
-// MaxSpoken is about how many characters of a reply are spoken.
+// MaxSpoken is about how many characters of a reply are spoken when the
+// agent didn't choose what to speak.
 const MaxSpoken = 1000
 
 // restNote ends a reply cut at MaxSpoken.
@@ -36,9 +37,9 @@ var (
 )
 
 // Prose returns the part of a markdown reply that is read aloud: its text
-// without code blocks, tables, links and markup, cut at a sentence near
-// MaxSpoken characters.
-func Prose(markdown string) string {
+// without code blocks, tables, links and markup, cut at a sentence within
+// limit characters and within the MaxSpeechText bytes the services speak.
+func Prose(markdown string, limit int) string {
 	var lines []string
 	fence := ""
 	for line := range strings.SplitSeq(markdown, "\n") {
@@ -56,6 +57,7 @@ func Prose(markdown string) string {
 		if strings.HasPrefix(trimmed, "|") || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
 			continue
 		}
+		trimmed = strings.NewReplacer(speakOpen, "", speakClose, "").Replace(trimmed)
 		trimmed = strings.TrimLeft(trimmed, "#> ")
 		trimmed = listMark.ReplaceAllString(trimmed, "")
 		trimmed = mdLink.ReplaceAllString(trimmed, "$1")
@@ -71,28 +73,37 @@ func Prose(markdown string) string {
 		}
 		lines = append(lines, trimmed)
 	}
-	return cut(strings.Join(lines, " "))
+	return cut(strings.Join(lines, " "), limit)
 }
 
-// cut shortens text to the last sentence that ends within MaxSpoken
-// characters, and says that the rest is in the text.
-func cut(text string) string {
-	if utf8.RuneCountInString(text) <= MaxSpoken {
+// cut shortens text to the last sentence that ends within limit
+// characters and MaxSpeechText bytes, and says that the rest is in the
+// text.
+func cut(text string, limit int) string {
+	end := len(text)
+	if n := 0; utf8.RuneCountInString(text) > limit {
+		for i := range text {
+			if n == limit {
+				end = i
+				break
+			}
+			n++
+		}
+	}
+	end = min(end, MaxSpeechText)
+	if end == len(text) {
 		return text
 	}
-	head, n := text, 0
-	for i := range text {
-		if n == MaxSpoken {
-			head = text[:i]
-			break
-		}
-		n++
+	end = max(end-len(restNote)-1, 0)
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
 	}
-	end := max(strings.LastIndex(head, ". "), strings.LastIndex(head, "! "), strings.LastIndex(head, "? "))
-	if end > len(head)/2 {
-		head = head[:end+1]
+	head := text[:end]
+	stop := max(strings.LastIndex(head, ". "), strings.LastIndex(head, "! "), strings.LastIndex(head, "? "))
+	if stop > len(head)/2 {
+		head = head[:stop+1]
 	} else if sp := strings.LastIndex(head, " "); sp > 0 {
-		head = head[:sp] + "…"
+		head = head[:sp]
 	}
 	return head + " " + restNote
 }

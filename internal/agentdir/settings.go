@@ -110,7 +110,8 @@ type Settings struct {
 
 	Voice string
 	// VoiceKey is env:VAR, secret:NAME or the value.
-	VoiceKey string
+	VoiceKey  string
+	VoiceName string
 }
 
 // EmailSettings configure the email messenger. Password, OAuthClientSecret

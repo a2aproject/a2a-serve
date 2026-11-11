@@ -55,50 +55,52 @@ const maxAudioParts = 10
 // turn runs the agent's turn with run on execCtx, with its recordings as
 // text, and adds the transcript and the spoken reply to its events. The
 // recordings are transcribed once the task exists, so that it shows as
-// working and can be stopped meanwhile.
+// working and can be stopped meanwhile. A turn whose reply is spoken tells
+// the agent that it can choose what is spoken in a <speak> block, which
+// the server takes out of the reply in every turn.
 func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, run func(context.Context, *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	accepted := acceptedModes(ctx)
 	speak := v.speaker != nil && speech.Accepts(accepted)
-	if audioParts(execCtx.Message) == 0 {
-		if !speak {
-			return run(ctx, execCtx)
-		}
-		return v.speaking(ctx, execCtx, run(ctx, execCtx), accepted)
-	}
 	return func(yield func(a2a.Event, error) bool) {
-		created := execCtx.StoredTask == nil
-		if created && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
-			return
-		}
-		textCtx, transcript, err := v.transcribeUntilStop(ctx, execCtx)
-		if err != nil {
-			if v.stopping.Err() != nil {
-				for ev, err := range failStopped(execCtx, true) {
-					if !yield(ev, err) {
-						return
+		agentCtx := execCtx
+		created := false
+		if audioParts(execCtx.Message) > 0 {
+			created = execCtx.StoredTask == nil
+			if created && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
+				return
+			}
+			textCtx, transcript, err := v.transcribeUntilStop(ctx, execCtx)
+			if err != nil {
+				if v.stopping.Err() != nil {
+					for ev, err := range failStopped(execCtx, true) {
+						if !yield(ev, err) {
+							return
+						}
 					}
+					return
 				}
+				// A canceled task ends with the cancel.
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Info("transcribing a recording", "task", execCtx.TaskID, "error", err)
+				yield(transcriptionFailed(execCtx, err), nil)
 				return
 			}
-			// A canceled task ends with the cancel.
-			if ctx.Err() != nil {
+			msg := a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart("🎤 \""+shownTranscript(transcript)+"\""))
+			msg.Metadata = map[string]any{speech.TranscriptKey: transcript}
+			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, msg), nil) {
 				return
 			}
-			slog.Info("transcribing a recording", "task", execCtx.TaskID, "error", err)
-			yield(transcriptionFailed(execCtx, err), nil)
-			return
+			agentCtx = textCtx
 		}
-		msg := a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart("🎤 \""+shownTranscript(transcript)+"\""))
-		msg.Metadata = map[string]any{speech.TranscriptKey: transcript}
-		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, msg), nil) {
-			return
+		// An answer to a question is read as the answer alone.
+		if speak && !answersWaiting(execCtx) {
+			agentCtx = withSpeakLine(agentCtx)
 		}
-		events := run(ctx, textCtx)
-		if speak {
-			events = v.speaking(ctx, execCtx, events, accepted)
-		}
+		var reply speakReply
 		first := true
-		for ev, err := range events {
+		for ev, err := range run(ctx, agentCtx) {
 			t, isTask := ev.(*a2a.Task)
 			// The task was sent above, before the transcription.
 			if first && created && isTask && err == nil && t.Status.State == a2a.TaskStateSubmitted {
@@ -106,14 +108,53 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 				continue
 			}
 			first = false
-			if isTask {
-				ev = withOriginalMessage(t, textCtx.Message, execCtx.Message)
+			if isTask && agentCtx != execCtx {
+				ev = withOriginalMessage(t, agentCtx.Message, execCtx.Message)
+			}
+			if err == nil {
+				ev = reply.filter(ev)
+			}
+			if state, ok := eventState(ev); ok && err == nil && (state.Terminal() || state == a2a.TaskStateInputRequired || state == a2a.TaskStateAuthRequired) {
+				for _, rest := range reply.flush(execCtx) {
+					if !yield(rest, nil) {
+						return
+					}
+				}
+			}
+			if err == nil && completes(ev) {
+				var extra a2a.Event
+				spoken := false
+				if speak {
+					extra, spoken = v.speak(ctx, execCtx, reply.spoken(), accepted)
+				}
+				// A reply that is only a block would be lost unless spoken.
+				if back, ok := reply.unspoken(execCtx); ok && !spoken && !yield(back, nil) {
+					return
+				}
+				if extra != nil && !yield(extra, nil) {
+					return
+				}
 			}
 			if !yield(ev, err) {
 				return
 			}
 		}
 	}
+}
+
+// speakLinePrefix starts the line that tells the agent its reply is read
+// aloud.
+const speakLinePrefix = "[a2a voice]"
+
+// withSpeakLine returns execCtx with the line that tells the agent how to
+// choose what is spoken of its reply.
+func withSpeakLine(execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
+	line := speakLinePrefix + " The reply to this message is also read aloud. To choose what is spoken, end the reply with a short spoken version on a line of its own, in <speak>…</speak>: plain sentences, no code, tables or links. The server takes the block out of the text. Without it, the start of the reply is read."
+	ec := *execCtx
+	msg := *execCtx.Message
+	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)
+	ec.Message = &msg
+	return &ec
 }
 
 // transcribeUntilStop is transcribe, which a stop of the server ends.
@@ -146,27 +187,6 @@ func shownTranscript(t string) string {
 		return t
 	}
 	return string(r[:maxShownTranscript]) + "…"
-}
-
-// speaking adds the spoken reply before the event that completes the
-// task.
-func (v *voiceTurns) speaking(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error], accepted []string) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		var reply turnReply
-		for ev, err := range events {
-			if err == nil {
-				reply.add(ev)
-			}
-			if err == nil && completes(ev) {
-				if extra, ok := v.speak(ctx, execCtx, reply.String(), accepted); ok && !yield(extra, nil) {
-					return
-				}
-			}
-			if !yield(ev, err) {
-				return
-			}
-		}
-	}
 }
 
 // audioParts counts the recordings of msg.
@@ -221,10 +241,10 @@ func (v *voiceTurns) transcribe(ctx context.Context, execCtx *a2asrv.ExecutorCon
 	return &out, strings.Join(transcripts, " "), nil
 }
 
-// speak returns the event that adds the spoken reply to the task, or a note
-// that it failed. It reports false when there is nothing to speak.
-func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext, reply string, accepted []string) (a2a.Event, bool) {
-	text := speech.Prose(reply)
+// speak returns the event that adds text, spoken, to the task, or a note
+// that it failed, and reports whether it was spoken. The event is nil when
+// there is nothing to speak.
+func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext, text string, accepted []string) (a2a.Event, bool) {
 	if text == "" {
 		return nil, false
 	}
@@ -232,7 +252,7 @@ func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 	if err != nil {
 		slog.Info("speaking a reply", "task", execCtx.TaskID, "error", err)
 		note := fmt.Sprintf("(The voice reply failed: %s.)", speech.Reason(err))
-		return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(note)), true
+		return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(note)), false
 	}
 	part := a2a.NewRawPart(audio.Data)
 	part.MediaType = audio.MediaType
@@ -274,48 +294,123 @@ func completes(ev a2a.Event) bool {
 	return ok && state == a2a.TaskStateCompleted
 }
 
-// turnReply collects the text of the artifacts of a turn, as chats show
-// it.
-type turnReply struct {
-	ids   []a2a.ArtifactID
-	texts map[a2a.ArtifactID]*strings.Builder
+// speakReply takes the <speak> blocks out of the artifacts of a turn, and
+// keeps the text that chats show, which is spoken without a block.
+type speakReply struct {
+	ids     []a2a.ArtifactID
+	texts   map[a2a.ArtifactID]*strings.Builder
+	filters map[a2a.ArtifactID]*speech.SpeakFilter
+	// block is the last <speak> block, if found.
+	block string
+	found bool
 }
 
-func (r *turnReply) add(ev a2a.Event) {
+// filter returns ev without <speak> blocks in its artifacts.
+func (r *speakReply) filter(ev a2a.Event) a2a.Event {
 	switch e := ev.(type) {
 	case *a2a.TaskArtifactUpdateEvent:
-		r.artifact(e.Artifact, e.Append)
-	case *a2a.Task:
-		for _, a := range e.Artifacts {
-			r.artifact(a, false)
+		if e.Artifact == nil {
+			return ev
 		}
+		c := *e
+		c.Artifact = r.artifact(e.Artifact, e.Append, true)
+		return &c
+	case *a2a.Task:
+		if len(e.Artifacts) == 0 {
+			return ev
+		}
+		c := *e
+		c.Artifacts = make([]*a2a.Artifact, len(e.Artifacts))
+		for i, a := range e.Artifacts {
+			c.Artifacts[i] = r.artifact(a, false, false)
+		}
+		return &c
 	}
+	return ev
 }
 
-func (r *turnReply) artifact(a *a2a.Artifact, appendTo bool) {
-	if a == nil {
-		return
-	}
+// artifact returns a without <speak> blocks. A streamed artifact holds back
+// the start of a tag until its next chunk.
+func (r *speakReply) artifact(a *a2a.Artifact, appendTo, streamed bool) *a2a.Artifact {
 	if r.texts == nil {
-		r.texts = map[a2a.ArtifactID]*strings.Builder{}
+		r.texts, r.filters = map[a2a.ArtifactID]*strings.Builder{}, map[a2a.ArtifactID]*speech.SpeakFilter{}
 	}
 	b, ok := r.texts[a.ID]
 	if !ok {
 		b = &strings.Builder{}
 		r.texts[a.ID] = b
 		r.ids = append(r.ids, a.ID)
-	} else if !appendTo {
-		b.Reset()
 	}
+	f := r.filters[a.ID]
+	if !appendTo || f == nil {
+		b.Reset()
+		f = &speech.SpeakFilter{}
+		r.filters[a.ID] = f
+	}
+	c := *a
+	c.Parts = make([]*a2a.Part, 0, len(a.Parts))
 	for _, p := range a.Parts {
-		// The reply is cut for speech anyway, so the rest isn't kept.
-		if b.Len() < 4*speech.MaxSpeechText {
-			b.WriteString(p.Text())
+		text := p.Text()
+		if text == "" {
+			c.Parts = append(c.Parts, p)
+			continue
 		}
+		visible := f.Write(text)
+		if !streamed {
+			visible += f.Flush()
+		}
+		r.keep(b, visible)
+		if visible != "" {
+			tp := *p
+			tp.Content = a2a.Text(visible)
+			c.Parts = append(c.Parts, &tp)
+		}
+	}
+	if block, ok := f.Spoken(); ok {
+		r.block, r.found = block, true
+	}
+	if len(c.Parts) == 0 {
+		c.Parts = []*a2a.Part{a2a.NewTextPart("")}
+	}
+	return &c
+}
+
+func (r *speakReply) keep(b *strings.Builder, text string) {
+	// The reply is cut for speech anyway, so the rest isn't kept.
+	if b.Len() < 4*speech.MaxSpeechText {
+		b.WriteString(text)
 	}
 }
 
-func (r *turnReply) String() string {
+// flush returns the events with the text held back at the end of the turn:
+// the starts of tags that never completed.
+func (r *speakReply) flush(execCtx *a2asrv.ExecutorContext) []a2a.Event {
+	var out []a2a.Event
+	for _, id := range r.ids {
+		f := r.filters[id]
+		rest := f.Flush()
+		if block, ok := f.Spoken(); ok {
+			r.block, r.found = block, true
+		}
+		if rest == "" {
+			continue
+		}
+		r.keep(r.texts[id], rest)
+		out = append(out, a2a.NewArtifactUpdateEvent(execCtx, id, a2a.NewTextPart(rest)))
+	}
+	return out
+}
+
+// unspoken returns the event that shows the <speak> block as text, when
+// the reply has nothing else to show.
+func (r *speakReply) unspoken(execCtx *a2asrv.ExecutorContext) (a2a.Event, bool) {
+	if !r.found || strings.TrimSpace(r.visible()) != "" {
+		return nil, false
+	}
+	return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(strings.TrimSpace(r.block))), true
+}
+
+func (r *speakReply) visible() string {
 	var parts []string
 	for _, id := range r.ids {
 		if t := r.texts[id].String(); t != "" {
@@ -323,6 +418,15 @@ func (r *turnReply) String() string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// spoken is what is read aloud: the <speak> block, or else the start of
+// the text that chats show.
+func (r *speakReply) spoken() string {
+	if r.found {
+		return speech.Prose(r.block, speech.MaxSpeechText)
+	}
+	return speech.Prose(r.visible(), speech.MaxSpoken)
 }
 
 // acceptedModesKey is the context key of the acceptedOutputModes of a
@@ -427,7 +531,7 @@ func (s *Server) buildVoice(ctx context.Context, now func() time.Time) (*voiceTu
 	if err != nil {
 		return nil, fmt.Errorf("--voice-key: %w", err)
 	}
-	transcriber, speaker, err := speech.New(speech.Config{Service: v.Service, Key: key})
+	transcriber, speaker, err := speech.New(speech.Config{Service: v.Service, Key: key, Voice: v.Name})
 	if err != nil {
 		return nil, fmt.Errorf("--voice: %w", err)
 	}

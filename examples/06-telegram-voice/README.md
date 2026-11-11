@@ -60,7 +60,7 @@ uvx speaches-cli model download speaches-ai/Kokoro-82M-v1.0-ONNX
 a2a-serve config set --voice http://localhost:8000/v1
 ```
 
-The server asks speaches for the OpenAI model names `whisper-1` and `tts-1`, and speaches maps them to these two models. The server calls speaches from your machine, so `localhost` works with the Docker sandbox too.
+The server asks speaches for the OpenAI model names `whisper-1` and `tts-1`, and speaches maps them to these two models. To hear a male voice, add `--voice-name am_michael`; the [voice guide](../../docs/guide/voice.md#pick-a-voice) lists more. The server calls speaches from your machine, so `localhost` works with the Docker sandbox too.
 
 ## 4. Check the speech service
 
@@ -126,7 +126,7 @@ bot → The recipe scaler: one page, no backend.
       ▶️ 0:04
 ```
 
-With voice on, every answer comes as text and a voice note, also when you type. The server speaks the prose of the answer. Code, tables and links stay in the text, and a long answer is cut at about 1,000 characters. Questions and approvals stay text-only, because they have buttons. `/voice off` goes back to text replies, and `/voice` alone shows the current state. The setting is yours. Other people who chat with the agent keep their own.
+With voice on, every answer comes as text and a voice note, also when you type. The agent can write a short spoken version of a long answer, which the server reads aloud and leaves out of the text. Otherwise the server speaks the prose of the answer. Code, tables and links stay in the text, and a long answer is cut at about 1,000 characters. Questions and approvals stay text-only, because they have buttons. `/voice off` goes back to text replies, and `/voice` alone shows the current state. The setting is yours. Other people who chat with the agent keep their own.
 
 `/help` lists all the commands.
 

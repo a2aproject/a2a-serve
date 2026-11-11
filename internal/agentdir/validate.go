@@ -352,6 +352,9 @@ func (v VoiceConfig) validate() []error {
 	if v.Service == "" && v.Key != "" {
 		errs = append(errs, errors.New("--voice-key needs --voice"))
 	}
+	if v.Service == "" && v.Name != "" {
+		errs = append(errs, errors.New("--voice-name needs --voice"))
+	}
 	return errs
 }
 

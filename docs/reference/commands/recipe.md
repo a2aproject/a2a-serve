@@ -58,6 +58,7 @@ a2a-serve recipe --dry-run
 | `--task-ttl duration` |  | How long finished tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 | `--voice service` |  | Speech service that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1 |
 | `--voice-key string` |  | API key of the --voice service, which the agent doesn't get (secret value: env:VAR, -, or the value) |
+| `--voice-name name` |  | Voice of the spoken replies, a name the --voice service has, such as nova for openai or am_michael for speaches (default: the service's own) |
 | `-y, --yes` |  | Create or update the agent without asking; the review still prints |
 
 **Workspace flags**

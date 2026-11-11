@@ -22,7 +22,7 @@ export OPENAI_API_KEY=sk-…
 a2a-serve config set --voice openai --voice-key env:OPENAI_API_KEY
 ```
 
-The server uses the models `gpt-4o-mini-transcribe` and `gpt-4o-mini-tts`, with the voice `alloy`.
+The server uses the models `gpt-4o-mini-transcribe` and `gpt-4o-mini-tts`, with the voice `alloy` unless you [pick another](#pick-a-voice).
 
 ### Your own server
 
@@ -34,7 +34,7 @@ a2a-serve config set --voice http://localhost:8000/v1
 
 A URL with a user name and password is refused. Put the key in `--voice-key`.
 
-The server asks a URL service for the models `whisper-1` and `tts-1` and the voice `alloy`, which are OpenAI's names. speaches maps `whisper-1` to `Systran/faster-whisper-large-v3` and `tts-1` to `speaches-ai/Kokoro-82M-v1.0-ONNX`, and uses its default voice. Run speaches in Docker and download the two models:
+The server asks a URL service for the models `whisper-1` and `tts-1` and the voice `alloy`, which are OpenAI's names. speaches maps `whisper-1` to `Systran/faster-whisper-large-v3` and `tts-1` to `speaches-ai/Kokoro-82M-v1.0-ONNX`, and uses its default voice unless you [pick another](#pick-a-voice). Run speaches in Docker and download the two models:
 
 ```sh
 docker run -d --name speaches -p 8000:8000 ghcr.io/speaches-ai/speaches:latest-cpu
@@ -44,6 +44,20 @@ uvx speaches-cli model download speaches-ai/Kokoro-82M-v1.0-ONNX
 ```
 
 A service without `/audio/speech` only transcribes. Voice notes work, and voice replies fall back to text with the note `(The voice reply failed: the speech service doesn't speak.)`.
+
+### Pick a voice
+
+`--voice-name` picks the voice of the spoken replies, by a name the service has:
+
+```sh
+a2a-serve config set --voice-name nova
+```
+
+OpenAI has about a dozen voices, such as `alloy`, `echo`, `nova`, `onyx` and `shimmer`, and doesn't label them by gender. Kokoro, the speech model of speaches, names its voices by language and gender: `af_heart` is an American female voice, `am_michael` an American male one, and `bf_emma` a British female one. speaches replaces OpenAI's voice names with its default voice, so give it a Kokoro name.
+
+The server can't check the name. `a2a-serve doctor --online` speaks with the voice and reports a name the service refuses, such as `the speech service refused the request: Invalid value: 'robot'…`. `a2a-serve config unset voice-name` goes back to the service's voice.
+
+The voice applies to everyone who talks to the agent.
 
 ### The key
 
@@ -101,7 +115,19 @@ When voice isn't set up, members get `Voice replies aren't set up on this agent.
 
 ### What is spoken
 
-The server speaks the prose of the reply. It leaves out code blocks, tables, links and markup, so those stay in the text. It cuts a long reply at about 1,000 characters and adds "The rest is in the text."
+When a reply is spoken, the server tells the agent so in that turn. The agent can then end its reply with a short spoken version in a `<speak>` block:
+
+```
+The test raced on a shared buffer. I gave each case its own buffer:
+
+    buf := new(bytes.Buffer)
+
+<speak>The test shared a buffer between cases. Each case has its own now, and the race is gone.</speak>
+```
+
+The server reads the block aloud and takes it out of the text, so the chat shows the reply without it. A block starts with `<speak>` at the start of a line and ends with `</speak>` at the end of a line. A `<speak>` inside a sentence, inline code or a code block stays in the text, and so does a block that never ends. The server removes blocks from every reply, also when nobody asked for a voice reply. A reply that is only a block shows the block as text when it isn't spoken. Answers to the agent's questions reach the agent as written, without the note.
+
+Without a block, the server speaks the prose of the reply. It leaves out code blocks, tables, links and markup, so those stay in the text. It cuts a long reply at about 1,000 characters and adds "The rest is in the text." A `<speak>` block is cut at about 4,000 characters, about the most the services speak at once.
 
 - **Telegram:** the voice note plays inline. If you block voice notes in your privacy settings, it arrives as a file.
 - **Discord and email:** the voice note is an audio attachment, `reply.ogg`.
