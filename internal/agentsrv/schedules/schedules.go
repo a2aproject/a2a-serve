@@ -338,7 +338,7 @@ func (sc *Runner) start(ctx context.Context, s store.Schedule, quiet bool, accep
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.InjectTurn(sc.ctx, chat.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted, Quiet: quiet}); err != nil {
+	if err := sc.turns.InjectTurn(sc.ctx, chat.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), GroupChat: s.GroupChat, Accepted: accepted, Quiet: quiet}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}

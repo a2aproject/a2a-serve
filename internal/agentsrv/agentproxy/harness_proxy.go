@@ -59,8 +59,8 @@ type ClaimsSource interface {
 // SchedulesAgent is the built-in agent that manages schedules.
 type SchedulesAgent interface {
 	// Agent returns the schedules agent of the conversation contextID,
-	// whose turn user runs.
-	Agent(user auth.Principal, contextID string) a2asrv.AgentExecutor
+	// whose turn user runs, from a group chat if groupChat is set.
+	Agent(user auth.Principal, contextID string, groupChat bool) a2asrv.AgentExecutor
 }
 
 // HarnessProxyDeps are the dependencies of [HarnessProxy].
@@ -85,6 +85,8 @@ type Claims struct {
 	// are recorded for.
 	TaskID string
 	User   auth.Principal
+	// GroupChat is whether the turn came from a group chat.
+	GroupChat bool
 }
 
 // Errors of [ClaimsSource.ClaimsOf].
@@ -220,7 +222,7 @@ func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, c
 		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
 		return
 	}
-	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID))
+	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID, claims.GroupChat))
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = rest, ""
 	inner := a2asrv.NewRESTHandler(h)

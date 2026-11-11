@@ -46,9 +46,9 @@ A user can have at most %d schedules, and runs must be at least %d minutes apart
 // Agent returns the built-in agent the harness creates, lists and removes
 // schedules with, through the agents URL of the conversation contextID,
 // whose turn user runs. A schedule made there runs as user and reports back
-// in the same conversation.
-func (sc *Runner) Agent(user auth.Principal, contextID string) a2asrv.AgentExecutor {
-	return &agentExecutor{sc: sc, turnUser: user, contextID: contextID}
+// in the same conversation, from a group chat if the turn came from one.
+func (sc *Runner) Agent(user auth.Principal, contextID string, groupChat bool) a2asrv.AgentExecutor {
+	return &agentExecutor{sc: sc, turnUser: user, contextID: contextID, groupChat: groupChat}
 }
 
 // agentExecutor runs the commands the harness sends to the schedules agent
@@ -57,6 +57,7 @@ type agentExecutor struct {
 	sc        *Runner
 	turnUser  auth.Principal
 	contextID string
+	groupChat bool
 }
 
 func (e *agentExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -131,6 +132,9 @@ func (e *agentExecutor) add(ctx context.Context, who auth.Principal, args []stri
 		return "", fmt.Errorf("add takes one name\n\n%s", schedulesUsage)
 	}
 	req.Name = fs.Arg(0)
+	if e.groupChat {
+		ctx = auth.InGroupChat(ctx)
+	}
 	s, err := e.sc.addByAgent(ctx, req, who, e.contextID)
 	if err != nil {
 		return "", err

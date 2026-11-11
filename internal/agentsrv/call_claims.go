@@ -333,7 +333,7 @@ func (cl *CallClaims) forgetPruned(ctx context.Context) {
 
 // turnClaims returns the claims of the caller of execCtx.
 func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) agentproxy.Claims {
-	c := agentproxy.Claims{ContextID: execCtx.ContextID, TaskID: string(execCtx.TaskID)}
+	c := agentproxy.Claims{ContextID: execCtx.ContextID, TaskID: string(execCtx.TaskID), GroupChat: auth.IsGroupChat(ctx)}
 	if caller, ok := auth.Caller(ctx); ok {
 		c.User = caller
 	} else if execCtx.User != nil {

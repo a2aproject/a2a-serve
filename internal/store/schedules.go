@@ -41,6 +41,9 @@ type Schedule struct {
 	// ContextID is the context every run continues, for a schedule made in
 	// a conversation.
 	ContextID string
+	// GroupChat is whether the agent made it in a group chat, whose people
+	// share the conversation its runs continue.
+	GroupChat bool
 	// CreatedBy is the principal who made it.
 	CreatedBy string
 	Created   time.Time
@@ -50,7 +53,7 @@ type Schedule struct {
 }
 
 const scheduleColumns = `name, cron, at, tz, prompt, user_id, user_identity, deliver_messenger, deliver_user, conversation, context_id,
-	created_by, created, next_run, last_run, last_error`
+	group_chat, created_by, created, next_run, last_run, last_error`
 
 func nanos(t time.Time) int64 {
 	if t.IsZero() {
@@ -81,10 +84,10 @@ func (s *Store) AddScheduleCapped(ctx context.Context, sc Schedule, limit int) e
 				return ErrLimit
 			}
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		res, err := tx.ExecContext(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (name) DO NOTHING`,
 			sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.UserIdentity, sc.DeliverMessenger, sc.DeliverUser, sc.Conversation, sc.ContextID,
-			sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
+			sc.GroupChat, sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
 		if err != nil {
 			return err
 		}
@@ -105,7 +108,7 @@ func scanSchedule(row interface{ Scan(...any) error }) (Schedule, error) {
 		at, created, nextRun, lastRun int64
 	)
 	err := row.Scan(&sc.Name, &sc.Cron, &at, &sc.TZ, &sc.Prompt, &sc.UserID, &sc.UserIdentity, &sc.DeliverMessenger, &sc.DeliverUser, &sc.Conversation, &sc.ContextID,
-		&sc.CreatedBy, &created, &nextRun, &lastRun, &sc.LastError)
+		&sc.GroupChat, &sc.CreatedBy, &created, &nextRun, &lastRun, &sc.LastError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Schedule{}, ErrNotFound
 	}
