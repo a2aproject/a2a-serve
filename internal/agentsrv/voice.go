@@ -16,12 +16,14 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -38,7 +40,10 @@ type voiceTurns struct {
 	transcriber speech.Transcriber
 	// speaker is nil for a service that only transcribes.
 	speaker speech.Speaker
-	budget  *speechBudget
+	// noSpeech is set once the service said it doesn't speak, which ends
+	// the calls of speaker.
+	noSpeech atomic.Bool
+	budget   *speechBudget
 	// stopping ends when the server stops, which ends transcriptions.
 	stopping context.Context
 }
@@ -95,7 +100,7 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 			agentCtx = textCtx
 		}
 		// An answer to a question is read as the answer alone.
-		if speak && !answersWaiting(execCtx) {
+		if speak && !v.noSpeech.Load() && !answersWaiting(execCtx) {
 			agentCtx = withSpeakLine(agentCtx)
 		}
 		var reply speakReply
@@ -264,11 +269,21 @@ func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 	return ev, true
 }
 
+// errNoSpeech is the failure of a service that said it doesn't speak.
+var errNoSpeech = &speech.Error{Reason: "the speech service doesn't speak", NoSpeech: true}
+
 func (v *voiceTurns) say(ctx context.Context, text string, accepted []string) (speech.Audio, error) {
+	if v.noSpeech.Load() {
+		return speech.Audio{}, errNoSpeech
+	}
 	if err := v.budget.take(ctx); err != nil {
 		return speech.Audio{}, err
 	}
-	return v.speaker.Speak(ctx, text, accepted)
+	audio, err := v.speaker.Speak(ctx, text, accepted)
+	if e := (*speech.Error)(nil); errors.As(err, &e) && e.NoSpeech {
+		v.noSpeech.Store(true)
+	}
+	return audio, err
 }
 
 func audioExtension(mediaType string) string {
@@ -486,6 +501,10 @@ func (b *speechBudget) take(ctx context.Context) error {
 	}
 	p, _ := auth.Caller(ctx)
 	id := p.ID
+	// Guests on one listener share a limit, as they share the guest budget.
+	if p.Role == auth.RoleGuest {
+		id = auth.GuestID + ":" + budgetListener(p)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
@@ -503,6 +522,9 @@ func (b *speechBudget) take(ctx context.Context) error {
 		}
 		w = &speechWindow{start: now}
 		b.windows[id] = w
+	}
+	if w.calls >= speechCallsPerHour && p.Role == auth.RoleGuest {
+		return &speech.Error{Reason: fmt.Sprintf("guests used up their %d speech calls this hour; try again later", speechCallsPerHour)}
 	}
 	if w.calls >= speechCallsPerHour {
 		return &speech.Error{Reason: fmt.Sprintf("you reached the limit of %d speech calls an hour", speechCallsPerHour)}

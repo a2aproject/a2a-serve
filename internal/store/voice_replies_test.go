@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestVoiceReplies(t *testing.T) {
@@ -59,5 +60,38 @@ func TestDeletePairingRemovesVoiceReplies(t *testing.T) {
 	}
 	if on, err := s.VoiceReplies(ctx, "pair:ben"); err != nil || on {
 		t.Fatalf("VoiceReplies() after DeletePairing() = %v, %v, want false, nil", on, err)
+	}
+}
+
+func TestPruneRemovesUnusedVoiceRepliesOfEmailSenders(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	for _, u := range []struct {
+		user string
+		age  time.Duration
+	}{
+		{"email:old@example.com", VoiceRepliesRetention + time.Hour},
+		{"email:used@example.com", VoiceRepliesRetention + time.Hour},
+		{"email:new@example.com", time.Hour},
+		{"pair:anna", VoiceRepliesRetention + time.Hour},
+	} {
+		s.now = func() time.Time { return now.Add(-u.age) }
+		if err := s.SetVoiceReplies(ctx, u.user, true); err != nil {
+			t.Fatalf("SetVoiceReplies(%q) error = %v", u.user, err)
+		}
+	}
+	s.now = func() time.Time { return now }
+	if err := s.TouchVoiceReplies(ctx, "email:used@example.com"); err != nil {
+		t.Fatalf("TouchVoiceReplies() error = %v", err)
+	}
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+	for user, want := range map[string]bool{"email:old@example.com": false, "email:used@example.com": true, "email:new@example.com": true, "pair:anna": true} {
+		if got, err := s.VoiceReplies(ctx, user); err != nil || got != want {
+			t.Fatalf("VoiceReplies(%q) after Prune() = %v, %v, want %v, nil", user, got, err, want)
+		}
 	}
 }

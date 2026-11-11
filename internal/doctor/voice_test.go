@@ -53,7 +53,7 @@ func TestCheckVoice(t *testing.T) {
 			voice:   agentdir.VoiceConfig{Service: speaking.URL(), Key: "secret:VOICE_API_KEY"},
 			secrets: agentdir.Secrets{"VOICE_API_KEY": "sk-wrong"},
 			online:  true,
-			want:    &Result{ID: "voice", Status: StatusFail, Message: "voice service " + speaking.URL() + " can't speak: the speech service refused the key", Fix: "a2a-serve config set --voice-key -"},
+			want:    &Result{ID: "voice", Status: StatusFail, Message: "voice service " + speaking.URL() + " can't speak: the speech service refused the key", Fix: "a2a-serve config set --voice-key - --restart"},
 		},
 		{
 			name:   "only transcribes",
@@ -64,7 +64,7 @@ func TestCheckVoice(t *testing.T) {
 		{
 			name:  "key not stored",
 			voice: agentdir.VoiceConfig{Service: "openai", Key: "secret:VOICE_API_KEY"},
-			want:  &Result{ID: "voice", Status: StatusFail, Message: "secret VOICE_API_KEY is not set; pass it again with the flag that set it", Fix: "a2a-serve config set --voice-key -"},
+			want:  &Result{ID: "voice", Status: StatusFail, Message: "secret VOICE_API_KEY is not set; pass it again with the flag that set it", Fix: "a2a-serve config set --voice-key - --restart"},
 		},
 	}
 	for _, tc := range tests {

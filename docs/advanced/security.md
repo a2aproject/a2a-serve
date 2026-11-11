@@ -112,6 +112,7 @@ Starting an agent runs what its files say. Read the ones you didn't write before
   - `env` and `secrets`: the variables the agent gets;
   - `backup`: where snapshots of the agent's secrets are uploaded;
   - webhook nodes: the URLs the server POSTs to;
+  - `voice`: the speech service that gets every voice note, and whose transcripts the agent acts on as the sender's words;
   - `network` and `policy`: where the agent is reachable, who may call it, and what the containers of callers get;
   - `network.tailscaleControlURL`: a Headscale server, which decides who is on the private network and who counts as the owner;
   - `auth.googleClientID`: the Google app that signs callers in;

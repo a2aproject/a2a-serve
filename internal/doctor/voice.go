@@ -23,7 +23,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/speech"
 )
 
-const fixVoiceKey = "a2a-serve config set --voice-key -"
+const fixVoiceKey = "a2a-serve config set --voice-key - --restart"
 
 // checkVoice checks the speech service of --voice, and with online that it
 // speaks a short sample and transcribes it back.

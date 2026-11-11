@@ -165,6 +165,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, map[string]string{"text": s.opts.Transcript})
 	case "/v1/audio/speech":
 		if s.opts.NoSpeech {
+			s.record(req)
 			s.writeError(w, http.StatusNotFound, "Not Found")
 			return
 		}

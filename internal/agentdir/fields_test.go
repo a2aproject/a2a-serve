@@ -109,6 +109,21 @@ func TestUnset(t *testing.T) {
 	}
 }
 
+func TestUnsetVoiceClearsKeyAndName(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Voice: VoiceConfig{Service: "openai", Key: SecretPrefix + SecretVoiceKey, Name: "nova"}}
+	deleted, err := (Dir{}).Unset(cfg, "voice", nil)
+	if err != nil {
+		t.Fatalf("Dir.Unset() error = %v, want nil", err)
+	}
+	if diff := cmp.Diff([]string{SecretVoiceKey}, deleted); diff != "" {
+		t.Fatalf("Dir.Unset() wrong deleted secrets (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(&Config{}, cfg); diff != "" {
+		t.Fatalf("Dir.Unset() wrong config (-want +got) diff = %s", diff)
+	}
+}
+
 func TestDiff(t *testing.T) {
 	t.Parallel()
 	old := fullConfig()

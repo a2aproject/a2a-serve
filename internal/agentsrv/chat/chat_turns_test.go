@@ -397,6 +397,11 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 			want: "Voice replies aren't set up on this agent. Set up voice with `a2a-serve config set --voice <service>`; see `a2a-serve help config set`.",
 		},
 		{
+			name:     "voice state without a speech service tells the owner how to set it up",
+			identity: "telegram:1", conv: "dm1", text: "/voice",
+			want: "Voice replies aren't set up on this agent. Set up voice with `a2a-serve config set --voice <service>`; see `a2a-serve help config set`.",
+		},
+		{
 			name:     "voice off",
 			identity: "telegram:1", conv: "dm1", text: "/voice off",
 			want: "Voice replies are off. /voice on turns them on.",

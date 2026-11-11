@@ -88,6 +88,19 @@ func Describe(service string) string {
 	return u.Scheme + "://" + u.Host + u.Path
 }
 
+// Host returns the host that calls of the service go to, which is empty
+// for an invalid service.
+func Host(service string) string {
+	if service == OpenAI {
+		service = openAIURL
+	}
+	u, err := url.Parse(service)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
 // VoiceReplyKey is the metadata key that marks the file part of a spoken
 // reply, which messengers send as a voice note.
 const VoiceReplyKey = "a2a-serve/voice-reply"

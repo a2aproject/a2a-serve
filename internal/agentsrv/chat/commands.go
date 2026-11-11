@@ -129,7 +129,7 @@ func (c *ChatTurns) voiceCommand(ctx context.Context, ch messenger.Messenger, in
 		return
 	}
 	arg = strings.ToLower(arg)
-	if arg == "on" && !c.config().Voice.On() {
+	if (arg == "on" || arg == "") && !c.config().Voice.On() {
 		if p.IsOwner() {
 			c.reply(ctx, ch, in, "Voice replies aren't set up on this agent. Set up voice with `a2a-serve config set --voice <service>`; see `a2a-serve help config set`.")
 			return
@@ -176,5 +176,11 @@ func (c *ChatTurns) voiceReplies(ctx context.Context, p auth.Principal) bool {
 	if err != nil {
 		slog.Warn("loading voice replies", "user", p.ID, "error", err)
 	}
-	return on
+	if !on {
+		return false
+	}
+	if err := c.store.TouchVoiceReplies(ctx, p.ID); err != nil {
+		slog.Warn("saving the use of voice replies", "user", p.ID, "error", err)
+	}
+	return true
 }

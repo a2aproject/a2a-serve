@@ -127,19 +127,22 @@ func (f *SpeakFilter) inBlock(out *strings.Builder, c byte) {
 		f.midLine = false
 		return
 	}
-	f.closing = false
 	f.block.WriteByte(c)
 	if f.block.Len() > maxSpeakBlock {
 		out.WriteString(speakOpen + f.block.String())
-		f.inside = false
+		f.inside, f.closing = false, false
 		f.block.Reset()
+		return
+	}
+	// Spaces and the \r of a CRLF may follow the closing tag.
+	if f.closing && (c == ' ' || c == '\t' || c == '\r') {
 		return
 	}
 	f.closing = strings.HasSuffix(f.block.String()[max(f.block.Len()-len(speakClose), 0):], speakClose)
 }
 
 func (f *SpeakFilter) close() {
-	f.spoken, f.found = strings.TrimSuffix(f.block.String(), speakClose), true
+	f.spoken, f.found = strings.TrimSuffix(strings.TrimRight(f.block.String(), " \t\r"), speakClose), true
 	f.inside, f.closing = false, false
 	f.block.Reset()
 }

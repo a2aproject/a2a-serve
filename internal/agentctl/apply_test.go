@@ -339,6 +339,62 @@ func TestSetReplacingAnInjectRuleDeletesItsSecret(t *testing.T) {
 	}
 }
 
+func TestSetVoiceOnAnotherHostDropsTheKey(t *testing.T) {
+	t.Parallel()
+	const key = agentdir.SecretPrefix + agentdir.SecretVoiceKey
+	tests := []struct {
+		name       string
+		settings   agentdir.Settings
+		wantVoice  agentdir.VoiceConfig
+		wantStored agentdir.Secrets
+	}{
+		{
+			name:       "another host",
+			settings:   agentdir.Settings{Voice: "http://localhost:8000/v1"},
+			wantVoice:  agentdir.VoiceConfig{Service: "http://localhost:8000/v1", Name: "nova"},
+			wantStored: agentdir.Secrets{},
+		},
+		{
+			name:       "the same host",
+			settings:   agentdir.Settings{Voice: "https://API.openai.com/v1"},
+			wantVoice:  agentdir.VoiceConfig{Service: "https://API.openai.com/v1", Key: key, Name: "nova"},
+			wantStored: agentdir.Secrets{agentdir.SecretVoiceKey: "sk-old"},
+		},
+		{
+			name:       "another host with a key",
+			settings:   agentdir.Settings{Voice: "https://speech.example.com/v1", VoiceKey: "sk-new"},
+			wantVoice:  agentdir.VoiceConfig{Service: "https://speech.example.com/v1", Key: key, Name: "nova"},
+			wantStored: agentdir.Secrets{agentdir.SecretVoiceKey: "sk-new"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{
+				Name: "coder", Harness: "opencode",
+				Voice: agentdir.VoiceConfig{Service: "openai", Key: key, Name: "nova"},
+			}, agentdir.Secrets{agentdir.SecretVoiceKey: "sk-old"})
+			if _, err := Set(t.Context(), d, controlapi.NewClient(d), tc.settings, false); err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			cfg, err := d.ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantVoice, cfg.Voice); diff != "" {
+				t.Fatalf("Set() wrong voice (-want +got) diff = %s", diff)
+			}
+			stored, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantStored, stored); diff != "" {
+				t.Fatalf("Set() wrong stored secrets (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`

@@ -226,6 +226,41 @@ func TestVoiceTurn(t *testing.T) {
 	}
 }
 
+func TestVoiceTurnStopsSpeakingToServiceWithoutSpeech(t *testing.T) {
+	t.Parallel()
+	svc := speechtest.NewServer(t, speechtest.Options{NoSpeech: true})
+	transcriber, speaker, err := speech.New(speech.Config{Service: svc.URL()})
+	if err != nil {
+		t.Fatalf("speech.New() error = %v", err)
+	}
+	v := newVoiceTurns(transcriber, speaker, time.Now, context.Background())
+	ctx := withAcceptedModes(auth.WithPrincipal(t.Context(), auth.Principal{ID: "pairing:anna", Role: auth.RoleMember}), []string{"audio/ogg"})
+	agent := &scriptedTurn{reply: "Fixed it."}
+	for range 2 {
+		execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("what changed?")), TaskID: "t1", ContextID: "c1"}
+		var got []a2a.Event
+		for ev, err := range v.turn(ctx, execCtx, agent.run) {
+			if err != nil {
+				t.Fatalf("voiceTurns.turn() error = %v", err)
+			}
+			got = append(got, ev)
+		}
+		want := []string{"task:submitted", "status:working", "artifact:Fixed it.", "artifact:(The voice reply failed: the speech service doesn't speak.)", "status:completed"}
+		if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
+			t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
+		}
+	}
+	if got := len(svc.Requests()); got != 1 {
+		t.Fatalf("speech service requests = %d, want 1", got)
+	}
+	if got := agent.got.Parts[0].Text(); strings.HasPrefix(got, speakLinePrefix) {
+		t.Fatalf("second agent message starts with %q, want no voice line", got)
+	}
+	if got := v.budget.windows["pairing:anna"].calls; got != 1 {
+		t.Fatalf("speech calls counted = %d, want 1", got)
+	}
+}
+
 func TestVoiceTurnKeepsAudioInTaskHistory(t *testing.T) {
 	t.Parallel()
 	v := newVoiceTurns(&speechtest.Fake{Transcript: "hello"}, nil, time.Now, context.Background())
@@ -307,6 +342,26 @@ func TestSpeechBudget(t *testing.T) {
 	now = now.Add(time.Hour)
 	if err := b.take(member); err != nil {
 		t.Fatalf("speechBudget.take() an hour later error = %v, want nil", err)
+	}
+}
+
+func TestSpeechBudgetGuestsShareOneLimitPerListener(t *testing.T) {
+	t.Parallel()
+	b := newSpeechBudget(time.Now)
+	guest := func(id, provider string) context.Context {
+		return auth.WithPrincipal(t.Context(), auth.Principal{ID: id, Role: auth.RoleGuest, Identity: auth.Identity{Network: auth.NetworkChat, Provider: provider}})
+	}
+	for i := range speechCallsPerHour {
+		if err := b.take(guest("telegram:1", "telegram")); err != nil {
+			t.Fatalf("speechBudget.take() call %d error = %v, want nil", i, err)
+		}
+	}
+	var e *speech.Error
+	if err := b.take(guest("telegram:2", "telegram")); !errors.As(err, &e) {
+		t.Fatalf("speechBudget.take() for another Telegram guest error = %v, want a speech error", err)
+	}
+	if err := b.take(guest("discord:3", "discord")); err != nil {
+		t.Fatalf("speechBudget.take() for a Discord guest error = %v, want nil", err)
 	}
 }
 

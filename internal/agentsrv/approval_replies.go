@@ -76,6 +76,11 @@ func askAgain(ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
 // refusal is the status update of refuseReply.
 func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskStatusUpdateEvent {
 	ids := optionIDs(q)
+	// A misheard transcript could approve a tool call, so voice notes aren't
+	// transcribed for these questions.
+	if audioParts(execCtx.Message) > 0 {
+		return reask(execCtx, fmt.Sprintf("A voice note can't answer this question, so it still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
+	}
 	reply, ok := replyText(execCtx.Message)
 	if !ok {
 		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: its data has no \"option\" field, so the question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))

@@ -18,7 +18,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
+
+// VoiceRepliesRetention is how long the voice replies of an email sender
+// stay on after their last message. Other users lose theirs with their
+// pairing.
+const VoiceRepliesRetention = 90 * 24 * time.Hour
+
+// voiceRepliesTouch is how often a message of a user refreshes the time
+// their voice replies were last used.
+const voiceRepliesTouch = 24 * time.Hour
 
 // SetVoiceReplies turns the voice replies of user on or off in all their
 // chats.
@@ -28,9 +38,19 @@ func (s *Store) SetVoiceReplies(ctx context.Context, user string, on bool) error
 			_, err := tx.ExecContext(ctx, `DELETE FROM voice_replies WHERE user_id = ?`, user)
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO voice_replies (user_id, created) VALUES (?, ?) ON CONFLICT DO NOTHING`, user, s.now().UnixNano())
+		_, err := tx.ExecContext(ctx, `INSERT INTO voice_replies (user_id, created) VALUES (?, ?)
+			ON CONFLICT (user_id) DO UPDATE SET created = excluded.created`, user, s.now().UnixNano())
 		return err
 	})
+}
+
+// TouchVoiceReplies records that user, who has voice replies on, sent a
+// message. The column created holds the time of the last use.
+func (s *Store) TouchVoiceReplies(ctx context.Context, user string) error {
+	now := s.now()
+	_, err := s.exec(ctx, `UPDATE voice_replies SET created = ? WHERE user_id = ? AND created < ?`,
+		now.UnixNano(), user, now.Add(-voiceRepliesTouch).UnixNano())
+	return err
 }
 
 // VoiceReplies reports whether user turned voice replies on.

@@ -63,6 +63,8 @@ The voice applies to everyone who talks to the agent.
 
 `--voice-key` takes the [value forms](secrets.md#value-forms) of the server's other tokens. The server stores the key in `.a2a/state/secrets`, and the agent never gets it. See [Secrets](secrets.md#tokens-for-the-server).
 
+A `--voice` on another host clears the key, so that the key goes only to the service it was issued for. Pass `--voice-key` in the same command to give the new service its key.
+
 ### Check it
 
 `a2a-serve doctor` shows that voice is set up. `a2a-serve doctor --online` speaks a short sample and transcribes it back:
@@ -77,10 +79,20 @@ A service that doesn't speak shows `✓ voice service http://localhost:8000/v1 t
 
 ```console
   ✗ voice service openai can't speak: the speech service refused the key
-      fix: a2a-serve config set --voice-key -
+      fix: a2a-serve config set --voice-key - --restart
 ```
 
 When the server starts, it prints `✓ voice    openai`, or the URL of the service. The [agent card](agent2agent.md#audio) then lists the audio types.
+
+### Turn voice off
+
+`a2a-serve config unset voice` removes the service, its key and the voice name:
+
+```sh
+a2a-serve config unset voice --restart
+```
+
+Audio attachments then reach the agent as files.
 
 ## Talk to the agent
 
@@ -96,6 +108,8 @@ bot → The test raced on a shared buffer. I gave each case its own buffer.
 
 Email gets only the result.
 
+A voice note can answer a question of the agent. An approval takes a button or a typed option, because a misheard answer could allow a tool call.
+
 Without a speech service, audio attachments reach the agent as files.
 
 ## Voice replies
@@ -109,7 +123,7 @@ bot → Voice replies are on. I'll send a voice note with each answer. /voice of
 
 With voice on, each completed reply arrives as text plus a voice note, whether you typed or spoke. Questions and approvals stay text-only, because they have buttons. In Discord, `/voice` offers `on` and `off` as a choice. In email, write the command as the text of the message.
 
-The setting belongs to you and applies in all your chats with the agent. `a2a-serve pair rm` removes it with your pairing. A guest, who joined without a code, can't turn it on.
+The setting belongs to you and applies in all your chats with the agent. `a2a-serve pair rm` removes it with your pairing. An email sender on the `--allow-email` list keeps it until 90 days pass without a message. A guest, who joined without a code, can't turn it on.
 
 When voice isn't set up, members get `Voice replies aren't set up on this agent. Ask its owner to set them up.` The owner gets the command to run: `a2a-serve config set --voice <service>`.
 
@@ -143,13 +157,14 @@ bot → I couldn't transcribe the voice note: the speech service timed out. Send
 | Reason in the message | What it means |
 |---|---|
 | `the speech service timed out` | The service took longer than 60 seconds. |
-| `the speech service refused the key` | The key is wrong or expired. The owner can fix it with `a2a-serve config set --voice-key -`. |
+| `the speech service refused the key` | The key is wrong or expired. The owner can fix it with `a2a-serve config set --voice-key - --restart`. |
 | `couldn't reach the speech service` | The service is down or the URL is wrong. The owner can check with `a2a-serve doctor --online`. |
 | `the recording is longer than 5 minutes` | See [Limits](#limits). |
 | `the speech service heard no words` | The recording was silent or unclear. |
 | `the recording isn't Ogg Opus, MP3 or WAV` | See [Limits](#limits). |
 | `the speech service is over its rate limit or quota` | The service refused the call because the account used up its limit. |
 | `you reached the limit of 60 speech calls an hour` | See [Limits](#limits). |
+| `guests used up their 60 speech calls this hour; try again later` | Guests share one limit. See [Limits](#limits). |
 | `too many people use voice right now; try again later` | Many people used voice within the same hour. Try again later. |
 
 When speaking a reply fails, the text still arrives, followed by a note such as `(The voice reply failed: the speech service timed out.)`.
@@ -163,4 +178,4 @@ When speaking a reply fails, the text still arrives, followed by a note such as 
 | Format of a recording | Ogg Opus, MP3 or WAV, the formats whose length the server reads; owners can also send other formats |
 | One call of the speech service | 60 seconds |
 | Recordings in one message | 10 |
-| Speech calls per person | 60 an hour, transcriptions and replies together; guests share one limit, and owners have none |
+| Speech calls per person | 60 an hour, transcriptions and replies together; guests on each messenger and on the public URL share one limit, and owners have none |

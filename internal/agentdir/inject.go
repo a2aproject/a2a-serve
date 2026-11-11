@@ -309,6 +309,20 @@ func DroppedInjected(old, next *Config) []string {
 	return out
 }
 
+// DroppedSecrets returns the stored secrets that old uses and next doesn't,
+// to delete: those of [DroppedInjected], and those of settings next cleared.
+func DroppedSecrets(old, next *Config) []string {
+	out := DroppedInjected(old, next)
+	now := next.referencedSecrets()
+	for name := range old.referencedSecrets() {
+		if !now[name] && !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // dropInjectedSecrets removes from c the secrets of before, which inject
 // rules added, that the rules of c no longer add, so that a removed rule
 // doesn't pass its secret to the agent's environment. It keeps the names

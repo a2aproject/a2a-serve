@@ -313,6 +313,21 @@ func parseVoice(_ Dir, v string) (string, error) {
 	return v, speech.ParseService(v)
 }
 
+// mergeVoice sets the speech service of --voice. A key set for another host
+// is cleared, unless --voice-key comes with it, so that the key doesn't go
+// to a service it wasn't issued for.
+func mergeVoice(s *Settings, cfg *Config, d Dir, _ Secrets) error {
+	v, err := parseVoice(d, s.Voice)
+	if err != nil {
+		return fmt.Errorf("--voice: %w", err)
+	}
+	if s.VoiceKey == "" && speech.Host(v) != speech.Host(cfg.Voice.Service) {
+		cfg.Voice.Key = ""
+	}
+	cfg.Voice.Service = v
+	return nil
+}
+
 // parseNetwork reads "none" as no provider.
 func parseNetwork(_ Dir, v string) (string, error) {
 	if v == NetworkNone {
@@ -675,7 +690,7 @@ var fields = []field{
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Voice.Service }, func(s *Settings) *string { return &s.Voice }),
-		flag:   "voice", path: "voice.service", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: parseVoice,
+		flag:   "voice", path: "voice.service", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: parseVoice, merge: mergeVoice,
 		usage:  "Speech `service` that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1",
 		values: speech.Services,
 	},
@@ -984,6 +999,10 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	}
 	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
 		cfg.Messengers.Email = nil
+	}
+	// The key and the voice belong to the service, and are invalid without it.
+	if f.path == "voice.service" {
+		cfg.Voice = VoiceConfig{}
 	}
 	if f.path == "inject" {
 		if err := cfg.dropInjectedSecrets(injected, nil); err != nil {

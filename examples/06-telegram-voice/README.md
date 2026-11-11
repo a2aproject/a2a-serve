@@ -78,7 +78,7 @@ When it fails, the line says which direction failed and why, with a fix:
 
 ```
   ✗ voice service openai can't speak: the speech service refused the key
-      fix: a2a-serve config set --voice-key -
+      fix: a2a-serve config set --voice-key - --restart
 ```
 
 With speaches, the line shows its URL. The agent isn't running yet, so `doctor` also notes that.
@@ -154,7 +154,7 @@ A caller that lists `audio/ogg` in `acceptedOutputModes` gets the reply as audio
 
 | Symptom | What to check |
 | --- | --- |
-| `I couldn't transcribe the voice note: the speech service refused the key` | The key of the service. Set it again with `a2a-serve config set --voice-key env:OPENAI_API_KEY --restart`. |
+| `I couldn't transcribe the voice note: the speech service refused the key` | The key of the service. Set it again with `a2a-serve config set --voice-key - --restart`. |
 | `I couldn't transcribe the voice note: the speech service timed out` | On speaches without a GPU, long voice notes take a while. Send shorter notes, or use a hosted service. |
 | `I couldn't transcribe the voice note: couldn't reach the speech service` | The service isn't running or its URL is wrong. With speaches, check `docker ps` and the URL in `a2a-serve config show`. |
 | Answers come as text with `(The voice reply failed: the speech service doesn't speak.)` | The service has no speech endpoint or model. With speaches, download the speech model (step 3). |

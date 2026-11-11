@@ -36,7 +36,8 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // conversations, agent sessions, handles, call tasks, grants and suggestions
 // of contexts left without tasks; the call tasks of deleted tasks in the
 // contexts that remain; the counts of taps on "Always allow" older
-// than their retention; the dedup keys of messages older than the
+// than their retention; the voice replies of email senders unused for
+// their retention; the dedup keys of messages older than the
 // retention; and the attachments of the oldest finished guest tasks over
 // the cap of guest attachments.
 func (s *Store) Prune(ctx context.Context) error {
@@ -64,6 +65,9 @@ func (s *Store) Prune(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM user_identities WHERE seen < ?`, now.Add(-UserIdentityRetention).UnixNano()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM voice_replies WHERE user_id LIKE 'email:%' AND created < ?`, now.Add(-VoiceRepliesRetention).UnixNano()); err != nil {
 			return err
 		}
 		pruned, err := deleteTasks(ctx, tx, `updated < ? AND state IN (?, ?, ?, ?)`, append([]any{cutoff}, terminalStates()...)...)
