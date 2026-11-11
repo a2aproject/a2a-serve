@@ -43,11 +43,16 @@ type Speaker interface {
 	Speak(ctx context.Context, text string, accepted []string) (Audio, error)
 }
 
-// OpenAI names the hosted OpenAI audio API as a service.
-const OpenAI = "openai"
+// Names of the hosted services --voice takes.
+const (
+	// OpenAI names the OpenAI audio API.
+	OpenAI = "openai"
+	// Gemini names the Gemini API.
+	Gemini = "gemini"
+)
 
 // Services are the service names --voice takes besides a URL.
-var Services = []string{OpenAI}
+var Services = []string{OpenAI, Gemini}
 
 // Media types of the audio the services speak, the preferred first.
 const (
@@ -65,7 +70,7 @@ var OutputModes = []string{MediaOgg}
 // ParseService checks the value of --voice: a service name, or the http or
 // https URL of a server with the OpenAI audio API shape.
 func ParseService(v string) error {
-	if v == OpenAI {
+	if v == OpenAI || v == Gemini {
 		return nil
 	}
 	u, err := url.Parse(v)
@@ -91,8 +96,11 @@ func Describe(service string) string {
 // Host returns the host that calls of the service go to, which is empty
 // for an invalid service.
 func Host(service string) string {
-	if service == OpenAI {
+	switch service {
+	case OpenAI:
 		service = openAIURL
+	case Gemini:
+		service = geminiURL
 	}
 	u, err := url.Parse(service)
 	if err != nil {
@@ -115,8 +123,9 @@ type Config struct {
 	Service string
 	// Key is the API key of the service, empty if it needs none.
 	Key string
-	// Voice names the voice of the replies; empty takes alloy, which servers
-	// with the OpenAI shape map to a voice of their own.
+	// Voice names the voice of the replies; empty takes Kore for Gemini,
+	// and alloy otherwise, which servers with the OpenAI shape map to a
+	// voice of their own.
 	Voice string
 }
 
@@ -124,6 +133,10 @@ type Config struct {
 func New(cfg Config) (Transcriber, Speaker, error) {
 	if err := ParseService(cfg.Service); err != nil {
 		return nil, nil, err
+	}
+	if cfg.Service == Gemini {
+		c := newGeminiClient(geminiURL, cfg)
+		return c, c, nil
 	}
 	c := newOpenAIClient(cfg)
 	return c, c, nil

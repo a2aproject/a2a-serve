@@ -41,6 +41,15 @@ func Message(m *a2a.Message) string {
 	return Parts(m.Parts)
 }
 
+// Snippet is s on one line, cut to limit characters with an ellipsis.
+func Snippet(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > limit {
+		return string(r[:limit]) + "…"
+	}
+	return s
+}
+
 // StateName is the short lowercase name of a task state, such as
 // "input-required".
 func StateName(s a2a.TaskState) string {

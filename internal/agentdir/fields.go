@@ -691,7 +691,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Voice.Service }, func(s *Settings) *string { return &s.Voice }),
 		flag:   "voice", path: "voice.service", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: parseVoice, merge: mergeVoice,
-		usage:  "Speech `service` that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1",
+		usage:  "Speech `service` that transcribes voice notes and speaks replies: openai, gemini, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1",
 		values: speech.Services,
 	},
 	{
@@ -703,7 +703,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Voice.Name }, func(s *Settings) *string { return &s.VoiceName }),
 		flag:   "voice-name", path: "voice.name", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: trimSpace,
-		usage: "Voice of the spoken replies, a `name` the --voice service has, such as nova for openai or am_michael for speaches (default: the service's own)",
+		usage: "Voice of the spoken replies, a `name` the --voice service has, such as nova for openai, Puck for gemini or am_michael for speaches (default: the service's own)",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.TaskTTL }, func(s *Settings) *string { return &s.TaskTTL }),

@@ -10,6 +10,14 @@ With an OpenAI API key:
 a2a-serve config set --voice openai --voice-key env:OPENAI_API_KEY --restart
 ```
 
+With the Gemini API key of your agent, stored as the [secret](secrets.md) `GEMINI_API_KEY`:
+
+```sh
+a2a-serve config set --voice gemini --voice-key secret:GEMINI_API_KEY --restart
+```
+
+`--voice-key env:GEMINI_API_KEY` takes the key from the environment.
+
 With a server that has the OpenAI audio API, such as [speaches](https://speaches.ai) on your machine, give its URL up to `/v1`:
 
 ```sh
@@ -36,7 +44,7 @@ $ a2a-serve doctor --online
 a2a-serve config set --voice-name nova --restart
 ```
 
-OpenAI has voices such as `alloy`, `echo`, `nova` and `onyx`. speaches uses Kokoro names, such as `af_heart` for an American female voice and `am_michael` for an American male one. The voice applies to everyone who talks to the agent. `a2a-serve doctor --online` reports a name the service doesn't have.
+OpenAI has voices such as `alloy`, `echo`, `nova` and `onyx`. Gemini has voices such as `Kore`, `Puck`, `Charon` and `Aoede`. speaches uses Kokoro names, such as `af_heart` for an American female voice and `am_michael` for an American male one. The voice applies to everyone who talks to the agent. `a2a-serve doctor --online` reports a name the service doesn't have.
 
 ## Send voice notes
 

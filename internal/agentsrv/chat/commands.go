@@ -20,8 +20,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
-
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 )
@@ -51,6 +49,7 @@ var commands []command
 func init() {
 	commands = []command{
 		{name: "new", help: "Start a new conversation", waits: true, handle: (*ChatTurns).newConversation},
+		{name: "conversations", help: "List your recent conversations and switch back to one", arg: true, waits: true, handle: (*ChatTurns).conversationsCommand},
 		{name: "stop", help: "Stop the current task", handle: (*ChatTurns).stopCommand},
 		{name: "allowed", help: "Show and remove what runs without asking for you", arg: true, handle: (*ChatTurns).allowedCommand},
 		{name: "voice", help: "Turn voice replies on or off for you", arg: true, choices: []string{"on", "off"}, handle: (*ChatTurns).voiceCommand},
@@ -99,14 +98,6 @@ func (c *ChatTurns) helpCommand(ctx context.Context, ch messenger.Messenger, in 
 
 func (c *ChatTurns) startCommand(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, _ auth.Principal, _ string) {
 	c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need.\n\n%s", c.config().Name, helpText()))
-}
-
-func (c *ChatTurns) newConversation(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, _ auth.Principal, _ string) {
-	if err := c.store.SetContext(ctx, in.Messenger, string(in.Conv), a2a.NewContextID()); err != nil {
-		slog.Error("starting a new context", "error", err)
-		return
-	}
-	c.reply(ctx, ch, in, "Started a new conversation.")
 }
 
 func (c *ChatTurns) stopCommand(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, p auth.Principal, _ string) {

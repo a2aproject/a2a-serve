@@ -33,10 +33,11 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // last code expires; tasks in a terminal state that weren't updated for the
 // task TTL, with their events, snapshots, questions and attachments;
 // questions of remote agents as old whose task nobody watches; the messenger
-// conversations, agent sessions, handles, call tasks, grants and suggestions
-// of contexts left without tasks; the call tasks of deleted tasks in the
-// contexts that remain; the counts of taps on "Always allow" older
-// than their retention; the voice replies of email senders unused for
+// conversations, chat histories, agent sessions, handles, call tasks,
+// grants and suggestions of contexts left without tasks; the contexts in
+// chat histories unused for the task TTL that never had a task; the call
+// tasks of deleted tasks in the contexts that remain; the counts of taps on
+// "Always allow" older than their retention; the voice replies of email senders unused for
 // their retention; the dedup keys of messages older than the
 // retention; and the attachments of the oldest finished guest tasks over
 // the cap of guest attachments.
@@ -68,6 +69,10 @@ func (s *Store) Prune(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM voice_replies WHERE user_id LIKE 'email:%' AND created < ?`, now.Add(-VoiceRepliesRetention).UnixNano()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM conv_history WHERE used < ?
+			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = conv_history.context_id)`, cutoff); err != nil {
 			return err
 		}
 		pruned, err := deleteTasks(ctx, tx, `updated < ? AND state IN (?, ?, ?, ?)`, append([]any{cutoff}, terminalStates()...)...)
@@ -123,7 +128,7 @@ func deleteTasks(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]
 }
 
 // contextTables keep the state of a context, which goes with its last task.
-var contextTables = []string{"convs", "sessions", "handles", "call_tasks", "tool_grants", "tool_suggestions"}
+var contextTables = []string{"convs", "conv_history", "sessions", "handles", "call_tasks", "tool_grants", "tool_suggestions"}
 
 // forgetTasks deletes the attachment references and questions of deleted
 // tasks, and the rows of contextTables for the contexts left without tasks.

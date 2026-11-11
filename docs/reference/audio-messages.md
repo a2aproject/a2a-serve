@@ -29,6 +29,6 @@ A request whose `acceptedOutputModes` include an audio type gets the reply spoke
 | `audio/mpeg` | `reply.mp3`, `audio/mpeg` |
 | `audio/wav` | `reply.wav`, `audio/wav` |
 
-The file part has the metadata `a2a-serve/voice-reply: true`. When the reply can't be spoken, the artifact is a text part that says why.
+The `gemini` service speaks `audio/ogg` and `audio/wav`. The file part has the metadata `a2a-serve/voice-reply: true`. When the reply can't be spoken, the artifact is a text part that says why.
 
 The server takes `<speak>` blocks out of the reply's text in every task, and speaks the last one in place of the prose of the reply.

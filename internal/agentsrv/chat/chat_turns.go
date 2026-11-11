@@ -314,6 +314,9 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 		slog.Error("resolving conversation context", "error", err)
 		return
 	}
+	if err := c.store.UseConversation(ctx, in.Messenger, string(in.Conv), p.ID, contextID); err != nil {
+		slog.Warn("recording the use of a conversation", "user", p.ID, "error", err)
+	}
 	last := batch[len(batch)-1].in
 	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts(batch)...)
 	msg.ID = in.Messenger + ":" + in.MessageID

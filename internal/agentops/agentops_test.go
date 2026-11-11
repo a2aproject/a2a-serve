@@ -438,7 +438,10 @@ func TestDeleteMessenger(t *testing.T) {
 			}
 			rt, d := newAgentRuntime(t, cfg)
 			var stopped []string
-			s, _ := newServiceWith(t, rt, Hooks{MessengerRemoved: func(kind string) { stopped = append(stopped, kind) }})
+			s, st := newServiceWith(t, rt, Hooks{MessengerRemoved: func(kind string) { stopped = append(stopped, kind) }})
+			if err := st.UseConversation(context.Background(), agentdir.MessengerTelegram, "dm1", "pair:anna", "c1"); err != nil {
+				t.Fatalf("UseConversation() error = %v", err)
+			}
 
 			_, err := s.DeleteMessenger(context.Background(), tc.kind)
 
@@ -460,6 +463,9 @@ func TestDeleteMessenger(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantStopped, stopped); diff != "" {
 				t.Fatalf("DeleteMessenger(%q) stopped wrong messengers (-want +got) diff = %s", tc.kind, diff)
+			}
+			if convs, err := st.Conversations(context.Background(), tc.kind, "dm1", "pair:anna"); err != nil || len(convs) != 0 {
+				t.Fatalf("Conversations() after DeleteMessenger(%q) = %v, %v, want none", tc.kind, convs, err)
 			}
 		})
 	}

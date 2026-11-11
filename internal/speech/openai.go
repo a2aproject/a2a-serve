@@ -21,12 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -59,6 +58,9 @@ type openAIClient struct {
 	speak      string
 	voice      string
 	http       *http.Client
+	// encodeOpus is set once the service refused opus and spoke wav,
+	// which the client then encodes to Ogg Opus itself.
+	encodeOpus atomic.Bool
 }
 
 func newOpenAIClient(cfg Config) *openAIClient {
@@ -97,11 +99,8 @@ func (c *openAIClient) Transcribe(ctx context.Context, a Audio) (string, error) 
 	if !ok {
 		return "", &Error{Reason: fmt.Sprintf("the speech service doesn't take %s audio", a.MediaType)}
 	}
-	if len(a.Data) > MaxInput {
-		return "", &Error{Reason: fmt.Sprintf("the recording is over %d MiB", MaxInput>>20)}
-	}
-	if d, ok := Duration(a); ok && d > MaxDuration {
-		return "", &Error{Reason: fmt.Sprintf("the recording is longer than %d minutes", int(MaxDuration.Minutes()))}
+	if err := checkRecording(a, MaxInput); err != nil {
+		return "", err
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
@@ -162,22 +161,65 @@ func (c *openAIClient) Speak(ctx context.Context, text string, accepted []string
 	if len(text) > MaxSpeechText {
 		return Audio{}, &Error{Reason: fmt.Sprintf("the text is over %d bytes", MaxSpeechText)}
 	}
-	req, err := json.Marshal(map[string]string{"model": c.speak, "input": text, "voice": c.voice, "response_format": formats[mediaType]})
+	if mediaType == MediaOgg && c.encodeOpus.Load() {
+		return c.speakOpusFromWAV(ctx, text)
+	}
+	data, err := c.speech(ctx, text, formats[mediaType])
+	var e *Error
+	// Servers such as speaches speak no opus. The client then encodes it
+	// from wav.
+	if mediaType == MediaOgg && errors.As(err, &e) && refusedRequest(e.status) {
+		a, werr := c.speakOpusFromWAV(ctx, text)
+		if werr != nil {
+			return Audio{}, err
+		}
+		c.encodeOpus.Store(true)
+		return a, nil
+	}
 	if err != nil {
 		return Audio{}, err
+	}
+	return Audio{MediaType: mediaType, Data: data}, nil
+}
+
+// speakOpusFromWAV speaks text as wav and encodes it to Ogg Opus.
+func (c *openAIClient) speakOpusFromWAV(ctx context.Context, text string) (Audio, error) {
+	data, err := c.speech(ctx, text, formats[MediaWAV])
+	if err != nil {
+		return Audio{}, err
+	}
+	p, err := readPCM(MediaWAV, data)
+	if err != nil {
+		return Audio{}, &Error{Reason: "the speech service sent invalid audio", err: err}
+	}
+	if len(p.samples) == 0 {
+		return Audio{}, &Error{Reason: "the speech service sent no audio"}
+	}
+	ogg, err := oggOpus(ctx, p)
+	if err != nil {
+		return Audio{}, &Error{Reason: "couldn't encode the voice reply", err: err}
+	}
+	return Audio{MediaType: MediaOgg, Data: ogg}, nil
+}
+
+// speech calls /audio/speech for text in the response format.
+func (c *openAIClient) speech(ctx context.Context, text, format string) ([]byte, error) {
+	req, err := json.Marshal(map[string]string{"model": c.speak, "input": text, "voice": c.voice, "response_format": format})
+	if err != nil {
+		return nil, err
 	}
 	data, err := c.post(ctx, "/audio/speech", "application/json", bytes.NewReader(req), maxSpeech)
 	var e *Error
 	if errors.As(err, &e) && e.status == http.StatusNotFound {
-		return Audio{}, &Error{Reason: "the speech service doesn't speak", NoSpeech: true, err: err}
+		return nil, &Error{Reason: "the speech service doesn't speak", NoSpeech: true, err: err}
 	}
 	if err != nil {
-		return Audio{}, err
+		return nil, err
 	}
 	if len(data) == 0 {
-		return Audio{}, &Error{Reason: "the speech service sent no audio"}
+		return nil, &Error{Reason: "the speech service sent no audio"}
 	}
-	return Audio{MediaType: mediaType, Data: data}, nil
+	return data, nil
 }
 
 // pickFormat returns the first media type of accepted that the service
@@ -216,77 +258,5 @@ func (c *openAIClient) post(ctx context.Context, path, contentType string, body 
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, transportError(ctx, err)
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			slog.Debug("closing a response of the speech service", "error", err)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, statusError(resp)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, transportError(ctx, err)
-	}
-	if int64(len(data)) > limit {
-		return nil, &Error{Reason: fmt.Sprintf("the speech service sent over %d MiB", limit>>20)}
-	}
-	return data, nil
-}
-
-// transportError describes a failed request without its URL.
-func transportError(ctx context.Context, err error) error {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		err = urlErr.Err
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || isTimeout(err) {
-		return &Error{Reason: "the speech service timed out", err: err}
-	}
-	if errors.Is(err, context.Canceled) {
-		return &Error{Reason: "the call of the speech service was canceled", err: err}
-	}
-	return &Error{Reason: "couldn't reach the speech service", err: err}
-}
-
-func isTimeout(err error) bool {
-	var t interface{ Timeout() bool }
-	return errors.As(err, &t) && t.Timeout()
-}
-
-// statusError describes a response other than 200, with the message of an
-// OpenAI-style error body if it has one.
-func statusError(resp *http.Response) error {
-	e := &Error{status: resp.StatusCode}
-	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		e.Reason = "the speech service refused the key"
-	case http.StatusTooManyRequests:
-		e.Reason = "the speech service is over its rate limit or quota"
-	default:
-		e.Reason = "the speech service answered " + resp.Status
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	if err != nil {
-		return e
-	}
-	var body struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(data, &body) != nil || body.Error.Message == "" {
-		return e
-	}
-	e.err = errors.New(body.Error.Message)
-	// A refused request, such as one with an unknown voice, says what to
-	// change. Refused keys and failures say nothing the owner can act on.
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		e.Reason = "the speech service refused the request: " + Truncate(body.Error.Message, 200)
-	}
-	return e
+	return send(ctx, c.http, req, limit)
 }

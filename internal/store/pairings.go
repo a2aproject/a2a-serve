@@ -136,11 +136,12 @@ func removedTasksOf(users []PairingUser) (string, []any) {
 
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
 // its webhook node and the node's watches. users are the users the pairing
-// acts as. Their schedules, watches, questions, allowed tool calls and
-// voice replies go with it, and so do their tasks and every task of the
-// conversations that run in their agent processes. The messenger conversations, agent sessions
-// and handles of the contexts left without tasks go too, so a new pairing
-// with the same name starts with none of them.
+// acts as. Their schedules, watches, questions, allowed tool calls, voice
+// replies and chat histories go with it, and so do their tasks and every
+// task of the conversations that run in their agent processes. The
+// messenger conversations, agent sessions and handles of the contexts left
+// without tasks go too, so a new pairing with the same name starts with
+// none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, users ...PairingUser) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?)`, name); err != nil {
@@ -157,6 +158,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, users ...Pairing
 				`DELETE FROM tool_suggestions WHERE user_id = ?`,
 				`DELETE FROM user_identities WHERE user_id = ?`,
 				`DELETE FROM voice_replies WHERE user_id = ?`,
+				`DELETE FROM conv_history WHERE user_id = ?`,
 			} {
 				if _, err := tx.ExecContext(ctx, del, u.Principal); err != nil {
 					return err

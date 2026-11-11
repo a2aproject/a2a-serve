@@ -17,12 +17,26 @@ Each agent needs its own bot. `messenger add` prints a link that makes you the o
 Each chat or thread is one conversation. In the chat:
 
 - `/new` starts a new conversation.
+- `/conversations` lists your recent conversations in this chat. Tap one to go back to it. In a chat without buttons, such as email, send `/conversations <number>`.
 - `/stop` cancels the running task.
 - `/allowed` lists the tool calls that run without asking you ([Approvals](approvals.md#allowed-in-all-your-conversations)).
 - `/voice on` and `/voice off` turn voice replies on and off for you ([Voice](voice.md)).
 - `/help` lists the commands.
 
 With [voice](voice.md) set up, the agent gets your voice notes as text.
+
+## Earlier conversations
+
+```
+anna   /conversations
+coder  Your recent conversations here:
+       [ Now: 2 turns, "write a changelog entry" ]
+       [ 3 days ago: 47 turns, "migrate the CLI tests to the n…" ]
+anna   (taps "3 days ago")
+coder  Switched to the conversation from 3 days ago: "migrate the CLI tests to the n…".
+```
+
+The agent picks up the conversation where you left it. Each person has their own list in each chat, and the list keeps your most recent conversations ([limits](../reference/limits.md#messengers)). A conversation leaves the list when its tasks expire.
 
 ## Telegram
 

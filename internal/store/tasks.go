@@ -940,6 +940,43 @@ func (ts *TaskStore) ContextStarter(ctx context.Context, contextID string) (stri
 	return owner, err
 }
 
+// MaxCountedTurns is how many tasks of a context [TaskStore.ContextSummary]
+// counts at most.
+const MaxCountedTurns = 999
+
+// ContextSummary is what a list of conversations shows of a context.
+type ContextSummary struct {
+	// Turns counts its tasks, up to MaxCountedTurns+1.
+	Turns int
+	// Prompt is the first user message of its oldest task, or nil.
+	Prompt *a2a.Message
+}
+
+// ContextSummary returns the summary of a context, without turns if it has
+// no tasks.
+func (ts *TaskStore) ContextSummary(ctx context.Context, contextID string) (ContextSummary, error) {
+	var sum ContextSummary
+	err := ts.s.reads.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM tasks WHERE scope = ? AND context_id = ? LIMIT ?)`,
+		ts.scope, contextID, MaxCountedTurns+1).Scan(&sum.Turns)
+	if err != nil || sum.Turns == 0 {
+		return sum, err
+	}
+	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY rowid LIMIT 1`,
+		ts.scope, contextID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return sum, nil
+	}
+	if err != nil {
+		return ContextSummary{}, err
+	}
+	prompts, err := ts.prompts(ctx, []*taskHeader{h})
+	if err != nil {
+		return ContextSummary{}, err
+	}
+	sum.Prompt = prompts[0]
+	return sum, nil
+}
+
 // TaskCounts returns the number of tasks of the scope per state.
 func (ts *TaskStore) TaskCounts(ctx context.Context) (map[a2a.TaskState]int, error) {
 	rows, err := ts.s.reads.QueryContext(ctx, `SELECT state, COUNT(*) FROM tasks WHERE scope = ? GROUP BY state`, ts.scope)
