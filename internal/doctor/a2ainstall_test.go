@@ -16,20 +16,14 @@ package doctor
 
 import (
 	"os"
+	"slices"
 	"testing"
 )
 
 const scriptCmd = "curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | "
 
 func writableDirs(dirs ...string) func(string) bool {
-	return func(dir string) bool {
-		for _, d := range dirs {
-			if d == dir {
-				return true
-			}
-		}
-		return false
-	}
+	return func(dir string) bool { return slices.Contains(dirs, dir) }
 }
 
 func TestA2ALocationsInstall(t *testing.T) {
