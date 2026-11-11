@@ -114,7 +114,7 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 			if err == nil {
 				ev = reply.filter(ev)
 			}
-			if state, ok := eventState(ev); ok && err == nil && state.Terminal() {
+			if state, ok := eventState(ev); ok && err == nil && (state.Terminal() || state == a2a.TaskStateInputRequired || state == a2a.TaskStateAuthRequired) {
 				for _, rest := range reply.flush(execCtx) {
 					if !yield(rest, nil) {
 						return
@@ -122,16 +122,16 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 				}
 			}
 			if err == nil && completes(ev) {
+				var extra a2a.Event
 				spoken := false
 				if speak {
-					var extra a2a.Event
 					extra, spoken = v.speak(ctx, execCtx, reply.spoken(), accepted)
-					if extra != nil && !yield(extra, nil) {
-						return
-					}
 				}
 				// A reply that is only a block would be lost unless spoken.
 				if back, ok := reply.unspoken(execCtx); ok && !spoken && !yield(back, nil) {
+					return
+				}
+				if extra != nil && !yield(extra, nil) {
 					return
 				}
 			}

@@ -125,7 +125,7 @@ The test raced on a shared buffer. I gave each case its own buffer:
 <speak>The test shared a buffer between cases. Each case has its own now, and the race is gone.</speak>
 ```
 
-The server reads the block aloud and takes it out of the text, so the chat shows the reply without it. A block starts with `<speak>` at the start of a line. A `<speak>` inside a sentence, inline code or a code block stays in the text, and so does a block that is never closed. The server removes blocks from every reply, also when nobody asked for a voice reply. A reply that is only a block shows the block as text when it isn't spoken. Answers to the agent's questions reach the agent as written, without the note.
+The server reads the block aloud and takes it out of the text, so the chat shows the reply without it. A block starts with `<speak>` at the start of a line and ends with `</speak>` at the end of a line. A `<speak>` inside a sentence, inline code or a code block stays in the text, and so does a block that never ends. The server removes blocks from every reply, also when nobody asked for a voice reply. A reply that is only a block shows the block as text when it isn't spoken. Answers to the agent's questions reach the agent as written, without the note.
 
 Without a block, the server speaks the prose of the reply. It leaves out code blocks, tables, links and markup, so those stay in the text. It cuts a long reply at about 1,000 characters and adds "The rest is in the text." A `<speak>` block is cut at about 4,000 characters, about the most the services speak at once.
 

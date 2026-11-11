@@ -466,7 +466,11 @@ func TestSpeakFilter(t *testing.T) {
 	}{
 		{name: "no block", chunks: []string{"Fixed ", "it."}, want: "Fixed it."},
 		{name: "block", chunks: []string{"Long.\n<speak>Short.</speak>"}, want: "Long.\n", wantSpoken: "Short.", wantFound: true},
-		{name: "tags split across chunks", chunks: []string{"Long.\n  <spe", "ak>Sho", "rt.</sp", "eak> End."}, want: "Long.\n End.", wantSpoken: "Short.", wantFound: true},
+		{name: "tags split across chunks", chunks: []string{"Long.\n  <spe", "ak>Sho", "rt.</sp", "eak>", "\nEnd."}, want: "Long.\n\nEnd.", wantSpoken: "Short.", wantFound: true},
+		{name: "closing tag inside a line", chunks: []string{"<speak> is the SSML root.\nIt ends with </speak>, and more text."}, want: "<speak> is the SSML root.\nIt ends with </speak>, and more text."},
+		{name: "indented code", chunks: []string{"Example:\n\n    <speak>Hello</speak>\n"}, want: "Example:\n\n    <speak>Hello</speak>\n"},
+		{name: "nested fences", chunks: []string{"````md\n```xml\n<speak>Hi</speak>\n```\n````\n<speak>Short.</speak>"}, want: "````md\n```xml\n<speak>Hi</speak>\n```\n````\n", wantSpoken: "Short.", wantFound: true},
+		{name: "block past the limit is text", chunks: []string{"<speak>" + strings.Repeat("x", 20000)}, want: "<speak>" + strings.Repeat("x", 20000)},
 		{name: "last block wins", chunks: []string{"<speak>One.</speak>\n<speak>Two.</speak>\nb"}, want: "\n\nb", wantSpoken: "Two.", wantFound: true},
 		{name: "unclosed block stays text", chunks: []string{"Long.\n<speak>Short"}, want: "Long.\n<speak>Short"},
 		{name: "tag in a sentence", chunks: []string{"Wrap SSML in `<speak>`. Then call the API."}, want: "Wrap SSML in `<speak>`. Then call the API."},

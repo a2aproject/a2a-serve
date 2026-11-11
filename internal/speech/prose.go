@@ -57,6 +57,7 @@ func Prose(markdown string, limit int) string {
 		if strings.HasPrefix(trimmed, "|") || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
 			continue
 		}
+		trimmed = strings.NewReplacer(speakOpen, "", speakClose, "").Replace(trimmed)
 		trimmed = strings.TrimLeft(trimmed, "#> ")
 		trimmed = listMark.ReplaceAllString(trimmed, "")
 		trimmed = mdLink.ReplaceAllString(trimmed, "$1")

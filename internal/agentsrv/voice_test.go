@@ -432,7 +432,7 @@ func TestVoiceTurnSpeaksTheSpeakBlock(t *testing.T) {
 			accepted:  []string{"audio/ogg"},
 			chunks:    []string{"Wrap it in `<speak>` tags."},
 			want:      []string{"task:submitted", "artifact:Wrap it in `<speak>` tags.", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
-			wantSpoke: []string{"Wrap it in <speak> tags."},
+			wantSpoke: []string{"Wrap it in tags."},
 			wantLine:  true,
 		},
 		{
@@ -487,7 +487,7 @@ func TestVoiceTurnShowsBlockWhenSpeechFails(t *testing.T) {
 		}
 		got = append(got, ev)
 	}
-	want := []string{"task:submitted", "artifact:", "artifact:(The voice reply failed: the speech service timed out.)", "artifact:Yes, the build passes.", "status:completed"}
+	want := []string{"task:submitted", "artifact:", "artifact:Yes, the build passes.", "artifact:(The voice reply failed: the speech service timed out.)", "status:completed"}
 	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
 		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
 	}
