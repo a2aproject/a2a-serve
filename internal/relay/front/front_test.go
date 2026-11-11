@@ -426,6 +426,40 @@ func TestFrontLimitsTheRateOfEachClient(t *testing.T) {
 	}
 }
 
+func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
+	t.Parallel()
+	f, _ := newFront(t)
+	f.Open(upstream(t))
+	serve := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "127.0.0.1:1000"
+		req.Header.Set("X-Forwarded-For", "198.51.100.1")
+		rec := httptest.NewRecorder()
+		f.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	refused := false
+	for range 200 {
+		if serve("/ingress/12D3A/a2a/coder/tasks") == http.StatusTooManyRequests {
+			refused = true
+			break
+		}
+	}
+	if !refused {
+		t.Fatalf("GET /ingress/12D3A/... past the client's burst status = %d, want %d", http.StatusOK, http.StatusTooManyRequests)
+	}
+
+	sameAgent := serve("/ingress/12D3A/a2a/reviewer/tasks")
+	otherAgent := serve("/ingress/12D3B/a2a/coder/tasks")
+
+	if sameAgent != http.StatusTooManyRequests {
+		t.Fatalf("GET another service of the limited agent status = %d, want %d", sameAgent, http.StatusTooManyRequests)
+	}
+	if otherAgent != http.StatusOK {
+		t.Fatalf("GET another agent from the limited client status = %d, want %d", otherAgent, http.StatusOK)
+	}
+}
+
 func TestFrontTellsClientsApart(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

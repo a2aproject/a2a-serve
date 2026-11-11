@@ -44,7 +44,9 @@ type KeyedRate struct {
 
 // NewKeyedRate returns a limiter of limit requests a second, with bursts
 // of burst, for each key of a request. It keeps the buckets of at most
-// maxKeys keys, and forgets a key once its bucket is full again.
+// maxKeys keys, and forgets a key once its bucket is full again. While
+// maxKeys keys are tracked, it admits the requests of other keys, so that
+// clients which fill the table can't lock out the rest.
 func NewKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string) *KeyedRate {
 	return newKeyedRate(limit, burst, maxKeys, key, time.Now)
 }
@@ -58,28 +60,22 @@ func newKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) 
 }
 
 // Handler serves next within the limits. It answers a request over its
-// key's rate with 429, and the request of a new key while maxKeys keys
-// are in use with 503. Both name the wait in Retry-After.
+// key's rate with 429, and names the wait in Retry-After.
 func (l *KeyedRate) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code, wait := l.allow(l.key(r))
-		if code == 0 {
+		wait, ok := l.allow(l.key(r))
+		if ok {
 			next.ServeHTTP(w, r)
 			return
 		}
-		msg := BusyMessage
-		if code == http.StatusTooManyRequests {
-			msg = "too many requests from this client; try again later"
-		}
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		w.Header().Set("Connection", "close")
-		jsonhttp.Error(w, code, msg)
+		jsonhttp.Error(w, http.StatusTooManyRequests, "too many requests from this client; try again later")
 	})
 }
 
-// allow takes a request of key, or returns the status of its refusal and
-// how long to wait.
-func (l *KeyedRate) allow(key string) (int, time.Duration) {
+// allow takes a request of key, or returns how long to wait.
+func (l *KeyedRate) allow(key string) (time.Duration, bool) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -89,16 +85,16 @@ func (l *KeyedRate) allow(key string) (int, time.Duration) {
 	lim, ok := l.keys[key]
 	if !ok {
 		if len(l.keys) >= l.maxKeys {
-			return http.StatusServiceUnavailable, max(time.Second, l.nextPrune.Sub(now))
+			return 0, true
 		}
 		lim = rate.NewLimiter(l.limit, l.burst)
 		l.keys[key] = lim
 	}
 	if lim.AllowN(now, 1) {
-		return 0, 0
+		return 0, true
 	}
 	wait := time.Duration((1 - lim.TokensAt(now)) / float64(l.limit) * float64(time.Second))
-	return http.StatusTooManyRequests, max(time.Second, wait)
+	return max(time.Second, wait), false
 }
 
 // prune forgets the keys whose buckets are full. It runs at most once in

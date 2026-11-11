@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type fakeClock struct {
@@ -83,7 +85,7 @@ func TestKeyedRate(t *testing.T) {
 	}
 }
 
-func TestKeyedRateForgetsIdleKeys(t *testing.T) {
+func TestKeyedRateAdmitsUntrackedKeysWhenFull(t *testing.T) {
 	t.Parallel()
 	clock := &fakeClock{now: time.Unix(1000, 0)}
 	h := newRateHandler(2, 1, clock)
@@ -91,14 +93,19 @@ func TestKeyedRateForgetsIdleKeys(t *testing.T) {
 		t.Fatalf("KeyedRate.Handler() first key status = %d, want %d", got, http.StatusOK)
 	}
 
-	full := serveKey(h, "b")
-	clock.Advance(2 * time.Second)
-	afterIdle := serveKey(h, "b")
-
-	if full.Code != http.StatusServiceUnavailable || full.Header().Get("Retry-After") == "" {
-		t.Fatalf("KeyedRate.Handler() new key over the cap = %d with Retry-After %q, want %d with Retry-After", full.Code, full.Header().Get("Retry-After"), http.StatusServiceUnavailable)
+	for i := range 3 {
+		if got := serveKey(h, "b").Code; got != http.StatusOK {
+			t.Fatalf("KeyedRate.Handler() request %d of a key over the cap status = %d, want %d", i+1, got, http.StatusOK)
+		}
 	}
-	if afterIdle.Code != http.StatusOK {
-		t.Fatalf("KeyedRate.Handler() new key once the first is idle status = %d, want %d", afterIdle.Code, http.StatusOK)
+	clock.Advance(4 * time.Second)
+	var codes []int
+	for range 3 {
+		codes = append(codes, serveKey(h, "b").Code)
+	}
+
+	want := []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests}
+	if diff := cmp.Diff(want, codes); diff != "" {
+		t.Fatalf("KeyedRate.Handler() key once the first is forgotten wrong statuses (-want +got) diff = %s", diff)
 	}
 }

@@ -75,8 +75,9 @@ const (
 	// machine still fit.
 	enrollmentRate  = 1
 	enrollmentBurst = 10
-	// Agent Mesh admits 200 anonymous requests a second to an agent's public
-	// URL from one address, and the front's address is every caller's.
+	// Agent Mesh admits 200 anonymous requests a second to each agent's
+	// public URLs from one address, and the front's address is every
+	// caller's.
 	ingressRate  = 20
 	ingressBurst = 100
 	// maxRateClients bounds the clients that the rate limits track at once.
@@ -97,7 +98,7 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 		proxied:     httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
 		onboarding:  httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
 		enrollments: httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
-		ingress:     httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, client),
+		ingress:     httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, clientOfAgent),
 		transport:   upstreamTransport(),
 	}
 	if signIn != nil {
@@ -242,6 +243,14 @@ func onboarding(p string) bool {
 // the front serves, as the front's own limits do.
 func Client(r *http.Request) string {
 	return client(r)
+}
+
+// clientOfAgent identifies the client of a request together with the agent
+// whose public URL it calls, as Agent Mesh does for its ingress limit.
+func clientOfAgent(r *http.Request) string {
+	rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
+	peer, _, _ := strings.Cut(rest, "/")
+	return client(r) + " " + peer
 }
 
 // client identifies the client of a request for its limits. A tunnel or a
