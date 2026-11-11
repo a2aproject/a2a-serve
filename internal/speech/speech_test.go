@@ -41,9 +41,10 @@ func TestParseService(t *testing.T) {
 		{value: "openai"},
 		{value: "http://localhost:8000/v1"},
 		{value: "https://speech.example.com/v1"},
-		{value: "gemini", wantErr: "want openai or the http(s) URL"},
-		{value: "localhost:8000", wantErr: "want openai or the http(s) URL"},
-		{value: "ftp://localhost/v1", wantErr: "want openai or the http(s) URL"},
+		{value: "gemini"},
+		{value: "local", wantErr: "want openai, gemini or the http(s) URL"},
+		{value: "localhost:8000", wantErr: "want openai, gemini or the http(s) URL"},
+		{value: "ftp://localhost/v1", wantErr: "want openai, gemini or the http(s) URL"},
 		{value: "https://user:key@speech.example.com/v1", wantErr: "--voice-key"},
 	}
 	for _, tc := range tests {

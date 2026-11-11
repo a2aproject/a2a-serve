@@ -349,6 +349,9 @@ func (v VoiceConfig) validate() []error {
 	if v.Service == speech.OpenAI && v.Key == "" {
 		errs = append(errs, errors.New("--voice openai needs --voice-key, such as --voice-key env:OPENAI_API_KEY"))
 	}
+	if v.Service == speech.Gemini && v.Key == "" {
+		errs = append(errs, errors.New("--voice gemini needs --voice-key, such as --voice-key env:GEMINI_API_KEY"))
+	}
 	if v.Service == "" && v.Key != "" {
 		errs = append(errs, errors.New("--voice-key needs --voice"))
 	}

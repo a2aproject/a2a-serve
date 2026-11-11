@@ -21,11 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -97,11 +95,8 @@ func (c *openAIClient) Transcribe(ctx context.Context, a Audio) (string, error) 
 	if !ok {
 		return "", &Error{Reason: fmt.Sprintf("the speech service doesn't take %s audio", a.MediaType)}
 	}
-	if len(a.Data) > MaxInput {
-		return "", &Error{Reason: fmt.Sprintf("the recording is over %d MiB", MaxInput>>20)}
-	}
-	if d, ok := Duration(a); ok && d > MaxDuration {
-		return "", &Error{Reason: fmt.Sprintf("the recording is longer than %d minutes", int(MaxDuration.Minutes()))}
+	if err := checkRecording(a, MaxInput); err != nil {
+		return "", err
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
@@ -216,77 +211,5 @@ func (c *openAIClient) post(ctx context.Context, path, contentType string, body 
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, transportError(ctx, err)
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			slog.Debug("closing a response of the speech service", "error", err)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, statusError(resp)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, transportError(ctx, err)
-	}
-	if int64(len(data)) > limit {
-		return nil, &Error{Reason: fmt.Sprintf("the speech service sent over %d MiB", limit>>20)}
-	}
-	return data, nil
-}
-
-// transportError describes a failed request without its URL.
-func transportError(ctx context.Context, err error) error {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		err = urlErr.Err
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || isTimeout(err) {
-		return &Error{Reason: "the speech service timed out", err: err}
-	}
-	if errors.Is(err, context.Canceled) {
-		return &Error{Reason: "the call of the speech service was canceled", err: err}
-	}
-	return &Error{Reason: "couldn't reach the speech service", err: err}
-}
-
-func isTimeout(err error) bool {
-	var t interface{ Timeout() bool }
-	return errors.As(err, &t) && t.Timeout()
-}
-
-// statusError describes a response other than 200, with the message of an
-// OpenAI-style error body if it has one.
-func statusError(resp *http.Response) error {
-	e := &Error{status: resp.StatusCode}
-	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		e.Reason = "the speech service refused the key"
-	case http.StatusTooManyRequests:
-		e.Reason = "the speech service is over its rate limit or quota"
-	default:
-		e.Reason = "the speech service answered " + resp.Status
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	if err != nil {
-		return e
-	}
-	var body struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(data, &body) != nil || body.Error.Message == "" {
-		return e
-	}
-	e.err = errors.New(body.Error.Message)
-	// A refused request, such as one with an unknown voice, says what to
-	// change. Refused keys and failures say nothing the owner can act on.
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		e.Reason = "the speech service refused the request: " + Truncate(body.Error.Message, 200)
-	}
-	return e
+	return send(ctx, c.http, req, limit)
 }

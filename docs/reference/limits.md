@@ -73,7 +73,7 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 
 | Limit | Value |
 | --- | --- |
-| Size of a recording | 25 MiB, and the attachment size of the messenger |
+| Size of a recording | 25 MiB, 14 MiB with `gemini`, and the attachment size of the messenger |
 | Length of a recording | 5 minutes |
 | Formats of a recording | Ogg Opus, MP3 and WAV. Owners can send other formats, which aren't measured. |
 | Recordings in one message | 10 |

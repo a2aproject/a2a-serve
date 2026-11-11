@@ -17,7 +17,7 @@ Turn opencode, Claude Code, or any ACP coding agent into a sandboxed [A2A](https
 > A2A Serve is pre-1.0. Commands, flags, and `config.yaml` keys may change; stored state always migrates forward. Read [Security](./docs/advanced/security.md) and [Known Limitations](#known-limitations) before exposing an agent to other people.
 
 - **Use your agent from your phone:** message it on [Telegram, Discord, or email](./docs/guide/messengers.md) and approve edits or commands from chat.
-- **Talk to it:** send [voice notes](./docs/guide/voice.md) and get voice replies, through OpenAI or a speech server you run.
+- **Talk to it:** send [voice notes](./docs/guide/voice.md) and get voice replies, through OpenAI, Gemini or a speech server you run.
 - **Share an agent with your team:** expose it on [Tailscale, an Agent Mesh relay, or a public URL](./docs/guide/networks.md) with [pairing codes](./docs/guide/identities.md) or [Google sign-in](./docs/guide/email-sign-in.md).
 - **Let agents call other agents:** delegate tasks to [contacts, peers](./docs/guide/agent2agent.md), and [webhook nodes](./docs/guide/webhook-nodes.md) while keeping tokens outside the sandbox.
 - **Package repeatable setups:** bundle instructions, skills, [MCP servers](./docs/guide/mcp-and-skills.md), and [schedules](./docs/guide/schedules.md) into a one-command [recipe](./docs/guide/recipes.md).

@@ -395,6 +395,63 @@ func TestSetVoiceOnAnotherHostDropsTheKey(t *testing.T) {
 	}
 }
 
+func TestSetVoiceGemini(t *testing.T) {
+	t.Parallel()
+	const key = agentdir.SecretPrefix + agentdir.SecretVoiceKey
+	tests := []struct {
+		name       string
+		settings   agentdir.Settings
+		wantErr    string
+		wantVoice  agentdir.VoiceConfig
+		wantStored agentdir.Secrets
+	}{
+		{
+			name:     "without a key",
+			settings: agentdir.Settings{Voice: "gemini"},
+			wantErr:  "--voice gemini needs --voice-key, such as --voice-key env:GEMINI_API_KEY",
+		},
+		{
+			name:       "with a key",
+			settings:   agentdir.Settings{Voice: "gemini", VoiceKey: "gm-new", VoiceName: "Puck"},
+			wantVoice:  agentdir.VoiceConfig{Service: "gemini", Key: key, Name: "Puck"},
+			wantStored: agentdir.Secrets{agentdir.SecretVoiceKey: "gm-new"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{
+				Name: "coder", Harness: "opencode",
+				Voice: agentdir.VoiceConfig{Service: "openai", Key: key},
+			}, agentdir.Secrets{agentdir.SecretVoiceKey: "sk-old"})
+			_, err := Set(t.Context(), d, controlapi.NewClient(d), tc.settings, false)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Set() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			cfg, err := d.ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantVoice, cfg.Voice); diff != "" {
+				t.Fatalf("Set() wrong voice (-want +got) diff = %s", diff)
+			}
+			stored, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantStored, stored); diff != "" {
+				t.Fatalf("Set() wrong stored secrets (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`

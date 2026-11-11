@@ -86,9 +86,9 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 | `--task-ttl duration` |  | How long finished tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
-| `--voice service` |  | Speech service that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1 |
+| `--voice service` |  | Speech service that transcribes voice notes and speaks replies: openai, gemini, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1 |
 | `--voice-key string` |  | API key of the --voice service, which the agent doesn't get (secret value: env:VAR, -, or the value) |
-| `--voice-name name` |  | Voice of the spoken replies, a name the --voice service has, such as nova for openai or am_michael for speaches (default: the service's own) |
+| `--voice-name name` |  | Voice of the spoken replies, a name the --voice service has, such as nova for openai, Puck for gemini or am_michael for speaches (default: the service's own) |
 
 **Workspace flags**
 
