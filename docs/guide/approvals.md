@@ -1,6 +1,8 @@
 # Approvals
 
-Every tool call that changes something waits for approval, unless a rule or an earlier "Always allow" decides it. The task pauses in `input-required` and shows the tool call with three options: `once`, `always` and `reject`. Answer on the same task:
+Every tool call that changes something waits for approval, unless a rule or an earlier "Always allow" decides it.
+
+The task pauses in `input-required` and shows the tool call with three options: `once`, `always` and `reject`. Answer on the same task:
 
 ```sh
 a2a send --task-id <task-id> once          # or: always, reject, deny
@@ -14,15 +16,7 @@ coder  Permission required: kubectl get pods -n prod.
        [Always allow kubectl get *]
 ```
 
-A reply that chooses none of the options is refused with the list of options, and the question keeps waiting. To give the agent other instructions, answer `reject` first.
-
-While a task waits for an approval, a new message to its conversation is refused with the task ID and the question. Answer the question first, or leave out the context ID to start a new conversation. Messages of other people in a group chat, and runs of schedules, wait until the question is answered.
-
-Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises. A data part with an `option` field answers too, such as `a2a send --task-id <task> --data-part '{"option":"once"}'`.
-
-A task numbers its questions, and the input schema of each question holds its number as `seq`. An answer sent twice, such as a retry after a timeout, answers the next question of the task if the task asked one meanwhile. To prevent this, send the number with the answer, as in `a2a send --task-id <task> --data-part '{"option":"once","seq":2}'`. The server then refuses an answer to a question that was already answered, and the open question keeps waiting. Chat buttons, email links and the inspector answer only the question they show. [Approval Messages](../reference/approval-messages.md) describes the format.
-
-When a tool call is rejected or denied, the status message of the finished task says so, such as `Tool call rejected: git push.` or `Tool call denied by --deny-tools: git push.` `a2a-serve logs` has a line for each answer: who gave it, or which rule, preference or grant, and the option. The line leaves out the command and the tool input, which can hold secrets. For a preference or grant, the line shows only the program of the command, such as `command:printf ...`.
+To give the agent other instructions, answer `reject` first. When you send an answer more than once, such as a retry, see [Approval Messages](../reference/approval-messages.md) for how to number it. `a2a-serve logs` shows who or which rule decided each tool call.
 
 ## Always allow
 
@@ -34,18 +28,7 @@ When a tool call is rejected or denied, the status message of the finished task 
 | A shell command | the program and the next word, such as `kubectl get *` for `kubectl get pods -n prod` |
 | A call of another kind, such as an edit | that kind, such as `edit` |
 
-The next word counts only when it holds letters, digits, `.`, `_` and `-`. A program called alone, such as `ls`, gives `ls *`. The `*` also allows any later arguments and flags, so `kubectl get *` allows `kubectl get pods -A`. Replies typed without buttons show what `always` covers, such as `always (allows kubectl get * in this conversation)`.
-
-Some questions have no `always` option:
-
-- A command with `;`, `&`, `|`, `` ` ``, `$(`, `<`, `>` or a line break, which has several parts.
-- A command that starts with a path or an assignment.
-- A command whose next word holds other characters, such as a path, a flag, a URL or a quoted string, as in `rm /work/b.txt`, `ls -R` or `git -C repo push`.
-- A command of a program that runs other commands, such as `sudo`, `env`, `xargs` or `find`.
-- A shell, interpreter or tool such as `bash`, `python3`, `git` or `kubectl` called alone.
-- A call of the kinds `execute` and `other` that isn't an MCP tool.
-
-The grant covers the tasks of the person whose question it answered. A new conversation asks again. The server keeps the grant and answers the agent `once` for each call it covers, so the agent's own "always" never applies. Only an agent that offers no way to allow a call once gets its own "always" answer.
+Commands with several parts (`;`, `&`, `|`) and programs that run other commands, such as `sudo` or `xargs`, have no `always` option. A new conversation asks again.
 
 ## Allowed in all your conversations
 
@@ -60,9 +43,7 @@ coder  ✓ kubectl get * runs without asking in your conversations.
        /allowed shows what you allowed, and removes it.
 ```
 
-Only your answers to the questions of your own tasks count. Denying such a call, or "Not now", starts the count over. The offer appears in a chat with buttons. Only you can answer it, and messages you type after it go to the agent as usual.
-
-`/allowed` lists what you allowed, with a button to remove each. In a chat without buttons, send `/allowed remove kubectl get *`. Owners see what each pairing allowed with `a2a-serve pair get <name>`, and `a2a-serve pair rm` deletes it with the pairing. A person allows at most 50 calls this way.
+`/allowed` lists what you allowed, with a button to remove each. In a chat without buttons, send `/allowed remove kubectl get *`. Owners see what each pairing allowed with `a2a-serve pair get <name>`. See [limits](../reference/limits.md#approvals) for how many calls a person can allow.
 
 ## Rules
 
@@ -74,11 +55,7 @@ Only your answers to the questions of your own tasks count. Denying such a call,
 | `tool:<server>.<tool>` | a call to a tool of an MCP server | `tool:grafana.*`, `tool:gmail.send_message` |
 | `command:<command>` | a shell command | `command:kubectl get *`, `command:git push *` |
 
-- The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`.
-- `*` matches any text. A trailing ` *` also matches the bare command, so `command:git status *` matches `git status`.
-- A command entry never matches a command with several parts. Such a command asks, unless a kind entry decides it.
-- A command entry matches from the start of the command, with runs of spaces counted as one. `command:git push *` doesn't match `git -C repo push`, so deny the kind `execute` to stop every form of a command.
-- MCP tools are named by the MCP servers of the project's `.mcp.json`. A tool of a server that opencode set up itself matches by the name opencode gives it, such as `tool:github_create_issue`.
+The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`. `*` matches any text.
 
 ```console
 $ a2a-serve config set --allow-tools 'tool:grafana.*' --allow-tools 'command:kubectl get *' --deny-tools 'command:git push *'
@@ -88,15 +65,16 @@ $ a2a-serve config set --allow-tools 'tool:grafana.*' --allow-tools 'command:kub
 ✓ applied to the running agent: allow-tools, deny-tools
 ```
 
+A command entry matches from the start of the command, and never matches a command with several parts. `command:git push *` doesn't match `git -C repo push`, so deny the kind `execute` to stop every form of a command.
+
 When several entries match a call, the most specific one decides: a tool or command entry before a kind, and a longer pattern before a shorter one. Between equally specific entries, deny decides.
 
 | Lists | Effect |
 | --- | --- |
 | `--deny-tools execute --allow-tools 'command:kubectl get *'` | `kubectl get` runs. Other commands are denied. |
 | `--allow-tools 'command:git *' --deny-tools 'command:git push *'` | Git commands run. `git push` is denied. |
-| `--deny-tools '*' --allow-tools read` | Reads run. Everything else is denied. |
 
-An entry is in one list at most: setting it in one list removes it from the other. `a2a-serve status` lists the rules, and `a2a-serve config unset allow-tools '<entry>'` removes one.
+`a2a-serve status` lists the rules, and `a2a-serve config unset allow-tools '<entry>'` removes one.
 
 ## Which decides
 
@@ -105,9 +83,9 @@ An entry is in one list at most: setting it in one list removes it from the othe
 3. What that person allowed with "Always allow" in the conversation.
 4. Otherwise, the person who started the task answers.
 
-So a new `--deny-tools` entry stops what people allowed for themselves. A change of the rules, a call allowed in all conversations, or an "Always allow" also answers the approvals that wait and that it decides.
+So a new `--deny-tools` entry stops what people allowed for themselves.
 
-Rules, preferences and grants see only the calls that the agent asks about. opencode asks before every tool except the ones that change nothing, such as reading and searching files. Claude Code asks in its default mode, which runs some read-only shell commands without asking. In the Docker sandbox, it also asks before every file change, web request and call to a tool of the project's MCP servers that a skill's `allowed-tools` or its own settings allow. While `--deny-tools` denies some shell commands, with `execute`, `*` or a `command:` entry, it asks before every shell command too, read-only ones included. With `--sandbox local`, the tools that a skill allows run without asking.
+Rules and grants see only the calls that the agent asks about. opencode doesn't ask before tools that change nothing, such as reading files. Claude Code asks in its default mode, which runs some read-only shell commands without asking.
 
 ## Who answers
 
@@ -121,13 +99,10 @@ The person who started a task answers its approvals, in the place the task start
 | A webhook node | the node | in the task |
 | A schedule with `--chat` | the schedule's `--as` user | that chat |
 | A schedule without `--chat` | an owner | the owner chat |
-| A [guest](identities.md#guests) | an owner, within 10 minutes | the owner chat |
+| A [guest](identities.md#guests) | an owner | the owner chat |
 
-- Set the **owner chat** with `--owner-chat <messenger>[:<who>]`, on a messenger the agent has. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
-- In a group chat, only the person who started the task, or an owner, can answer.
-- A message that isn't an answer doesn't reach the agent while a question waits for you in that chat. Answer the question first, or send `/stop`.
-- A typed answer such as `approve` answers the question whose message it replies to. When several questions wait in one chat, reply to the message of the one you answer. A typed answer that replies to none of them gets a prompt to do so.
+- Set the **owner chat** with `--owner-chat <messenger>[:<who>]`. Without it, the first messenger with a linked owner is used. Without one, questions wait in the [inspector](inspector.md).
+- In a group chat, only the person who started the task, or an owner, can answer. When several questions wait in one chat, reply to the message of the one you answer.
+- While a question waits, other messages in that chat don't reach the agent. Answer the question, or send `/stop`.
 - [Members](identities.md#roles) approve their own tasks, so use `--deny-tools` to limit what they can run.
-- An approval in a conversation of a member is rejected after 4 hours without an answer. Until then, it keeps the member's agent process running.
-- Other approvals, such as those of owners' tasks and schedules, are rejected after 24 hours without an answer. A message that waits behind an approval waits as long.
-- Email approvals link to a web page where the person who started the task answers. Approvals that only an owner can answer have no link.
+- An approval that nobody answers is rejected. See [limits](../reference/limits.md#approvals) for how long it waits.

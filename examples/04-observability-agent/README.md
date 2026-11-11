@@ -54,7 +54,7 @@ kubeconfig = "/kube/config"
 EOF
 ```
 
-The agent sees this directory at `/kube`, read-only. The cluster's API server must be reachable from the agent's container. When it or Grafana has a private address, such as on your LAN or tailnet, allow it with `a2a-serve config set --egress-allow <host>` ([Network](../../docs/guide/sandbox.md#network)). The token expires after 30 days; create a new one and run `set-credentials` again before then.
+The agent's container must reach the cluster's API server and Grafana. When one has a private address, such as on your LAN or tailnet, allow it with `a2a-serve config set --egress-allow <host>` ([Network](../../docs/guide/sandbox.md#network)). The token expires after 30 days. Create a new one and run `set-credentials` again before then.
 
 **GitHub (optional).** Create a fine-grained personal access token with read-only access to Contents, Pull requests and Actions of your service repositories, and export it:
 
@@ -70,9 +70,9 @@ a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-o
   --name o11y --model openrouter/~google/gemini-flash-latest
 ```
 
-The command shows what the agent will run and asks before it creates it in `~/o11y`. It then offers the variables you exported, and asks whether to use github and kubernetes. Answer `n` for a connector you don't have. Kubernetes stays off without `~/.kube/a2a-o11y`.
+The command asks before it creates the agent in `~/o11y`, then asks whether to use github and kubernetes. Answer `n` for a connector you don't have.
 
-To create the agent without questions, such as in a script, export the variables and add `--yes`. Optional connectors without their variables stay off:
+To create the agent without questions, such as in a script, export the variables and add `--yes`:
 
 ```bash
 a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-observability-agent/recipe \
@@ -81,7 +81,7 @@ a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-o
 
 ## 3. Describe your environment
 
-The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment. An investigation can take a few minutes, so give `a2a` time to wait for the answer:
+The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment. Give `a2a` time to wait for the answer:
 
 ```bash
 cd ~/o11y
@@ -94,15 +94,13 @@ It answers with a proposed `ENVIRONMENT.md`. Review it, then save it to the file
 
 ## 4. Approvals
 
-The agent runs its MCP tools, such as a Prometheus query, without asking. The recipe allows them with `tool:grafana.*`, `tool:github.*` and `tool:kubernetes.*` in `--allow-tools`. Each MCP server here is read-only on its own side: mcp-grafana runs with `--disable-write`, GitHub's endpoint is read-only, and the Kubernetes identity has the `view` role.
-
-The agent reads and searches its workspace without asking. It can't edit files, run commands or fetch URLs: such a call is denied, and the agent answers another way. `a2a-serve status` lists these rules. To allow one more call for everyone, such as a read-only command, add an entry:
+The agent runs its tools, such as a Prometheus query, and reads its workspace without asking. It can't edit files, run commands or fetch URLs. `a2a-serve status` lists these rules. To allow one more call for everyone, such as a read-only command, add an entry:
 
 ```sh
 a2a-serve config set --allow-tools 'command:git log *'
 ```
 
-The most specific entry decides, so this command runs while other commands stay denied. See [Approvals](../../docs/guide/approvals.md#rules).
+See [Approvals](../../docs/guide/approvals.md).
 
 ## 5. Share it with your team
 
@@ -141,7 +139,7 @@ cd ~/o11y
 a2a-serve recipe
 ```
 
-The update keeps your changes. Your `ENVIRONMENT.md` stays, and a changed template arrives next to it as `ENVIRONMENT.md.recipe`. See [Recipes](../../docs/guide/recipes.md#update-an-agent).
+The update keeps your changes. A changed template arrives next to your `ENVIRONMENT.md` as `ENVIRONMENT.md.recipe`. See [Recipes](../../docs/guide/recipes.md).
 
 ## Try it on your machine
 
@@ -161,6 +159,6 @@ export GRAFANA_SERVICE_ACCOUNT_TOKEN=$(curl -s -u admin:admin -H 'Content-Type: 
 export GRAFANA_URL=http://host.docker.internal:3000
 ```
 
-The agent's container reaches your machine at `host.docker.internal`. Create the agent as in step 2, and answer `n` for github and kubernetes. The stack has data once an app sends it OpenTelemetry on port 4317 or 4318.
+Create the agent as in step 2, and answer `n` for github and kubernetes. The stack has data once an app sends it OpenTelemetry on port 4317 or 4318.
 
 Clean up with `a2a-serve stop` in `~/o11y` and `docker rm -f lgtm`.
