@@ -41,9 +41,9 @@ a2a-serve start opencode --name coder --model openrouter/~google/gemini-flash-la
 
 For Claude Code, use `a2a-serve start claude` instead.
 
-The first run saves the flags to `.a2a/config.yaml` and the key to
-`.a2a/state/secrets`, pulls or builds the agent image, and stays in the
-foreground. Later runs from this directory are just `a2a-serve start`.
+The first run saves the flags and the key in `.a2a/`, pulls the agent image
+and stays in the foreground. Later runs from this directory are just
+`a2a-serve start`.
 
 In **terminal B**, check that it runs and note its local URL:
 
@@ -60,14 +60,9 @@ coder (opencode) running for 12s, pid 41233
 
 ## 3. Call it from this machine
 
-Every A2A request needs a token. On start, the server saves an owner token
-for its local URL, and the `a2a` CLI attaches it through the credential helper
-that `a2a-serve doctor --fix` set up during install.
-
-Other people and machines need an invitation: `a2a-serve pair invite <name>`
-prints a one-time code, which they redeem with
-`a2a-serve pair join <agent-url> <code>`. Step 7 does the same for another
-agent.
+On this machine the `a2a` CLI already has a token for the agent. Other people
+and machines need an invitation from `a2a-serve pair invite <name>`. Step 7
+does the same for another agent.
 
 Save the agent's URL so the commands below stay short, and give the agent
 time to think:
@@ -94,10 +89,8 @@ a2a send "Use bash to write the output of 'uname -sr' into system.txt."
 ```
 
 The agent asks first, so the task stops in `input-required`. The output shows
-the tool call, the options and how to resume. A command with one part can
-also offer `always`, which allows the calls like it for the rest of the
-conversation; this one writes to a file with `>`, so it offers `once` and
-`reject`:
+the tool call, the options and how to resume. This command writes to a file,
+so the options are `once` and `reject`:
 
 ```
 Resume:     a2a send --task-id <task-id> "<reply>"
@@ -141,8 +134,8 @@ Now ask coder to delegate:
 a2a send "Ask the reviewer agent what files it sees in its workspace, and tell me."
 ```
 
-Coder calls reviewer with `a2a send` in its sandbox. That is a bash command,
-so coder asks first, as in step 5:
+Coder calls reviewer with `a2a send`, a bash command, so it asks first, as in
+step 5:
 
 ```
 Status:   input-required
@@ -155,10 +148,9 @@ Approve it:
 a2a send --task-id <task-id> once
 ```
 
-Coder's server makes the call with the token it just stored, so no credential
-enters the sandbox. If reviewer needs an approval too, your task waits again
-and shows reviewer's request. Approve it the same way. The task then
-completes with reviewer's answer.
+If reviewer needs an approval too, your task waits again and shows reviewer's
+request. Approve it the same way. The task then completes with reviewer's
+answer.
 
 ## 8. Clean up
 
@@ -167,8 +159,7 @@ cd ~/a2a-example1/coder && a2a-serve stop
 cd ~/a2a-example1/reviewer && a2a-serve stop
 ```
 
-Stopping an agent also removes the owner token that it saved for this machine.
-Everything an agent keeps is in `.a2a/` in its workspace; delete the
+Everything an agent keeps is in `.a2a/` in its workspace. Delete the
 directories to start over.
 
 ## Next steps

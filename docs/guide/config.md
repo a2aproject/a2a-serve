@@ -26,11 +26,11 @@ A running agent applies `--description`, `card.skills`, `--private-allow-incomin
 
 ## Which command to use
 
-Use `a2a-serve config set` for the settings you name, and for secret values. It takes them as flags, and it stores secret values in `.a2a/state/secrets`.
+Use `a2a-serve config set` for the settings you name, and for secret values. It stores secret values in `.a2a/state/secrets`.
 
-Use `a2a-serve config edit` for several changes at once, for comments, and to repair a `config.yaml` that doesn't load. It reopens the file with the errors on top until the file is valid. When you give up, or run it without a terminal, it keeps your rejected edit in `.a2a/state/config-draft.yaml` and names the file in the error. The next `a2a-serve config edit` opens the draft, and deletes it when a save succeeds. If `config.yaml` changes while the editor is open, for example through `a2a-serve pair invite --storage`, it keeps your edit in the same draft file and reopens the current file. A value typed into a secret setting, such as `backup.key`, is stored in `.a2a/state/secrets` like a flag value, and the file keeps a `secret:NAME` reference.
+Use `a2a-serve config edit` for several changes at once, for comments, and to repair a `config.yaml` that doesn't load. It reopens the file with the errors on top until the file is valid. When you give up, it keeps your edit in `.a2a/state/config-draft.yaml`, and the next `a2a-serve config edit` opens it.
 
-Both commands follow the same rules. Messengers are changed with `a2a-serve messenger add` and `a2a-serve messenger rm`, which check the token with the messenger first. An error about `config.yaml` names the key and the entry, and its hint names the command that fixes it:
+Both commands check the settings. An error names the key and the entry, and its hint names the command that fixes it:
 
 ```console
 $ a2a-serve config set --deny-tools execute
@@ -38,6 +38,6 @@ Error: config.yaml: approvals.deny has "exec": want ACP tool kinds (read, edit, 
 hint: fix it with `a2a-serve config unset deny-tools exec`
 ```
 
-List settings are keyed: `--secret` and `--env` by name, `--mount` by destination, and other lists by value. Setting an existing entry replaces it. [Secrets](secrets.md) covers `--secret` and the flags that take tokens.
+Change messengers with `a2a-serve messenger add` and `a2a-serve messenger rm`. List settings such as `--secret`, `--env` and `--mount` replace an existing entry with the same name. [Secrets](secrets.md) covers `--secret` and the flags that take tokens.
 
 `config set --agent opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.

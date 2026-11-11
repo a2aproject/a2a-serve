@@ -58,6 +58,9 @@
 
 * Keep each fact in one place and link to it from others. `README.md` and `docs/index.md` mirror each other: change both together.
 * Give each page one audience. Getting started is the shortest path to a working agent, without internals, config file details or troubleshooting. The user guide pages in `docs/guide/` cover what users do. `docs/advanced/architecture.md` stays high level, with no code paths. Wire formats such as headers and signatures go in `docs/reference/`, and contributor material goes in `CONTRIBUTING.md`.
+* Write user guide pages for someone who wants to get a task done: the command, the output they see, and a sentence or two on what it does. Leave out what the server checks, refuses or enforces behind the scenes, especially when an error or the command output tells the user anyway. Keep a guide page short enough to scan in a few minutes, around 800 words at most.
+* Keep limits, caps, quotas and timeouts in `docs/reference/limits.md`. Guide pages link to it where users are likely to hit a limit, and state no numbers themselves.
+* Put mechanisms, such as how the server authenticates mail or routes the sandbox's connections, in `docs/advanced/` when they help readers understand the design, and leave them out otherwise. Advanced pages summarize guarantees and trade-offs; edge cases and enforcement details stay in the code.
 * Write commands as `a2a-serve <command>` in docs, examples, skills, CLI help and errors. Only the command plugin section of `docs/reference/a2a-cli.md` shows the `a2a serve` form.
 * Don't repeat flag lists in prose; link to the command reference. It is generated from the command definitions, so fix help text there and run `go run ./internal/tools/gendocs`.
 * Write short, plain sentences with one idea each. Avoid metaphors, slogans and contrastive constructions ("X, not Y", "X rather than Y", "X instead of Y"); state the positive claim. Use "that" for restrictive clauses, and US English.

@@ -1,127 +1,76 @@
 # Security
 
-An a2a-serve agent can read your project, run commands and reach the network, and other people and agents can give it work. This page describes what the current version protects and what it doesn't yet. Report vulnerabilities as described in [SECURITY.md](../../SECURITY.md).
+This page describes what protects you when an agent reads your project, runs commands and takes work from other people and agents, and what isn't protected yet. Report vulnerabilities as described in [SECURITY.md](../../SECURITY.md).
 
 ## The sandbox
 
-By default the agent runs in Docker with:
+By default the agent runs in a Docker container as your user, with no capabilities and with resource limits. It sees the workspace and the `--mount` directories, and nothing else from your disk. Its own `.a2a/` directory, the `.a2a/` directories of other agents in the mounts, `.mcp.json` and the agent's settings files in the workspace appear empty, so the agent can't read its secrets or change its own permissions. [Sandbox](../guide/sandbox.md) shows what the agent sees.
 
-- the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config. The `.a2a/` directories of other agents in the mounts appear empty too, which keeps their secrets and control sockets out of reach. The server refuses a workspace or mount that is your home directory, `/` or a directory that holds it, unless `--allow-broad-mount` names it. `.mcp.json` appears as a read-only file with no servers, so the agent gets only the MCP servers the server passes it. The agent's own configuration files in the workspace, such as `opencode.json` and `.claude/settings.json`, appear empty, so a caller can't change the agent's permissions for other callers through them ([Sandbox](../guide/sandbox.md));
-- `state/home` as its home directory, where it keeps its sessions and config;
-- your user ID (container root under rootless Docker, which maps to you), no capabilities, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes. The container's first process comes from the a2a-serve binary. It starts as root with the capabilities that setting up the network and switching to your user ID take, and drops all of them before it starts the agent;
-- no network of its own. Every connection leaves through a socket of the container's own, where the server decides it by its destination, following the [agents.net](https://github.com/aojea/agents.net) specification. By default the server allows the public internet and refuses private destinations, which [Network](../guide/sandbox.md#network) lists. It resolves names itself and connects only to the addresses it checked. `--egress-allow` adds hosts, and `--egress allowlist` allows only those. For the hosts of `--inject-header` and `--inject-model-key` rules, the server ends the container's TLS with a certificate of its own, adds the header with the secret and sends the request on over TLS that it verifies. Its certificate authority lives in memory, is new at each start, and its name constraints cover only those hosts;
-- a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is in a volume of the container's egress container, which forwards it to a TCP port on the host's loopback, and each container sends a key of its own. Its egress connections reach the server the same way, with another key.
+The container has no network of its own. Every connection goes through the server, which allows the public internet and blocks private destinations, following the [agents.net](https://github.com/aojea/agents.net) specification. The agent calls other agents through the server too, so contact tokens never enter the sandbox.
 
-Each [member](../guide/identities.md#roles) gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Guests](../guide/identities.md#guests) share one more container, with `state/home-anonymous` as its home and no socket to the server. In these containers, the agent's configuration in its home, such as `.config/opencode` and `.claude/settings.json`, is read-only, so a member can't turn off the permissions that you set for their calls by changing it ([Sandbox](../guide/sandbox.md)).
+Each [member](../guide/identities.md#roles) gets a container and home of their own, and [guests](../guide/identities.md#guests) share one more. What each container gets of the workspace and the secrets follows the [sandbox defaults](../guide/sandbox.md#what-each-callers-container-gets).
 
-What each container gets of the workspace, the `--mount` directories and the `--secret` values follows the [sandbox defaults](../guide/sandbox.md#what-each-callers-container-gets). Sandbox rules set what chosen callers get, such as a read-only workspace, a private copy of it, an empty workspace, only some secrets, or a stored secret under another name. A rule change that gives a caller less ends the tasks of their container, since a task would keep what the container got.
-
-The server bounds what it reads from the agent. It reads the instruction and settings files in the agent's home, and the workspace's `.mcp.json`, only when each is a regular file of at most 1 MiB. It skips an instruction or settings file that isn't, with a warning in the server log. Backups copy regular files of any size and skip special files such as FIFOs. A task fails with "the agent sent a message over 64 MiB" when the agent sends a single message larger than that.
-
-Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide/approvals.md)). The agent can't answer the approvals of agents it calls; the server relays them to the user. Only the owner's settings, `--allow-tools` and `--deny-tools`, decide calls for every caller. A person who taps "Always allow" skips the question for calls like it in that conversation, or in all their conversations after they accept the offer to remember it. Either covers only the tasks that person starts, which they could approve anyway, and `--deny-tools` decides before both. Rules, preferences and grants trust what the agent reports about a call, such as its kind and command. Approvals keep you informed and able to step in; the sandbox and scoped credentials are what protect you.
+Tool calls that change something wait for approval from the person who started the task, or an owner ([Approvals](../guide/approvals.md)). Approval rules trust what the agent reports about a call. Approvals keep you informed and able to step in. The sandbox and scoped credentials are what protect you.
 
 What the sandbox doesn't protect yet:
 
-- **API keys passed with `--secret` are readable inside it.** They are environment variables of every container that a rule gives them to, so a tricked agent can read them and send them anywhere. [`--inject-model-key` and `--inject-header`](../guide/secrets.md#keep-keys-out-of-the-sandbox) keep a key out of the container. The agent can still spend such a key on its host, and a host that echoes request headers shows it to the agent. Give guests and members you trust less a [separate key](../guide/sandbox.md#give-guests-a-key-of-their-own).
-- **It can reach any public host.** A tricked agent can send the files it can read to any host on the internet. `--egress allowlist` limits it to the hosts you list. Callers with `read-only` or `own` storage can still read the workspace, so the agent can send its files to those hosts for them too.
-- **Without the egress boundary, it reaches the tailnet and the LAN as you.** This happens with an a2a-serve built with cgo, with Docker Desktop when the relay image isn't available, with `--egress unrestricted` and with `--sandbox local` ([where it applies](../guide/sandbox.md#where-it-applies)). The agent's connections to tailnet addresses then go out through this machine's Tailscale node, so this agent's private URL, your other agents and other tailnet services see your device and grant your rights, whoever started the task.
-- **`docker exec` into a sandbox runs as root with the capabilities the container starts with.** These are the ones that setting up its network takes. Pass `--user` with your user ID, and don't run files from the agent's home.
-- **A host you allow is reachable from every container.** `--egress-allow` applies to your container, the containers of members and the container of guests alike.
-- **A shared workspace is writable** unless mounted `:ro`, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project. The [sandbox defaults](../guide/sandbox.md#what-each-callers-container-gets) say who gets it, and rules can change that.
-- **An agent created in the mounts of a running agent is visible to its running containers.** `a2a-serve start` refuses to create an agent inside the directory of a running agent, and the server refuses new containers once another agent appears in their mounts. Containers that already run see the new agent's `.a2a/` until `a2a-serve restart`.
-- **Docker is the boundary.** Kernel and Docker escapes are out of scope for this project.
+- **`--secret` values are readable inside it.** Every container that gets a secret has it as an environment variable, so a tricked agent, or a caller who approves their own commands, can read it and send it anywhere. [`--inject-model-key` and `--inject-header`](../guide/secrets.md#keep-keys-out-of-the-sandbox) keep a key out of the container, though the agent can still spend it. Give guests and members you trust less a [separate key](../guide/sandbox.md#give-guests-a-key-of-their-own).
+- **It can reach any public host.** A tricked agent can send the files it can read anywhere on the internet. `--egress allowlist` limits it to the hosts you list.
+- **A host you allow is reachable from every container**, including the containers of members and guests.
+- **Without the network boundary, it reaches the tailnet and the LAN as you.** This happens with `--egress unrestricted`, `--sandbox local`, and the setups that [Where it applies](../guide/sandbox.md#where-it-applies) lists. Your other agents and tailnet services then see your device and grant your rights, whoever started the task.
+- **A shared workspace is writable**, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
+- **`docker exec` into a sandbox runs as root** with the capabilities the container starts with. Pass `--user` with your user ID.
+- **An agent created inside the mounts of a running agent** is visible to that agent's running containers until `a2a-serve restart`.
+- **Docker is the boundary.** Kernel and Docker escapes are out of scope.
 
-`--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token, the `.a2a/` directories of your other agents and the conversations of every user. Use it only for agents and callers you trust completely.
+`--sandbox local` runs the agent on the host, as you, with no isolation. Secrets and storage rules don't confine it. It can read everything you can, including your owner token, the `.a2a/` directories of your other agents and the conversations of every user. Use it only when you trust the agent and everyone who can call it completely.
 
 ## Who can call the agent
 
-Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
+Every A2A request needs a known caller. The [Access Model](access-model.md) describes who that is on each network and what each role may do. The public routes, such as the agent card and code redemption, are bounded per caller ([request limits](../reference/http-routes.md#request-limits)). A web page in your browser can't change state on the agent ([browser requests](../reference/http-routes.md#browser-requests)).
 
-The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Callers that the relay doesn't identify, and callers over their limit, share one short backoff. A valid code from an address over its limit goes through after that backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
+Trust follows the network:
 
-The public routes also limit the open requests of each caller, the size and send time of their bodies, and the time a download may take. The relay limits the open requests of the callers it doesn't identify for each of their addresses. This keeps capacity free for callers who authenticate. Members and guests each get a share of the open requests, so they can't take the requests of the owner, and guests can't take those of members ([request limits](../reference/http-routes.md#request-limits)).
+- **The private network** is trusted. Its members can call the agent, and your own untagged tailnet devices act as you. A compromised device of yours is out of scope.
+- **Email** proves only the sender's domain. Anyone who can send verified mail for a domain counts as any of its addresses, including an address you linked to an owner pairing. Your mail server must remove `Authentication-Results` headers that carry its own name from incoming mail, as mail servers do.
+- **A call through another agent** gets at most the member role, even from your own agents.
 
-A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
-
-| Network | Who gets in |
-| --- | --- |
-| localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. The server removes the saved token when it stops, so a program that later listens on the same port isn't sent it. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
-| Tailscale | Everyone on the tailnet, or with `--private-allow-incoming paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
-| Agent Mesh relay | Everyone the relay admits, or with `--private-allow-incoming paired` only callers with a token. The relay's enrollment decides who is on it ([who a relay admits](agent-mesh.md#how-the-access-model-maps)). |
-| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-allow-incoming anyone`, also anyone, as a guest. |
-| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-allow-incoming anyone`, also anyone in a direct chat, as a guest. Only verified senders count: for email, mail that passes DMARC, or DKIM of the sender's exact domain, at the trusted server. Email proves only the sender's domain. |
-| The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
-
-Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes and the machines of their hosts. Calls always go to the host agent found on the private network. The card of a node that isn't advertised goes only to callers who may call the node.
-
-A call that comes through another agent gets at most the member role, even from your own agents, so someone who can steer one of your agents can't act as you on the others. The calling server keeps the user a call is for, and relays the callee's approvals to them.
-
-What each [role](../guide/identities.md#roles) allows:
-
-| | Owner | Member | Guest |
-| --- | --- | --- | --- |
-| Talk to the agent and start tasks | yes | yes | yes, within a budget per listener |
-| See tasks | all | their own | their own; on the public URL, the tasks whose task or conversation ID they have |
-| Answer tool approvals | all | their own tasks; `--deny-tools` limits what they can run | no |
-| Allow tool calls without asking | for everyone, with `--allow-tools` | in their own tasks, from chat | no |
-| Call other agents and use the schedules agent | yes | yes | no |
-| Send a message into another user's conversation (A2A `contextId`) | yes | no | no |
-| Continue another user's waiting task in a shared chat | yes | no | no |
-
-Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.
+Creating pairing codes, changing settings and opening the inspector need access to the agent directory. No network role grants them.
 
 ## Calls to other agents and webhooks
 
-The server calls contacts and wakes webhook nodes at the URLs you configure. A contact's card and a webhook's redirects can point the server elsewhere. When the URL you configured leads to a public address, the server connects only to public addresses for it. It refuses loopback, private, link-local and tailnet addresses, and it checks the address of each connection it opens. Contacts and webhooks that you configure on the tailnet or the LAN can reach those networks. A connection through a proxy set in the environment goes wherever the proxy sends it.
+A contact or webhook on a public URL can't point the server into your private network: the server refuses redirects and addresses that lead from a public URL to loopback, private, link-local or tailnet addresses, and redirects from https to http. Contacts and webhooks that you configure on the tailnet or the LAN can reach those networks.
 
-The server refuses redirects from https to http. A node sees only the HTTP status of a failed wake, and the server log has the details.
+The description and skills from the cards of other agents reach your agent's instructions. The server shortens them and labels them as the other agent's description of itself.
 
-The agent's instructions list the description and skills from the cards of contacts and peers. That text comes from the other agent, so the server bounds it first: at most 300 characters of description, 10 skills and 150 characters for each skill's description. It removes line breaks and markdown characters, and labels the text as the agent's own description of itself.
+A wake signature stays valid for a few minutes, so a node that must not act twice on the same wake should skip wake IDs it has already seen ([signatures](../reference/http-routes.md#signatures-and-headers)).
 
 ## Tokens and secrets
 
-| Token | Grants | Stored | Revoke |
-| --- | --- | --- | --- |
-| Pairing code (`K7Q2-9XF4`) | One exchange for a token or a messenger link, within 15 minutes | Hashed in `server.db` | Expires; `a2a-serve pair rm <name>` or `pair set <name> --rotate` |
-| Caller token (`a2p_…`) | Calls to this agent with the pairing's current role | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a-serve pair rm <name>`, or `pair set <name> --rotate` for a new code. The caller forgets it with `a2a-serve pair rm <agent-url>` |
-| Token of the `local` pairing | Calls to the local URL as the owner | Like a caller token, for the user running the server, while the server runs | `a2a-serve pair rm local`, which also unlinks your messenger accounts; the next start issues a new token |
-| Messenger link | Messages from that account with the pairing's current role | `server.db` | `a2a-serve pair rm <name>` |
-| Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
-| Google sign-in token (`a2p_…`) | Calls to this agent as a member, while the email stays on the allowlist | Hashed in `server.db`; with the caller | Expires after 90 days without use. `a2a-serve pair rm --email <address>`, or `a2a-serve config unset allow-email <entry>`, which deletes them within an hour |
-| Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
-| Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
-| Agent key (Docker Desktop) | The agent's socket, for the conversations of one container | Generated when the container starts, in its home | Restart |
-| Egress CA key | Certificates that the agent's containers trust for the hosts of the inject rules | In memory; new at each start | Restart |
-| Inspector link and session | The inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
-| Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
-| Relay invite (`mesh-bt-…`) | Joins one agent to the relay, which then keeps renewing its membership | With the agent, until it joins once; it expires after a day, or after `--expires` | `a2a-serve relay remove <name>` on the relay, which revokes it while unused and removes the agent that joined with it |
-| Relay admin token | The relay's control API: invite, list and remove agents | The relay's `state/relay/secrets` (mode 0600), or the container's environment | Stop the relay, then start it with a new one: `a2a-serve relay run --admin-token <value>` |
-| `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve messenger rm <kind>`, then rotate at the service |
+| Token | Stored | Revoke |
+| --- | --- | --- |
+| Pairing code | Hashed in `server.db` | Expires; `a2a-serve pair rm <name>` |
+| Caller token (`a2p_…`) | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` | `a2a-serve pair rm <name>` or `a2a-serve pair set <name> --rotate` |
+| Local token of the owner | Like a caller token, while the server runs | `a2a-serve pair rm local`; the next start issues a new one |
+| Messenger link | `server.db` | `a2a-serve pair rm <name>` |
+| Webhook node token (`a2rn.…`) | Hashed in `server.db`; with the node | `a2a-serve pair rm <node>` or `a2a-serve pair set <node> --rotate` |
+| Google sign-in token | Hashed in `server.db`; with the caller | Expires when unused; `a2a-serve pair rm --email <address>` |
+| Contact token | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
+| `--secret` values, bot tokens and other service keys | `state/secrets` | `a2a-serve config unset <setting>`, then rotate at the service |
 
-`state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. The server refuses a `state/` that another user owns or that others can open, and a symlink in place of its log or lock files. Backups contain `state/secrets` and are always encrypted with the backup key.
+`state/` is readable only by you. `a2a-serve doctor --fix` tightens loose file modes. Backups contain `state/secrets` and are always encrypted. [Relays](../guide/relays.md) covers the relay's tokens.
 
 ## What a project can make your machine run
 
-Starting an agent runs what its files say. Read the ones you didn't write before you start an agent from a cloned repository, as you would a Makefile or a CI config.
+Starting an agent runs what its files say. Read the files you didn't write before you start an agent from a cloned repository, as you would a Makefile or a CI config.
 
-- **`.a2a/config.yaml`** decides:
-  - `sandbox: local`: the agent runs with no isolation;
-  - `command`: the agent's command line, run in the sandbox, or on the host with `sandbox: local`;
-  - `image`: the container image;
-  - `mounts` and `workspace`: the host directories the agent can read and write;
-  - `env` and `secrets`: the variables the agent gets;
-  - `backup`: where snapshots of the agent's secrets are uploaded;
-  - webhook nodes: the URLs the server POSTs to;
-  - `network` and `policy`: where the agent is reachable, who may call it, and what the containers of callers get;
-  - `network.tailscaleControlURL`: a Headscale server, which decides who is on the private network and who counts as the owner;
-  - `auth.googleClientID`: the Google app that signs callers in;
-  - `allowBroadMounts`: whether the agent can mount your home directory, and with it your credentials;
-  - `approvals`: which tool calls run without asking;
-  - messenger tokens: the bots that carry the agent's chats.
-- **`.a2a/state/`** holds the agent's secrets, pairings and network identity. A cloned repository can ship one. Delete a `state/` that came with a repository before you start the agent.
-- **`.a2a/recipe.lock`** names the repository that `a2a-serve recipe` fetches when you run it in the agent without a source, `--dry-run` included. Check that you trust that repository. The server refuses a lock with a source that `a2a-serve recipe <source>` would refuse.
-- **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the `--env` values and the secrets that the conversation's container gets, which the sandbox sees anyway. In the Docker sandbox, the agent can't read or edit the file. With `sandbox: local`, the agent can edit it, and Claude Code may start its servers on its own, including the ones `--disable-mcp` turns off.
-- **Agent configuration files** such as `opencode.json`, `.opencode/` and `.claude/settings.json` can change what the agent runs and approves. In the Docker sandbox, the agent doesn't see them and can't change them. With `sandbox: local`, the agent reads them and can edit them.
-- **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills`, and instruction files such as `AGENTS.md` and `CLAUDE.md`, are instructions for the agent. Commands they suggest still wait for approval. A Claude Code skill can list tools in its `allowed-tools`, which Claude Code would run without asking once the skill runs, and hooks, which run commands. In the Docker sandbox, Claude Code runs no hooks of skills, agents or settings. The file changes, web requests and MCP tool calls that a skill allows still wait for approval, and so do its shell commands while `--deny-tools` denies some ([Approvals](../guide/approvals.md#which-decides)). With `sandbox: local`, they run without asking.
+- **`.a2a/config.yaml`** decides the agent's command, image, mounts, secrets, network, who may call it, which tool calls run without asking, and where backups go. `sandbox: local` turns off isolation, and `allowBroadMounts` can expose your home directory.
+- **`.a2a/state/`** holds secrets, pairings and the network identity. Delete a `state/` that came with a repository before you start the agent.
+- **`.a2a/recipe.lock`** names the repository that `a2a-serve recipe` fetches. Check that you trust it.
+- **`.mcp.json`** decides which MCP servers the agent starts and which URLs it calls.
+- **Agent settings files**, such as `opencode.json` and `.claude/settings.json`, change what the agent runs and approves.
+- **Skills and instruction files**, such as `AGENTS.md`, instruct the agent. Commands they suggest still wait for approval.
 
-`a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`: the local sandbox, read-write mounts, approvals of tool kinds that change things or of MCP tools and commands, and, with the local sandbox, agent configuration files such as `.claude/settings.json`. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups. It can't bring files into `.a2a`, or symlinks that lead out of the recipe.
+In the Docker sandbox, the agent can't read or edit `.mcp.json` or its settings files, and Claude Code runs no hooks. With `sandbox: local`, the agent can edit them, and the hooks and `allowed-tools` of skills run without asking.
+
+`a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups.

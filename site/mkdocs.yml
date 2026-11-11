@@ -127,4 +127,5 @@ nav:
       - Output and Exit Codes: reference/output.md
       - HTTP Routes: reference/http-routes.md
       - Approval Messages: reference/approval-messages.md
+      - Limits: reference/limits.md
       - The a2a CLI: reference/a2a-cli.md

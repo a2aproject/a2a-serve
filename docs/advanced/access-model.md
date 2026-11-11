@@ -1,153 +1,65 @@
 # Access Model: Who Can Call an Agent
 
-> [!NOTE]
-> The sandbox reaching the network only through the server is planned
-> ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
-> [Identities](../guide/identities.md) describes what
-> works today.
-
-An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
+This page explains who can call an agent, what each caller may do, and how the server decides.
 
 ![Access model concepts](../graphs/access-model-concepts.png#gh-light-mode-only)
 ![Access model concepts](../graphs/access-model-concepts-dark.png#gh-dark-mode-only)
 
 ## Entities
 
-| Entity | What it is | Commands and flags |
-|---|---|---|
-| **Agent** | Your coding agent in its sandbox | `start`, `stop`, `status`, `config` |
-| **Private network** | Where your machines and team reach the agent: a tailnet or an Agent Mesh relay. Everyone on it is trusted | `--private tailscale\|<relay-url>\|none` |
-| **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL | `--public tailscale\|<relay-url>\|none` |
-| **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. Created with a one-time code; the credential works on every network | `pair invite\|join\|list\|get\|set\|rm` |
-| **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm`; `--private-allow-outgoing everyone` |
-| **Messenger** | A chat app the agent answers in: Telegram, Discord or email. Anyone can write to it, so chat accounts reach the agent once linked to a pairing | `messenger add\|list\|rm`; `join <code>` in the chat |
+| Entity | What it is |
+|---|---|
+| **Private network** | A tailnet or an Agent Mesh relay. Everyone on it is trusted. |
+| **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL. |
+| **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. It starts with a one-time code, and its credential works on every network. |
+| **Contact** | An agent this agent may call. A contact gets no access to this agent, and the agent treats its answers as content. |
+| **Messenger** | A chat app the agent answers in: Telegram, Discord or email. Chat accounts get access once they are linked to a pairing. |
 
-A pairing and a contact point in opposite directions. When agent `coder` should call agent `reviewer`, `reviewer` pairs `coder` (who may call me) and `coder` adds `reviewer` as a contact (whom I may call):
-
-```bash
-a2a-serve pair invite coder --dir ~/reviewer                     # prints a code
-a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
-```
-
-## Who may call
-
-| Flag | Values | Default |
-|---|---|---|
-| `--private-allow-incoming` | `everyone`: everyone on the private network, as members. `paired`: only you and your pairings | `everyone` |
-| `--public-allow-incoming` | `paired`: only you and your pairings. `anyone`: open to the internet, as guests | `paired` |
-| `--allow-email <pattern>` | People who sign in with a matching email, such as `*@example.com`, on any network. Turns on Google sign-in at the public URL | none |
-| `pair invite <name> --owner` | The pairing can also see every task and answer every approval | off |
-
-You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
-
-`--guest-storage`, `--guest-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
-
-## Whom the agent may call
-
-| Flag | Values | Default |
-|---|---|---|
-| `--private-allow-outgoing` | `contacts`: only its contacts. `everyone`: also every agent on the private network, by name | `contacts` |
-
-With `everyone`, the agent calls agents on the private network without `contact add`, with its network identity. The agents line at the start of each conversation lists them. A contact by the same name wins. Everyone who may call the agent can make it call these agents, as with contacts.
+A pairing and a contact point in opposite directions. When agent `coder` should call agent `reviewer`, `reviewer` pairs `coder`, and `coder` adds `reviewer` as a contact. [Agent2Agent](../guide/agent2agent.md) shows the commands.
 
 The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there.
 
-### Common tasks
+## Who may call
 
-| Task | Command |
-|---|---|
-| Share with a friend | `a2a-serve pair invite anna`; Anna runs `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the bot |
-| Call from my phone | On the tailnet: nothing. Elsewhere: `a2a-serve pair invite phone --owner` |
-| Let another agent call this one | `pair invite` here, `contact add --code` there (see above) |
-| Team on a relay | `--private <relay-url>`: everyone the relay admits can call |
-| Let agents on the private network call each other | `--private-allow-outgoing everyone` on each agent |
-| Only company emails | `--allow-email '*@example.com'` |
-| Close the private network | `--private-allow-incoming paired` |
-| Public bot | `--public tailscale --public-allow-incoming anyone` |
-| Revoke a pairing | `a2a-serve pair rm anna` |
+You can always call the agent and answer its approvals, on this machine and from your own untagged devices on the private network. Everyone else on the private network is a member by default. The public URL needs a pairing or a Google sign-in. [Identities](../guide/identities.md) lists the roles and the commands that change who may call.
 
-### What you see
+A pairing's tokens and chat links carry no role of their own, so a role change applies to the next request.
 
-`a2a-serve status` says who can call right now:
+## Whom the agent may call
 
-```
-coder (opencode) running for 2h, pid 41233
-  local    http://127.0.0.1:46757
-  private  https://coder.tail1234.ts.net
-  public   https://coder.tail1234.ts.net
-  access   you: this machine and your tailnet devices
-           everyone on the tailnet, emails matching *@example.com, 2 pairings
-           the public URL needs a pairing or Google sign-in
-```
-
-- Every change to access prints who can call afterwards.
-- `pair rm` says when the person can still call through the private network or an email rule.
-- A caller without a credential gets 401, with the steps to pair.
-- A known caller the agent doesn't allow gets 403, naming who they were seen as.
+By default the agent calls only its contacts. With `--private-allow-outgoing everyone`, it also calls every agent on the private network by name, with its network identity. Everyone who may call the agent can make it call these agents, as with contacts.
 
 ## What callers may do
 
-[Identities](../guide/identities.md#roles) defines the three roles: owner, member and guest.
-
-| Caller | Can |
-|---|---|
-| **Owners**: you, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
-| **Members**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, allow tool calls in their own tasks without asking, and let their conversations call this agent's contacts. Approving tool calls lets them run commands in their agent container, with the workspace and secrets that the [sandbox defaults and rules](../guide/sandbox.md#what-each-callers-container-gets) give it |
-| **Guests**: anyone, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
+| Role | Who | Can |
+|---|---|---|
+| **Owner** | You, and pairings made with `--owner` | See every task, answer any approval, use the inspector. |
+| **Member** | The private network, pairings, allowed emails, webhook nodes | Start tasks, see and approve their own tasks, and call this agent's contacts. Approving tool calls lets them run commands in their container. |
+| **Guest** | Anyone, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Only owners answer their approvals. They can't call other agents or use schedules. |
 
 ### Messengers
 
-| Sender | Treated as |
-|---|---|
-| Chat account linked to a pairing (`join <code>`, or the link printed at start) | the pairing. The link printed at start links you |
-| Email sender whose address passes DMARC at your trusted mail server (`--email-trusted-authserv`) | that email address, so `--allow-email anna@example.com` lets Anna email the agent without linking. DMARC proves the domain only, so anyone who can send authenticated mail for it counts as any of its addresses |
-| Unlinked sender in a direct chat | a guest, with `--public-allow-incoming anyone`; otherwise rejected with a hint on how to pair |
-| Unlinked sender in a group | ignored |
+A chat account linked to a pairing acts as that pairing. An unlinked sender in a direct chat is a guest when guests are allowed. Unlinked senders in groups are ignored.
 
-Each chat is one conversation. Approvals appear in the chat where the task started, and only the person who started the task, or you, can answer them. Approvals of guests and of tasks nobody watches go to your owner chat.
+An email sender counts as its address when your mail server verified the mail. Mail authentication proves only the domain, so anyone who can send verified mail for a domain counts as any of its addresses. Keep this in mind before you link an address to an owner pairing.
 
 ### Calls between agents
 
-The agent calls other agents through its server, which holds the credentials. The receiving agent gives a call that came through another agent at most the member role, even when the calling agent is yours. The task runs, and its approvals travel back to the person who started the conversation. Someone who can steer one of your agents therefore can't use it to act as you on your other agents.
+The server makes the agent's calls to other agents with its own credentials. A call that comes through another agent gets at most the member role, even when the calling agent is yours. Someone who can steer one of your agents therefore can't use it to act as you on your other agents. Approvals of the called agent travel back to the person who started the conversation.
 
 ### Agent processes
 
-Each member's conversations run in an agent process of their own. Your conversations run in the owner's process, and all guests share one more. When the member is another agent, each person behind its calls gets a process of their own. The calling agent names each person with an opaque ID that stays the same across calls and doesn't say who the person is. The server uses the ID only to keep the processes apart, and the calls still get the member's access. The server keeps homes for at most 32 people behind one agent. A new person then takes the home of the person whose last task is the oldest and whose process doesn't run, and that person's conversations continue without their earlier agent session. Removing the agent's pairing with `a2a-serve pair rm` removes the homes too. A calling agent that names no person, such as an older version, gets one process for all its calls. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of members run at once. When all of them work on tasks or wait for approvals, a member without a running process gets an error for a new task and can send it again later. What each process gets of the workspace and of the agent's `--secret` environment variables follows the [sandbox defaults and rules](../guide/sandbox.md#what-each-callers-container-gets), so anyone who can call the agent and approve their own commands can read and change what their process gets.
+Each member's conversations run in an agent process and container of their own, so a conversation can't read the history of another user's conversations. Owners share one process, and all guests share another. When the member is another agent, each person behind its calls gets a process of their own, up to a [limit](../reference/limits.md). Past it, a new person takes over the home of someone inactive.
 
-A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
+Each process gets the workspace and `--secret` values that the [sandbox defaults and rules](../guide/sandbox.md#what-each-callers-container-gets) give it. Anyone who can call the agent and approve their own commands can read and change what their process gets.
 
-Only owners, and the people in a group chat, send messages into the process of another user. A conversation stays in the process of the role it started under. After a change from owner to member, the pairing can't continue the conversations it started as an owner outside group chats. Its messages, its answers to approvals and the runs of its schedules in them fail with an error that asks for a new conversation. A refused answer ends its task. In a group chat, the pairing continues the conversation like the other people in the chat. Its messages and answers there, the runs of the schedules it made there and the results of its calls to other agents from there go through if its sandbox rule gives it at least what the conversation's process gets. After a change from member to owner, the pairing continues its conversations.
+A conversation stays in the process of the user who started it. When someone else writes in it, such as in a group chat, the agent acts as the user who started it, or as the sender if the sender may do less.
 
-With `--sandbox local`, the processes run on the host as you, and nothing separates them. The server warns at start when others may call such an agent.
+With `--sandbox local`, all processes run on the host as you, and nothing separates them.
 
-## Data model reference
+## Policy
 
-### Identity
-
-Every request yields one identity: verified claims, and where each came from.
-
-| Field | Source |
-|---|---|
-| network | local, private, public, chat or the agent's socket, and the provider |
-| email | tailnet login of an untagged user; relay principal, when it is a verified email; Google sign-in; email sender with DMARC pass |
-| node | tailnet `StableID` or mesh peer ID; tagged tailnet nodes have only this |
-| pairing | the pairing whose token or chat link was used |
-| chat account | `telegram:<user id>`, `discord:<user id>`, or the email address |
-| self | Tailscale: the same user on an untagged device. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
-| via agent | the request came from another server, with a hop count of 1 or more |
-| caller | the opaque ID of the person behind a call from another agent. It picks the agent process and never decides access |
-
-### Roles
-
-| Role | Rights |
-|---|---|
-| `owner` | Sees every task, answers any approval, uses the inspector |
-| `member` | Starts tasks, sees and approves its own tasks, and allows tool calls in them without asking; its conversations may call contacts |
-| `guest` | Starts tasks in its own conversation; never answers approvals, calls agents or uses the schedules agent |
-
-### Policy
-
-The policy gives each role a list of the callers it holds, as an Agent Mesh binding does. The `owner` role holds only `self`; owner pairings add other owners. With the default settings, the roles hold these lists:
+The policy gives each role a list of the callers it holds, as an Agent Mesh binding does. With the default settings:
 
 ```yaml
 owner: [self]
@@ -155,44 +67,33 @@ member: [private]
 guest: []
 ```
 
-| Flag | Policy |
+| Setting | Effect on the policy |
 |---|---|
-| defaults | `owner: [self]`, `member: [private]`; the built-in `local` pairing is owner |
-| `--private-allow-incoming paired` | removes `private` from `member` |
-| `--public-allow-incoming anyone` | `guest: [anyone]`, on the public URL and in direct chats |
-| `--allow-email P` | adds `email:P` to `member` |
-| `pair invite --owner` | the pairing's role is `owner` |
+| `--private-allow-incoming paired` | Removes `private` from `member`. |
+| `--public-allow-incoming anyone` | Sets `guest: [anyone]`, on the public URL and in direct chats. |
+| `--allow-email P` | Adds `email:P` to `member`. |
+| `pair invite --owner` | Gives the pairing the `owner` role. |
 
-A role's list can hold `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>`. The sandbox matcher for the callers with the guest role is `guests` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
+A list can hold `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards match only Google Workspace sign-in and verified mail, which prove the domain. Emails from a tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal one. [Sandbox rules](../reference/configuration.md#sandbox-rules) match callers by the same names.
 
-`config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting lists in [`access`](../reference/output.md).
-
-A request is resolved in this order:
+The server resolves each request in this order:
 
 1. It gets the highest role whose list it matches, or its pairing's role if that is higher.
-2. A request via another agent gets at most `member`.
+2. A request through another agent gets at most `member`.
 3. An identified caller that matches nothing gets `guest`, if the `guest` list isn't empty.
-4. Anyone else is rejected.
+4. The server rejects anyone else.
 
-### Pairings
-
-A pairing is a record with a name, a kind (person, device, agent or webhook) and a role. Tokens and chat links point to it and carry no role of their own, so a role change applies to the next request. A webhook pairing's token opens the node's mailbox and lets the node call the agent as a member.
-
-The first code redeemed sets the kind: `pair join` and `join <code>` in a chat make a person, `contact add --code` makes an agent, and `pair invite --webhook` makes a webhook. `pair set --kind` changes it.
-
-The built-in `local` pairing is you. Its token works only on the local listener, and chat accounts linked with the code printed at start are its links. Google sign-in tokens carry the email and belong to no pairing.
+`config.yaml` keeps these settings under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting lists in [`access`](../reference/output.md).
 
 ## Relay
 
-On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network, the public URL and the identity of every caller, and a2a-serve applies this policy on top. The Agent Mesh page maps each entity onto the relay.
+On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network, the public URL and the identity of every caller, and the server applies this policy on top ([how the access model maps](agent-mesh.md#how-the-access-model-maps)).
 
 ## Guarantees
 
-- Every decision comes from one place, and only from verified inputs. Nothing the agent or a caller sends raises a role.
-- A call that comes through another agent gets at most the member role.
-- An agents-URL handle works only for its conversation, while one of its turns runs, and only for the tasks its conversation created.
-- The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
-- A message joins an existing conversation only if its sender owns it or is an owner.
-- Each member has their own agent process. Guests share one agent process, with a budget per listener and approvals that time out.
-- Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused. The question and inspector forms rely on the cross-site check and the inspector's CSRF token.
-- The local credential works only on the local listener. Loopback alone is never trusted.
+- Every decision comes from one place and uses only verified inputs. Nothing the agent or a caller sends raises a role.
+- The agent can act only for the conversation it works on, and only while it works on it.
+- A message joins an existing conversation only if its sender started it or is an owner.
+- Guests share one agent process, with a task budget and approvals that time out.
+- In the Docker sandbox, the agent reaches the network only through the server, which blocks private destinations ([Network](../guide/sandbox.md#network)).
+- A loopback connection alone grants nothing. The local token works only on the local URL.

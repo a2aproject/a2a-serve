@@ -75,11 +75,8 @@ a2a-serve pair invite anna                   # prints a one-time code
 a2a-serve pair join <agent-url> <code>       # anna runs this
 ```
 
-If anything fails, run `a2a-serve doctor`. It checks your setup and prints a fix for each problem.
-
 ## Next steps
 
 - [Serve a Coding Agent](../examples/01-agent-server/README.md) covers pairing, approvals, and an agent that calls another agent.
-- [Tailscale, Telegram, and Grok](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet with a Telegram bot and a Grok webhook node.
-- [Agent Mesh Relay](../examples/03-agentmesh-relay/README.md) runs two agents on an Agent Mesh relay.
+- [Tailscale, Telegram, and Grok](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet.
 - The [user guide](index.md#user-guide) covers every feature.
