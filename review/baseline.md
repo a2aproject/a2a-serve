@@ -41,6 +41,8 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **A member can send `X-A2A-Serve-Hops` and `X-A2A-Serve-Caller` and pose as a calling agent with several people behind it** (from #407, at `d6b2c44`: `internal/auth/auth.go:295-298`). Each invented caller gets an agent process and a home, so one member can hold most of the member processes and a lot of disk. Members are trusted callers, and the limit of 8 unfinished tasks per pairing and of 32 caller homes per pairing bounds it.
 - **Many callers with private workspace copies can fill the disk** (from #355). Sizing the shared directory and the disk is the owner's job. The copy cap and its error are enough.
 - **A recipe's relative mount source can leave the recipe, such as `../../.ssh`** (from #457). A recipe can already mount any absolute or `~` path. The review shows the host path the agent mounts and marks read-write mounts, and the user confirms it.
+- **In a group chat, any linked member can answer the owner's form questions and `/stop` the owner's task** (from the release review at `3890ffe`). Tool approvals still need the starter or an owner. The people in a group chat share its conversation, and the owner chose to link them.
+- **A member's schedule made in a group chat keeps running there after the member leaves the chat** (from the review of #483). A run checks the member's role, not their place in the chat. The run still gets only the member's sandbox, its prompt is fixed, and the owner or the member can remove it.
 
 ### Correctness
 
@@ -50,6 +52,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Restore doesn't fsync the restored files before it reports success** (at `5bd409f`: `internal/backup/snapshot.go:485`). It needs a crash right after the restore.
 - **Migrations read the schema version outside their transaction** (at `5bd409f`: `internal/store/store.go:519`). The offline CLI opens the database only while the server is stopped.
 - **One-time `--at` schedules skip the 5-minute minimum between runs** (at `5bd409f`: `internal/schedulesvc/schedules.go:59-62`). A one-time schedule runs once, and the cap of 50 schedules still holds.
+- **Nothing caps the open watches of calls to other agents** (from the release review at `3890ffe`: `internal/agentsrv/agentproxy/harness_proxy.go:555-583`). Each call that doesn't finish at once keeps a poller for up to 7 days. Reaching many of them takes a misbehaving model, and the per-caller task limits bound the calls a person starts.
 
 ### Performance
 
@@ -90,3 +93,10 @@ These came from the user-simulation round at `9341d2f`, and their locations refe
 - **`recipe --yes` reports one missing variable per run** (`internal/cli/recipe.go:437-445`). Each run names the variable and the flag that sets it.
 - **`pair invite --webhook -o json` prints a zero `created` time for the new node** (`internal/pairings/pairings.go:240-252`). `pair get` shows the real time.
 - **In an agent-to-agent call, the caller's agent may run `a2a send --task-id <callee task> once` itself.** That is model behavior. The callee's real approval reaches the user as its own task.
+
+### User testing
+
+These came from the user testing in the release review at `3890ffe`, with opencode on Gemini.
+
+- **Starting opencode writes empty `opencode.json`, `opencode.jsonc`, `.opencode/` and `.mcp.json` into the workspace, and git lists them as untracked** (`internal/harness/configmask.go:85-89`). The sandbox mounts its masks over them; without the files, Docker would create them as root and the agent could create them in a running container. They hold `{}` and change nothing.
+- **An MCP tool call of the example 04 agent hung once, and the task stayed working for more than 5 minutes.** The server had approved the call, and mcp-grafana answered the same call at once when asked directly. The next run of the same question finished in 24 seconds. The stall guard ends such a turn after an hour.
