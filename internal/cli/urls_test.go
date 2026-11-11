@@ -73,6 +73,7 @@ func TestStatusInspectorURL(t *testing.T) {
 		{name: "local", status: &controlapi.Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: scopeLocal, want: "http://127.0.0.1:4000"},
 		{name: "public", status: &controlapi.Status{Local: "http://127.0.0.1:4000", Public: "https://coder.example.com"}, scope: scopePublic, wantErr: "the inspector isn't served on the public URL; want local or private"},
 		{name: "tailnet", status: &controlapi.Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, scope: scopePrivate, want: "https://coder.tail.ts.net"},
+		{name: "tailnet over plain HTTP", status: &controlapi.Status{Local: "http://127.0.0.1:4000", Private: "http://coder.hs.test", PrivateInspector: true}, scope: scopePrivate, want: "http://coder.hs.test"},
 		{name: "plain HTTP", status: &controlapi.Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: scopePrivate, wantErr: plainHTTP},
 		{name: "no private URL", status: &controlapi.Status{Name: "coder", Local: "http://127.0.0.1:4000"}, scope: scopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
 	}
