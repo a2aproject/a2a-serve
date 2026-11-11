@@ -42,6 +42,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Many callers with private workspace copies can fill the disk** (from #355). Sizing the shared directory and the disk is the owner's job. The copy cap and its error are enough.
 - **A recipe's relative mount source can leave the recipe, such as `../../.ssh`** (from #457). A recipe can already mount any absolute or `~` path. The review shows the host path the agent mounts and marks read-write mounts, and the user confirms it.
 - **In a group chat, any linked member can answer the owner's form questions and `/stop` the owner's task** (from the release review at `3890ffe`). Tool approvals still need the starter or an owner. The people in a group chat share its conversation, and the owner chose to link them.
+- **A member's schedule made in a group chat keeps running there after the member leaves the chat** (from the review of #483). A run checks the member's role, not their place in the chat. The run still gets only the member's sandbox, its prompt is fixed, and the owner or the member can remove it.
 
 ### Correctness
 
