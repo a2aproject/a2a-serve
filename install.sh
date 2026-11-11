@@ -10,6 +10,8 @@
 #   A2A_SERVE_VERSION  a release tag such as v0.1.0 (default: the latest)
 #   A2A_CLI_VERSION    a release tag of the a2a CLI (default: the latest)
 #   A2A_NO_SETUP=1     skip doctor --fix and the setup question
+#   A2A_CLI_ONLY=1     install only the a2a CLI, and skip doctor --fix and the
+#                      setup question, for example to upgrade a2a on its own
 set -eu
 
 INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
@@ -85,9 +87,11 @@ main() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT INT TERM
 
-  serve_tag=${A2A_SERVE_VERSION:-$(latest "$SERVE_REPO")}
   cli_tag=${A2A_CLI_VERSION:-$(latest "$CLI_REPO")}
-  fetch a2a-serve "$SERVE_DOWNLOAD" "$serve_tag"
+  if [ "${A2A_CLI_ONLY:-}" != 1 ]; then
+    serve_tag=${A2A_SERVE_VERSION:-$(latest "$SERVE_REPO")}
+    fetch a2a-serve "$SERVE_DOWNLOAD" "$serve_tag"
+  fi
   fetch a2a "$CLI_DOWNLOAD" "$cli_tag"
 
   case ":$PATH:" in
@@ -100,6 +104,7 @@ main() {
   esac
 
   [ "${A2A_NO_SETUP:-}" = 1 ] && return 0
+  [ "${A2A_CLI_ONLY:-}" = 1 ] && return 0
   say ""
   # doctor exits non-zero when something is left to fix, such as Docker; it
   # says what, so the install carries on.

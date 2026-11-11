@@ -15,6 +15,7 @@
 package doctor
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -34,6 +35,7 @@ type a2aLocations struct {
 	homebrewPrefix string
 	gobin          string
 	gopath         string
+	writable       func(dir string) bool
 }
 
 func (e Env) a2aLocations() a2aLocations {
@@ -42,10 +44,11 @@ func (e Env) a2aLocations() a2aLocations {
 		homebrewPrefix: getenv(e, "HOMEBREW_PREFIX"),
 		gobin:          getenv(e, "GOBIN"),
 		gopath:         getenv(e, "GOPATH"),
+		writable:       e.DirWritable,
 	}
 }
 
-// install returns the command that installs the latest a2a CLI over the
+// install returns the fix that installs the latest a2a CLI over the
 // binary at path, the way that binary was installed. An empty path means
 // that there is no binary yet.
 func (l a2aLocations) install(path string) string {
@@ -59,10 +62,14 @@ func (l a2aLocations) install(path string) string {
 	if l.goBin(dir) {
 		return goInstallA2A(dir)
 	}
-	if dir == filepath.Join(l.home, ".local", "bin") {
+	userBin := filepath.Join(l.home, ".local", "bin")
+	if sameDir(dir, userBin) {
 		return installScript("")
 	}
-	return installScript(dir)
+	if l.writable != nil && l.writable(dir) {
+		return installScript(dir)
+	}
+	return fmt.Sprintf("run `%s`, then remove %s or put ~/.local/bin before %s on PATH", installScript(""), path, dir)
 }
 
 func (l a2aLocations) homebrew(path string) bool {
@@ -98,13 +105,14 @@ func goInstallA2A(dir string) string {
 		" && mv " + shellquote.Quote(filepath.Join(dir, "a2a-cli")) + " " + shellquote.Quote(filepath.Join(dir, "a2a"))
 }
 
-// installScript runs the install script, which installs both binaries into
-// dir, or into ~/.local/bin if dir is empty.
+// installScript runs the install script for the a2a CLI only, into dir or
+// into ~/.local/bin if dir is empty.
 func installScript(dir string) string {
-	if dir == "" {
-		return "curl -fsSL " + installScriptURL + " | sh"
+	cmd := "curl -fsSL " + installScriptURL + " | "
+	if dir != "" {
+		cmd += "INSTALL_DIR=" + shellquote.Quote(dir) + " "
 	}
-	return "curl -fsSL " + installScriptURL + " | INSTALL_DIR=" + shellquote.Quote(dir) + " sh"
+	return cmd + "A2A_CLI_ONLY=1 sh"
 }
 
 func sameDir(a, b string) bool {

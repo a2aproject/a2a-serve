@@ -14,9 +14,23 @@
 
 package doctor
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 const scriptCmd = "curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | "
+
+func writableDirs(dirs ...string) func(string) bool {
+	return func(dir string) bool {
+		for _, d := range dirs {
+			if d == dir {
+				return true
+			}
+		}
+		return false
+	}
+}
 
 func TestA2ALocationsInstall(t *testing.T) {
 	t.Parallel()
@@ -46,9 +60,9 @@ func TestA2ALocationsInstall(t *testing.T) {
 		},
 		{
 			name: "outside the homebrew prefix",
-			loc:  a2aLocations{home: "/home/u", homebrewPrefix: "/opt/homebrew"},
+			loc:  a2aLocations{home: "/home/u", homebrewPrefix: "/opt/homebrew", writable: writableDirs("/opt/homebrew-other/bin")},
 			path: "/opt/homebrew-other/bin/a2a",
-			want: scriptCmd + "INSTALL_DIR=/opt/homebrew-other/bin sh",
+			want: scriptCmd + "INSTALL_DIR=/opt/homebrew-other/bin A2A_CLI_ONLY=1 sh",
 		},
 		{
 			name: "default go bin",
@@ -64,9 +78,9 @@ func TestA2ALocationsInstall(t *testing.T) {
 		},
 		{
 			name: "GOBIN replaces the default go bin",
-			loc:  a2aLocations{home: "/home/u", gobin: "/opt/gobin"},
+			loc:  a2aLocations{home: "/home/u", gobin: "/opt/gobin", writable: writableDirs("/home/u/go/bin")},
 			path: "/home/u/go/bin/a2a",
-			want: scriptCmd + "INSTALL_DIR=/home/u/go/bin sh",
+			want: scriptCmd + "INSTALL_DIR=/home/u/go/bin A2A_CLI_ONLY=1 sh",
 		},
 		{
 			name: "second GOPATH entry",
@@ -84,18 +98,36 @@ func TestA2ALocationsInstall(t *testing.T) {
 			name: "install script default dir",
 			loc:  a2aLocations{home: "/home/u"},
 			path: "/home/u/.local/bin/a2a",
-			want: scriptCmd + "sh",
+			want: scriptCmd + "A2A_CLI_ONLY=1 sh",
 		},
 		{
-			name: "other dir",
+			name: "writable other dir",
+			loc:  a2aLocations{home: "/home/u", writable: writableDirs("/usr/local/bin")},
+			path: "/usr/local/bin/a2a",
+			want: scriptCmd + "INSTALL_DIR=/usr/local/bin A2A_CLI_ONLY=1 sh",
+		},
+		{
+			name: "writable other dir with a space",
+			loc:  a2aLocations{home: "/home/u", writable: writableDirs("/opt/my tools")},
+			path: "/opt/my tools/a2a",
+			want: scriptCmd + "INSTALL_DIR='/opt/my tools' A2A_CLI_ONLY=1 sh",
+		},
+		{
+			name: "unwritable other dir",
+			loc:  a2aLocations{home: "/home/u", writable: writableDirs()},
+			path: "/usr/bin/a2a",
+			want: "run `" + scriptCmd + "A2A_CLI_ONLY=1 sh`, then remove /usr/bin/a2a or put ~/.local/bin before /usr/bin on PATH",
+		},
+		{
+			name: "other dir without a writability check",
 			loc:  a2aLocations{home: "/home/u"},
 			path: "/usr/local/bin/a2a",
-			want: scriptCmd + "INSTALL_DIR=/usr/local/bin sh",
+			want: "run `" + scriptCmd + "A2A_CLI_ONLY=1 sh`, then remove /usr/local/bin/a2a or put ~/.local/bin before /usr/local/bin on PATH",
 		},
 		{
 			name: "not installed",
 			loc:  a2aLocations{home: "/home/u"},
-			want: scriptCmd + "sh",
+			want: scriptCmd + "A2A_CLI_ONLY=1 sh",
 		},
 	}
 	for _, tc := range tests {
@@ -136,7 +168,24 @@ func TestCheckA2AFixFollowsInstallLocation(t *testing.T) {
 		{
 			name:  "missing",
 			setup: func(m *fakeMachine) { delete(m.paths, "a2a") },
-			want:  scriptCmd + "sh",
+			want:  scriptCmd + "A2A_CLI_ONLY=1 sh",
+		},
+		{
+			name: "unwritable dir",
+			setup: func(m *fakeMachine) {
+				m.paths["a2a"] = "/usr/local/bin/a2a"
+				m.outputs["/usr/local/bin/a2a version -o json"] = `{"version":"0.3.1"}`
+			},
+			want: "run `" + scriptCmd + "A2A_CLI_ONLY=1 sh`, then remove /usr/local/bin/a2a or put ~/.local/bin before /usr/local/bin on PATH",
+		},
+		{
+			name: "writable dir",
+			setup: func(m *fakeMachine) {
+				m.writable = map[string]bool{"/usr/local/bin": true}
+				m.paths["a2a"] = "/usr/local/bin/a2a"
+				m.outputs["/usr/local/bin/a2a version -o json"] = `{"version":"0.3.1"}`
+			},
+			want: scriptCmd + "INSTALL_DIR=/usr/local/bin A2A_CLI_ONLY=1 sh",
 		},
 	}
 	for _, tc := range tests {
@@ -153,5 +202,33 @@ func TestCheckA2AFixFollowsInstallLocation(t *testing.T) {
 				t.Fatalf("checkA2A().Fix = %q, want %q", got.Fix, tc.want)
 			}
 		})
+	}
+}
+
+func TestDirWritable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tests := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{name: "writable", dir: dir, want: true},
+		{name: "missing", dir: dir + "/missing"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := dirWritable(tc.dir); got != tc.want {
+				t.Fatalf("dirWritable(%q) = %v, want %v", tc.dir, got, tc.want)
+			}
+		})
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("os.ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("dirWritable() left %d files in %s", len(entries), dir)
 	}
 }
