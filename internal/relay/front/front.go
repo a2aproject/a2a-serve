@@ -214,9 +214,22 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case enrollment(p):
 		h = f.enrollments.Handler(h)
 	case under(p, "/ingress"):
-		h = f.ingressClient.Handler(f.ingress.Handler(h))
+		h = f.ingressClient.Handler(f.ingress.Handler(refuseLongPeer(h)))
 	}
 	h.ServeHTTP(w, r)
+}
+
+// refuseLongPeer answers 400 for an ingress path whose peer segment no peer
+// ID is that long. Agent Mesh's decoder takes time quadratic in its length.
+func refuseLongPeer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
+		if seg, _, _ := strings.Cut(rest, "/"); len(seg) > maxPeerSegment {
+			jsonhttp.Error(w, http.StatusBadRequest, "no agent has this peer ID")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // enrollment reports whether p is a route where agents join the relay or

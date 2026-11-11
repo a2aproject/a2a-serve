@@ -158,6 +158,7 @@ func TestFrontRoutes(t *testing.T) {
 		{method: "GET", path: "/info/%2E%2E/console/", wantStatus: 404},
 		{method: "GET", path: "/x/%2e%2e/info", wantStatus: 200, wantPrefix: "mesh GET /info from"},
 		{method: "GET", path: "/ingress/12D3/a2a/coder/", wantStatus: 200, wantPrefix: "mesh GET /ingress/12D3/a2a/coder/ from"},
+		{method: "GET", path: "/ingress/" + strings.Repeat("1", 513) + "/a2a/coder", wantStatus: 400},
 		{method: "CONNECT", path: "/admin/nodes/../../x", wantStatus: 405},
 		{method: "TRACE", path: "/info", wantStatus: 405},
 	}
