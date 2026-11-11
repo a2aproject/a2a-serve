@@ -4,7 +4,7 @@
 # Releases are cut by release-please, which creates the git tag and the GitHub
 # Release (with the changelog). This config cross-compiles the binary,
 # uploads the archives and checksums to that release, and opens pull requests
-# for the Homebrew formula and the winget manifest.
+# for the Homebrew formula.
 version: 2
 
 project_name: a2a-serve
@@ -29,7 +29,6 @@ builds:
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -42,10 +41,6 @@ archives:
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     formats:
       - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
     files:
       - LICENSE
       - README.md
@@ -84,46 +79,6 @@ brews:
       token: "{{ .Env.A2A_BOT_PAT }}"
       pull_request:
         enabled: true
-
-# a2a-serve builds for Windows, but nobody has run it there yet, and
-# --service isn't available on it. The manifest is generated with every
-# release and published once Windows is supported: set skip_upload to auto.
-winget:
-  - name: a2a-serve
-    package_identifier: a2aproject.a2aserve
-    publisher: a2aproject
-    publisher_url: "https://github.com/a2aproject"
-    publisher_support_url: "https://github.com/a2aproject/a2a-serve/issues"
-    author: "The A2A Authors"
-    homepage: "https://github.com/a2aproject/a2a-serve"
-    short_description: "Serve a coding agent over A2A from its project directory."
-    description: "Runs a coding agent (opencode, Claude Code, or any ACP agent) as an A2A server. A command plugin of the a2a CLI."
-    license: "Apache-2.0"
-    license_url: "https://github.com/a2aproject/a2a-serve/blob/{{ .Tag }}/LICENSE"
-    copyright: "The A2A Authors"
-    release_notes_url: "https://github.com/a2aproject/a2a-serve/releases/tag/{{ .Tag }}"
-    ids:
-      - a2a-serve
-    dependencies:
-      - package_identifier: a2aproject.a2acli
-    tags:
-      - a2a
-      - agent
-      - cli
-      - acp
-    skip_upload: true
-    commit_msg_template: "release: add a2a-serve {{ .Version }} winget manifest"
-    repository:
-      owner: a2aproject
-      name: winget-pkgs
-      branch: "a2a-serve-{{ .Version }}"
-      token: "{{ .Env.A2A_BOT_PAT }}"
-      pull_request:
-        enabled: true
-        base:
-          owner: microsoft
-          name: winget-pkgs
-          branch: master
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
