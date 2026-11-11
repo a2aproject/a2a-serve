@@ -336,6 +336,12 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		_, err := tx.ExecContext(ctx, `ALTER TABLE schedules ADD COLUMN group_chat INTEGER NOT NULL DEFAULT 0`)
 		return err
 	},
+	// 26: watches record whether the call came from a group chat, so that
+	// its result continues the conversation as the people in it do.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE watches ADD COLUMN group_chat INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
 }
 
 const schemaV21 = `

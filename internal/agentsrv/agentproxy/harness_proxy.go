@@ -575,7 +575,7 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 	}
 	w := store.Watch{
 		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
-		OnBehalfOf: g.claims.User.ID, Identity: string(identity),
+		OnBehalfOf: g.claims.User.ID, Identity: string(identity), GroupChat: g.claims.GroupChat,
 	}
 	if err := g.proxy.store.PutWatch(ctx, w); err != nil {
 		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
