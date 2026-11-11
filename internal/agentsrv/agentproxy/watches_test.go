@@ -826,6 +826,24 @@ func TestWatchesResume(t *testing.T) {
 	f.wantNoWatches(t)
 }
 
+func TestWatchesResumeEndsQuestionTasksOfRemovedWatches(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptHold)
+	f.addWatch(t, task, auth.OwnerID)
+	f.asked.open = []endedQuestions{
+		{ContextID: "origin", Agent: "coder", TaskID: string(task.ID)},
+		{ContextID: "origin", Agent: "coder", TaskID: "removed"},
+	}
+
+	f.ws.Resume(context.Background())
+
+	want := []endedQuestions{{ContextID: "origin", Agent: "coder", TaskID: "removed"}}
+	if diff := cmp.Diff(want, f.asked.ends()); diff != "" {
+		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestWatchesRelay(t *testing.T) {
 	t.Parallel()
 	task := &a2a.Task{ID: "t1", ContextID: "remote"}

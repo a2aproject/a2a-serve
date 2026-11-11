@@ -402,6 +402,8 @@ type fakeQuestionTasks struct {
 	mu    sync.Mutex
 	asked []taskQuestion
 	ended []endedQuestions
+	// open are the question tasks that exist from before the server started.
+	open []endedQuestions
 }
 
 type taskQuestion struct {
@@ -425,6 +427,16 @@ func (f *fakeQuestionTasks) End(_ context.Context, contextID, agent, taskID stri
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ended = append(f.ended, endedQuestions{ContextID: contextID, Agent: agent, TaskID: taskID})
+}
+
+func (f *fakeQuestionTasks) EndOrphaned(_ context.Context, watched func(agent, taskID string) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, q := range f.open {
+		if !watched(q.Agent, q.TaskID) {
+			f.ended = append(f.ended, q)
+		}
+	}
 }
 
 func (f *fakeQuestionTasks) questions() []taskQuestion {

@@ -92,6 +92,9 @@ type QuestionTasks interface {
 	// End ends the tasks in contextID that ask a question of agent's task,
 	// once that task no longer waits for an answer.
 	End(ctx context.Context, contextID, agent, taskID string)
+	// EndOrphaned ends the tasks that ask a question of an agent's task for
+	// which watched reports no watch.
+	EndOrphaned(ctx context.Context, watched func(agent, taskID string) bool)
 }
 
 // NewWatches returns the watches of deps, which poll until ctx ends.
@@ -197,6 +200,13 @@ func (ws *Watches) Resume(ctx context.Context) {
 		slog.Error("loading watches", "error", err)
 		return
 	}
+	watched := make(map[[2]string]bool, len(all))
+	for _, w := range all {
+		watched[[2]string{w.Contact, w.TaskID}] = true
+	}
+	// A watch removed with its contact or node while the server was down
+	// leaves its question tasks waiting for good.
+	ws.asked.EndOrphaned(ctx, func(agent, taskID string) bool { return watched[[2]string{agent, taskID}] })
 	for _, w := range all {
 		ws.watch(w)
 	}

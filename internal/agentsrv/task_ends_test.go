@@ -56,3 +56,40 @@ func TestEndingQuestionTaskKeepsContextUnattended(t *testing.T) {
 		t.Fatalf("unattended.Has() = false after a question task ended, want the context of the running turn kept")
 	}
 }
+
+func TestQuestionTasksEndOrphaned(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		watched   bool
+		wantState a2a.TaskState
+	}{
+		{name: "no watch", watched: false, wantState: a2a.TaskStateCompleted},
+		{name: "watched", watched: true, wantState: a2a.TaskStateInputRequired},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			started := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("hello", "", ""))
+			ctx := context.Background()
+			rec := store.Question{ID: "q1", Token: "tok1", TaskID: "remote-task", ContextID: "remote-context", Contact: "reviewer", HitlID: "h1", Data: map[string]any{"id": "h1", "type": "permission"}}
+			if err := ts.srv.store.PutQuestion(ctx, rec); err != nil {
+				t.Fatalf("PutQuestion() error = %v", err)
+			}
+			qt := &questionTasks{store: ts.srv.store, tasks: ts.srv.tasks, bus: ts.srv.bus, ends: ts.srv.ends}
+			if err := qt.Ask(ctx, started.ContextID, &agentproxy.CallerQuestion{Rec: rec, Header: "reviewer asks"}); err != nil {
+				t.Fatalf("questionTasks.Ask() error = %v", err)
+			}
+
+			qt.EndOrphaned(ctx, func(agent, taskID string) bool {
+				return tc.watched && agent == "reviewer" && taskID == "remote-task"
+			})
+
+			_, state, err := ts.srv.tasks.LatestStateInContext(auth.WithPrincipal(ctx, auth.Owner()), started.ContextID)
+			if err != nil || state != tc.wantState {
+				t.Fatalf("LatestStateInContext() = %s, %v, want the question task %s", state, err, tc.wantState)
+			}
+		})
+	}
+}
