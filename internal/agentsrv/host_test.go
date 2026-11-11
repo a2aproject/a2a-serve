@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"cmp"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,9 +24,13 @@ import (
 func TestRequireHost(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		host string
-		want int
+		allowed string
+		host    string
+		want    int
 	}{
+		{allowed: "127.0.0.1:4000", host: "127.0.0.1:4000", want: http.StatusOK},
+		{allowed: "127.0.0.1:4000", host: "127.0.0.1", want: http.StatusMisdirectedRequest},
+		{allowed: "127.0.0.1:4000", host: "evil.example:4000", want: http.StatusMisdirectedRequest},
 		{host: "coder.hs.test", want: http.StatusOK},
 		{host: "coder.hs.test:80", want: http.StatusOK},
 		{host: "CODER.hs.test", want: http.StatusOK},
@@ -36,18 +41,19 @@ func TestRequireHost(t *testing.T) {
 		{host: "coder.hs.test:8080", want: http.StatusMisdirectedRequest},
 		{host: "", want: http.StatusMisdirectedRequest},
 	}
-	h := requireHost("coder.hs.test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	})
 	for _, tc := range tests {
-		t.Run(tc.host, func(t *testing.T) {
+		t.Run(tc.allowed+" "+tc.host, func(t *testing.T) {
 			t.Parallel()
+			h := requireHost(cmp.Or(tc.allowed, "coder.hs.test"), ok)
 			r := httptest.NewRequest(http.MethodPost, "http://coder.hs.test/", nil)
 			r.Host = tc.host
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			if w.Code != tc.want {
-				t.Fatalf("requireHost() status for Host %q = %d, want %d", tc.host, w.Code, tc.want)
+				t.Fatalf("requireHost(%q) status for Host %q = %d, want %d", tc.allowed, tc.host, w.Code, tc.want)
 			}
 		})
 	}

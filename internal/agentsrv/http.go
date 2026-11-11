@@ -72,7 +72,7 @@ func (s *Server) privateListener(u *url.URL) listener {
 	case network.ProviderTailscale:
 		l.inspector = true
 		if u.Scheme == "http" {
-			l.host = u.Hostname()
+			l.host = u.Host
 		}
 	case network.ProviderRelay:
 		l.tunneled = true
@@ -140,23 +140,27 @@ func (s *Server) routes(l listener) http.Handler {
 	return h
 }
 
-// requireHost serves next only the requests for host, on the default port.
+// requireHost serves next only the requests for host, a host of a URL,
+// with port 80 when it names none.
 func requireHost(host string, next http.Handler) http.Handler {
+	want := hostPort(host)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := r.Host
-		if name, port, err := net.SplitHostPort(h); err == nil {
-			if port != "80" {
-				jsonhttp.Error(w, http.StatusMisdirectedRequest, "this server doesn't serve "+r.Host)
-				return
-			}
-			h = name
-		}
-		if !strings.EqualFold(strings.TrimSuffix(h, "."), host) {
+		if !strings.EqualFold(hostPort(r.Host), want) {
 			jsonhttp.Error(w, http.StatusMisdirectedRequest, "this server doesn't serve "+r.Host)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostPort returns host with port 80 when it names none, and its name
+// without a trailing dot.
+func hostPort(host string) string {
+	name, port, err := net.SplitHostPort(host)
+	if err != nil {
+		name, port = host, "80"
+	}
+	return net.JoinHostPort(strings.TrimSuffix(name, "."), port)
 }
 
 // a2aRoute serves an A2A transport to authenticated callers, and answers
