@@ -162,6 +162,54 @@ func TestPrepareModel(t *testing.T) {
 	}
 }
 
+func TestPrepareProviderKeyAliases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		agent   string
+		command []string
+		env     []string
+		want    []string
+	}{
+		{name: "gemini key for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
+		{name: "google key for opencode", agent: "opencode", env: []string{"GOOGLE_API_KEY=k"}, want: []string{"GOOGLE_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
+		{name: "gemini key for opencode with a command", agent: "opencode", command: []string{"opencode", "acp"}, env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
+		{name: "both keys for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}, want: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}},
+		{name: "gemini key for claude", agent: "claude", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := t.TempDir()
+			profile, err := Lookup(tc.agent, tc.command)
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: profile,
+				Sandbox: SandboxLocal,
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				EnvDir:  t.TempDir(),
+				Env:     tc.env,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			var got []string
+			for _, kv := range p.Env {
+				if name, _, _ := strings.Cut(kv, "="); slices.Contains([]string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"}, name) {
+					got = append(got, kv)
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prepare() key env wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 // runningDocker runs rootful, has every image and removes any container.
 const runningDocker = `case "$1" in
 info) echo "[name=seccomp,profile=builtin]" ;;
