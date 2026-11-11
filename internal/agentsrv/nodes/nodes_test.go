@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -96,6 +97,32 @@ func postEvent(t *testing.T, h *Host, node string, taskID a2a.TaskID, ev mailbox
 		}
 	}
 	return w.Code, res
+}
+
+func TestSenderOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		caller *auth.Principal
+		want   mailboxapi.Sender
+	}{
+		{name: "no caller", want: mailboxapi.Sender{Kind: mailboxapi.SenderServer}},
+		{name: "owner", caller: &auth.Principal{ID: "pair:me", Role: auth.RoleOwner}, want: mailboxapi.Sender{Kind: mailboxapi.SenderOwner, Name: "pair:me"}},
+		{name: "member", caller: &auth.Principal{ID: "pair:anna", Role: auth.RoleMember}, want: mailboxapi.Sender{Kind: mailboxapi.SenderMember, Name: "pair:anna"}},
+		{name: "hosting agent", caller: &auth.Principal{ID: "agent:assistant", Role: auth.RoleMember, OnBehalfOf: "pair:anna"}, want: mailboxapi.Sender{Kind: mailboxapi.SenderAgent, Name: "assistant", OnBehalfOf: "pair:anna"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			if tc.caller != nil {
+				ctx = auth.WithPrincipal(ctx, *tc.caller)
+			}
+			if diff := cmp.Diff(tc.want, senderOf(ctx, "assistant")); diff != "" {
+				t.Fatalf("senderOf() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
 }
 
 func TestInstructionsKeepTheNodeToken(t *testing.T) {
