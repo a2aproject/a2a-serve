@@ -185,7 +185,7 @@ func background(ctx context.Context, dir agentdir.Dir, services ServiceManager, 
 	if err := dir.Init(); err != nil {
 		return err
 	}
-	exe, err := os.Executable()
+	exe, err := service.Executable()
 	if err != nil {
 		return err
 	}
