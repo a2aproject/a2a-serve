@@ -51,17 +51,29 @@ The agent doesn't get the key.
 
 ### On your machine, with speaches
 
-[speaches](https://speaches.ai) runs in Docker, needs no account, and keeps audio on your machine. Start it and download a model that transcribes and one that speaks:
+[speaches](https://speaches.ai) runs in Docker, needs no account, and keeps audio on your machine. The server asks it for the models `whisper-1` and `tts-1`. A small file tells speaches which models those names mean. Whisper base transcribes quickly without a GPU, and Kokoro speaks:
 
 ```bash
-docker run -d --name speaches -p 8000:8000 ghcr.io/speaches-ai/speaches:latest-cpu
-export SPEACHES_BASE_URL=http://localhost:8000
-uvx speaches-cli model download Systran/faster-whisper-large-v3
-uvx speaches-cli model download speaches-ai/Kokoro-82M-v1.0-ONNX
+cat > ~/a2a-example6/speaches-models.json <<'EOF'
+{"whisper-1": "Systran/faster-whisper-base", "tts-1": "speaches-ai/Kokoro-82M-v1.0-ONNX"}
+EOF
+chmod 644 ~/a2a-example6/speaches-models.json
+```
+
+Start speaches, wait until it answers, and download both models:
+
+```bash
+docker run -d --name speaches -p 127.0.0.1:8000:8000 \
+  -v speaches-models:/home/ubuntu/.cache/huggingface/hub \
+  -v ~/a2a-example6/speaches-models.json:/home/ubuntu/speaches/model_aliases.json:ro \
+  ghcr.io/speaches-ai/speaches:latest-cpu
+until curl -sf http://localhost:8000/health >/dev/null; do sleep 1; done
+curl -X POST http://localhost:8000/v1/models/Systran/faster-whisper-base
+curl -X POST http://localhost:8000/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX
 a2a-serve config set --voice http://localhost:8000/v1
 ```
 
-For a male voice, add `--voice-name am_michael`. The server calls speaches from your machine, so `localhost` works with the Docker sandbox too.
+The models stay in the `speaches-models` volume, so a new container doesn't download them again. With a GPU, a larger model such as `Systran/faster-whisper-large-v3` hears more accurately. For a male voice, add `--voice-name am_michael`. The server calls speaches from your machine, so `localhost` works with the Docker sandbox too.
 
 ## 4. Check the speech service
 
@@ -172,7 +184,7 @@ a2a-serve card | grep -A6 defaultInputModes
 
 | Symptom | What to check |
 | --- | --- |
-| `I couldn't transcribe the voice note: the speech service timed out` | On speaches without a GPU, long voice notes take a while. Send shorter notes, or use a hosted service. |
+| `I couldn't transcribe the voice note: the speech service timed out` | On speaches without a GPU, long voice notes take a while, more so with larger models. Send shorter notes, keep `whisper-1` on `Systran/faster-whisper-base` in `speaches-models.json` (step 3), or use a hosted service. |
 | `I couldn't transcribe the voice note: couldn't reach the speech service` | The service isn't running or its URL is wrong. With speaches, check `docker ps` and the URL in `a2a-serve config show`. |
 | Answers come as text with `(The voice reply failed: the speech service doesn't speak.)` | The service has no speech endpoint or model. With speaches, download the speech model (step 3). |
 | `/voice on` says voice replies aren't set up | The agent has no `--voice` setting, or it applies after `a2a-serve restart`. Run `a2a-serve doctor`. |

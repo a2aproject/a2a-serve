@@ -108,8 +108,11 @@ func statusError(resp *http.Response) error {
 			} `json:"details"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(data, &body) != nil || body.Error.Message == "" {
+	if json.Unmarshal(data, &body) != nil {
 		return e
+	}
+	if body.Error.Message == "" {
+		return withDetail(e, data)
 	}
 	e.err = errors.New(body.Error.Message)
 	// The Gemini API refuses an invalid key with 400 and says so in the
@@ -122,8 +125,41 @@ func statusError(resp *http.Response) error {
 	}
 	// A refused request, such as one with an unknown voice, says what to
 	// change. Refused keys and failures say nothing the owner can act on.
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+	if refusedRequest(resp.StatusCode) {
 		e.Reason = "the speech service refused the request: " + Truncate(body.Error.Message, 200)
+	}
+	return e
+}
+
+func refusedRequest(status int) bool {
+	return status == http.StatusBadRequest || status == http.StatusUnprocessableEntity
+}
+
+// withDetail adds the message of a FastAPI error body, such as speaches
+// sends, to e: a detail string, or the first message of a detail list.
+func withDetail(e *Error, data []byte) error {
+	var body struct {
+		Detail json.RawMessage `json:"detail"`
+	}
+	if json.Unmarshal(data, &body) != nil || len(body.Detail) == 0 {
+		return e
+	}
+	var msg string
+	if json.Unmarshal(body.Detail, &msg) != nil {
+		var list []struct {
+			Msg string `json:"msg"`
+		}
+		if json.Unmarshal(body.Detail, &list) != nil || len(list) == 0 {
+			return e
+		}
+		msg = list[0].Msg
+	}
+	if msg == "" {
+		return e
+	}
+	e.err = errors.New(msg)
+	if refusedRequest(e.status) {
+		e.Reason = "the speech service refused the request: " + Truncate(msg, 200)
 	}
 	return e
 }

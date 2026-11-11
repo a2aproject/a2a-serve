@@ -17,11 +17,13 @@ package speech_test
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -535,6 +537,94 @@ func TestSpeakRefusedRequestSaysWhy(t *testing.T) {
 	_, err = sp.Speak(t.Context(), "Done.", []string{"audio/ogg"})
 	if want := "the speech service refused the request: Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."; speech.Reason(err) != want {
 		t.Fatalf("Speak() error = %v, want %q", err, want)
+	}
+}
+
+func TestSpeakOggWhenServiceRefusesOpus(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var formats []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Format string `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		mu.Lock()
+		formats = append(formats, req.Format)
+		mu.Unlock()
+		if req.Format != "wav" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			if _, err := w.Write([]byte(`{"detail":[{"type":"literal_error","loc":["body","response_format"],"msg":"Input should be 'mp3', 'flac', 'wav' or 'pcm'"}]}`)); err != nil {
+				t.Errorf("writing response: %v", err)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "audio/wav")
+		if _, err := w.Write(toneWAV(time.Second)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, sp, err := speech.New(speech.Config{Service: srv.URL})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	for range 2 {
+		got, err := sp.Speak(t.Context(), "Done.", []string{"audio/ogg"})
+		if err != nil {
+			t.Fatalf("Speak() error = %v, want nil", err)
+		}
+		if got.MediaType != speech.MediaOgg {
+			t.Fatalf("Speak() media type = %q, want %q", got.MediaType, speech.MediaOgg)
+		}
+		if d, ok := speech.Duration(got); !ok || d < 900*time.Millisecond || d > 1100*time.Millisecond {
+			t.Fatalf("Duration(Speak()) = %v, %v, want about 1s", d, ok)
+		}
+	}
+	if diff := cmp.Diff([]string{"opus", "wav", "wav"}, formats); diff != "" {
+		t.Fatalf("Speak() wrong response formats (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSpeakRefusedRequestSaysWhyInDetail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "detail string",
+			body: `{"detail":"Model 'tts-1' is not installed locally."}`,
+			want: "the speech service refused the request: Model 'tts-1' is not installed locally.",
+		},
+		{
+			name: "detail list",
+			body: `{"detail":[{"loc":["body","voice"],"msg":"Unknown voice 'robot'"}]}`,
+			want: "the speech service refused the request: Unknown voice 'robot'",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				if _, err := w.Write([]byte(tc.body)); err != nil {
+					t.Errorf("writing response: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			_, sp, err := speech.New(speech.Config{Service: srv.URL})
+			if err != nil {
+				t.Fatalf("New() error = %v, want nil", err)
+			}
+			_, err = sp.Speak(t.Context(), "Done.", []string{"audio/mpeg"})
+			if speech.Reason(err) != tc.want {
+				t.Fatalf("Speak() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

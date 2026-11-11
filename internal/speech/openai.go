@@ -25,6 +25,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -57,6 +58,9 @@ type openAIClient struct {
 	speak      string
 	voice      string
 	http       *http.Client
+	// encodeOpus is set once the service refused opus and spoke wav,
+	// which the client then encodes to Ogg Opus itself.
+	encodeOpus atomic.Bool
 }
 
 func newOpenAIClient(cfg Config) *openAIClient {
@@ -157,22 +161,65 @@ func (c *openAIClient) Speak(ctx context.Context, text string, accepted []string
 	if len(text) > MaxSpeechText {
 		return Audio{}, &Error{Reason: fmt.Sprintf("the text is over %d bytes", MaxSpeechText)}
 	}
-	req, err := json.Marshal(map[string]string{"model": c.speak, "input": text, "voice": c.voice, "response_format": formats[mediaType]})
+	if mediaType == MediaOgg && c.encodeOpus.Load() {
+		return c.speakOpusFromWAV(ctx, text)
+	}
+	data, err := c.speech(ctx, text, formats[mediaType])
+	var e *Error
+	// Servers such as speaches speak no opus. The client then encodes it
+	// from wav.
+	if mediaType == MediaOgg && errors.As(err, &e) && refusedRequest(e.status) {
+		a, werr := c.speakOpusFromWAV(ctx, text)
+		if werr != nil {
+			return Audio{}, err
+		}
+		c.encodeOpus.Store(true)
+		return a, nil
+	}
 	if err != nil {
 		return Audio{}, err
+	}
+	return Audio{MediaType: mediaType, Data: data}, nil
+}
+
+// speakOpusFromWAV speaks text as wav and encodes it to Ogg Opus.
+func (c *openAIClient) speakOpusFromWAV(ctx context.Context, text string) (Audio, error) {
+	data, err := c.speech(ctx, text, formats[MediaWAV])
+	if err != nil {
+		return Audio{}, err
+	}
+	p, err := readPCM(MediaWAV, data)
+	if err != nil {
+		return Audio{}, &Error{Reason: "the speech service sent invalid audio", err: err}
+	}
+	if len(p.samples) == 0 {
+		return Audio{}, &Error{Reason: "the speech service sent no audio"}
+	}
+	ogg, err := oggOpus(ctx, p)
+	if err != nil {
+		return Audio{}, &Error{Reason: "couldn't encode the voice reply", err: err}
+	}
+	return Audio{MediaType: MediaOgg, Data: ogg}, nil
+}
+
+// speech calls /audio/speech for text in the response format.
+func (c *openAIClient) speech(ctx context.Context, text, format string) ([]byte, error) {
+	req, err := json.Marshal(map[string]string{"model": c.speak, "input": text, "voice": c.voice, "response_format": format})
+	if err != nil {
+		return nil, err
 	}
 	data, err := c.post(ctx, "/audio/speech", "application/json", bytes.NewReader(req), maxSpeech)
 	var e *Error
 	if errors.As(err, &e) && e.status == http.StatusNotFound {
-		return Audio{}, &Error{Reason: "the speech service doesn't speak", NoSpeech: true, err: err}
+		return nil, &Error{Reason: "the speech service doesn't speak", NoSpeech: true, err: err}
 	}
 	if err != nil {
-		return Audio{}, err
+		return nil, err
 	}
 	if len(data) == 0 {
-		return Audio{}, &Error{Reason: "the speech service sent no audio"}
+		return nil, &Error{Reason: "the speech service sent no audio"}
 	}
-	return Audio{MediaType: mediaType, Data: data}, nil
+	return data, nil
 }
 
 // pickFormat returns the first media type of accepted that the service
