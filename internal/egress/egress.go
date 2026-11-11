@@ -69,13 +69,18 @@ var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("::ffff:0:0/96"),
 }
 
+// azureWireServer is the address of the host services of Azure VMs, which
+// hand out VM settings, such as those of extensions. Azure routes it
+// through the default gateway, so it looks public.
+var azureWireServer = netip.AddrFrom4([4]byte{168, 63, 129, 16})
+
 // Special reports whether ip belongs to this host or its link, or to no
 // host at all: loopback, unspecified, link-local, as cloud metadata
-// services are, multicast or reserved. A rule that allows a name never
-// reaches it.
+// services are, multicast or reserved. It also reports the Azure
+// WireServer. A rule that allows a name never reaches it.
 func Special(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+	return ip == azureWireServer || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) ||
 		netip.MustParsePrefix("0.0.0.0/8").Contains(ip) || netip.MustParsePrefix("240.0.0.0/4").Contains(ip)
 }
@@ -84,7 +89,7 @@ func Special(ip netip.Addr) bool {
 // private, link-local or on the tailnet.
 func Public(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip == azureWireServer {
 		return false
 	}
 	for _, p := range nonPublic {

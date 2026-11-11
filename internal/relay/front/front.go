@@ -48,6 +48,12 @@ type Front struct {
 	// onboarding limits the requests to the routes of agents that serve
 	// callers before they authenticate.
 	onboarding *httpserver.KeyedLimiter
+	// enrollments and ingress limit how often each client may call the
+	// routes that Agent Mesh limits for all the relay's callers together,
+	// since they all reach it from the relay's address. ingressClient
+	// limits each client across agents, so that one client can't add keys
+	// to ingress faster than it forgets them.
+	enrollments, ingress, ingressClient *httpserver.KeyedRate
 	// transport is shared by the proxies of each Open, so a reopened front
 	// reuses its connections.
 	transport *http.Transport
@@ -64,6 +70,27 @@ const maxProxiedPerClient = 64
 // for one client.
 const maxOnboardingPerClient = 8
 
+const (
+	// Agent Mesh admits 10 enrollments a second, with bursts of 20, for the
+	// whole relay. An agent polls its pending enrollment every 2 seconds, so
+	// one client gets a tenth of that and agents that join at once from one
+	// machine still fit.
+	enrollmentRate  = 1
+	enrollmentBurst = 10
+	// Agent Mesh admits 200 anonymous requests a second to each agent's
+	// public URLs from one address, and the front's address is every
+	// caller's.
+	ingressRate  = 20
+	ingressBurst = 100
+	// One client may call three agents at their full rate. Keys of ingress
+	// last up to twice their refill time, so one client holds at most about
+	// 900 of them.
+	ingressClientRate  = 60
+	ingressClientBurst = 300
+	// maxRateClients bounds the clients that the rate limits track at once.
+	maxRateClients = 10000
+)
+
 // New returns the front of a relay that reports info and serves control,
 // which checks the admin token itself, at [control.RemotePath], and signIn
 // at [signin.Path], or nil when agents can't sign in. It answers 503 on
@@ -73,11 +100,14 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
 	f := &Front{
-		info:       info,
-		control:    unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
-		proxied:    httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
-		onboarding: httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
-		transport:  upstreamTransport(),
+		info:          info,
+		control:       unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied:       httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		onboarding:    httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
+		enrollments:   httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
+		ingress:       httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, clientOfAgent),
+		ingressClient: httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client),
+		transport:     upstreamTransport(),
 	}
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
@@ -180,7 +210,32 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if onboarding(p) {
 		h = f.onboarding.Handler(h)
 	}
+	switch {
+	case enrollment(p):
+		h = f.enrollments.Handler(h)
+	case under(p, "/ingress"):
+		h = f.ingressClient.Handler(f.ingress.Handler(refuseLongPeer(h)))
+	}
 	h.ServeHTTP(w, r)
+}
+
+// refuseLongPeer answers 400 for an ingress path whose peer segment no peer
+// ID is that long. Agent Mesh's decoder takes time quadratic in its length.
+func refuseLongPeer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
+		if seg, _, _ := strings.Cut(rest, "/"); len(seg) > maxPeerSegment {
+			jsonhttp.Error(w, http.StatusBadRequest, "no agent has this peer ID")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// enrollment reports whether p is a route where agents join the relay or
+// sign in to it.
+func enrollment(p string) bool {
+	return p == "/register" || p == "/enroll" || p == "/enroll/status"
 }
 
 // onboarding reports whether p reaches, through ingress, a route where an
@@ -211,12 +266,26 @@ func Client(r *http.Request) string {
 	return client(r)
 }
 
+// clientOfAgent identifies the client of a request together with the agent
+// whose public URL it calls, as Agent Mesh does for its ingress limit. The
+// requests of a client to paths that name no agent share one key.
+func clientOfAgent(r *http.Request) string {
+	rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
+	seg, _, _ := strings.Cut(rest, "/")
+	peer, ok := canonicalPeer(seg)
+	if !ok {
+		return client(r)
+	}
+	return client(r) + " " + peer
+}
+
 // client identifies the client of a request for its limits. A tunnel or a
 // reverse proxy, such as cloudflared or Cloud Run's, connects from the
 // relay's machine or a private network and appends the address it got the
 // request from to X-Forwarded-For. The client is the last address there
 // that isn't such a proxy. A header that reaches the relay from a public
-// address may be forged, so the client is the remote address then.
+// address may be forged, so the client is the remote address then. IPv6
+// clients are told apart by their /64.
 func client(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -234,7 +303,13 @@ func client(r *http.Request) string {
 		}
 		ip = next
 	}
-	return ip.Unmap().String()
+	ip = ip.Unmap()
+	if ip.Is6() {
+		// One subscriber usually holds a whole /64, so its addresses are one
+		// client.
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
 }
 
 // isProxy reports whether a connection from ip may come from a tunnel or a

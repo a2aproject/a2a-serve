@@ -59,8 +59,8 @@ type ClaimsSource interface {
 // SchedulesAgent is the built-in agent that manages schedules.
 type SchedulesAgent interface {
 	// Agent returns the schedules agent of the conversation contextID,
-	// whose turn user runs.
-	Agent(user auth.Principal, contextID string) a2asrv.AgentExecutor
+	// whose turn user runs, from a group chat if groupChat is set.
+	Agent(user auth.Principal, contextID string, groupChat bool) a2asrv.AgentExecutor
 }
 
 // HarnessProxyDeps are the dependencies of [HarnessProxy].
@@ -85,6 +85,8 @@ type Claims struct {
 	// are recorded for.
 	TaskID string
 	User   auth.Principal
+	// GroupChat is whether the turn came from a group chat.
+	GroupChat bool
 }
 
 // Errors of [ClaimsSource.ClaimsOf].
@@ -220,7 +222,7 @@ func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, c
 		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
 		return
 	}
-	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID))
+	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID, claims.GroupChat))
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = rest, ""
 	inner := a2asrv.NewRESTHandler(h)
@@ -559,24 +561,35 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 	if state.Terminal() || state == a2a.TaskStateAuthRequired {
 		return
 	}
+	var q *approvals.Question
 	if state == a2a.TaskStateInputRequired {
-		q := approvals.FromStatus(task.Status)
+		q = approvals.FromStatus(task.Status)
 		if q == nil || q.Type != approvals.TypePermission {
 			return
 		}
-		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
 	}
 	identity, err := json.Marshal(g.claims.User.Identity)
 	if err != nil {
 		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
+		if q != nil {
+			g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
+		}
 		return
 	}
 	w := store.Watch{
 		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
-		OnBehalfOf: g.claims.User.ID, Identity: string(identity),
+		OnBehalfOf: g.claims.User.ID, Identity: string(identity), GroupChat: g.claims.GroupChat,
 	}
-	if err := g.proxy.store.PutWatch(ctx, w); err != nil {
-		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
+	// The watch is stored before the question is relayed, so that a
+	// question task never exists without it.
+	putErr := g.proxy.store.PutWatch(ctx, w)
+	if putErr != nil {
+		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", putErr)
+	}
+	if q != nil {
+		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
+	}
+	if putErr != nil {
 		return
 	}
 	g.proxy.watches.watch(w)

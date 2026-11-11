@@ -93,7 +93,7 @@ func newWatchesFixtureOf(t *testing.T, timings Timings, net network.Provider, cl
 func newWatchesFixtureClients(t *testing.T, st *store.Store, remote *fakeContact, timings Timings, net network.Provider, clients *ContactClients) *watchesFixture {
 	t.Helper()
 	chain := &auth.Chain{Store: st, Net: net, Policy: func() auth.Policy { return auth.Policy{} }}
-	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{}, remote: remote}
+	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{store: st}, remote: remote}
 	ctx, cancel := context.WithCancel(context.Background())
 	f.ws = NewWatches(ctx, WatchesDeps{
 		Store:   st,
@@ -826,6 +826,24 @@ func TestWatchesResume(t *testing.T) {
 	f.wantNoWatches(t)
 }
 
+func TestWatchesResumeEndsQuestionTasksOfRemovedWatches(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptHold)
+	f.addWatch(t, task, auth.OwnerID)
+	f.asked.open = []endedQuestions{
+		{ContextID: "origin", Agent: "coder", TaskID: string(task.ID)},
+		{ContextID: "origin", Agent: "coder", TaskID: "removed"},
+	}
+
+	f.ws.Resume(context.Background())
+
+	want := []endedQuestions{{ContextID: "origin", Agent: "coder", TaskID: "removed"}}
+	if diff := cmp.Diff(want, f.asked.ends()); diff != "" {
+		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestWatchesRelay(t *testing.T) {
 	t.Parallel()
 	task := &a2a.Task{ID: "t1", ContextID: "remote"}
@@ -1020,6 +1038,26 @@ func TestWatchesWatchEndsQuestionTasksOnceTheTaskMovesOn(t *testing.T) {
 	if diff := cmp.Diff(want, slices.Compact(f.asked.ends())); diff != "" {
 		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
 	}
+}
+
+func TestWatchesWatchEndsQuestionTasksWhenContactIsRemoved(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptAsk)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+	waitFor(t, "the question to be asked", func() bool { return len(f.asked.questions()) > 0 })
+
+	if err := f.store.DeleteContact(context.Background(), "coder"); err != nil {
+		t.Fatalf("store.DeleteContact() error = %v", err)
+	}
+
+	waitFor(t, "the question tasks to end", func() bool { return len(f.asked.ends()) > 0 })
+	want := []endedQuestions{{ContextID: "origin", Agent: "coder", TaskID: string(task.ID)}}
+	if diff := cmp.Diff(want, slices.Compact(f.asked.ends())); diff != "" {
+		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
+	}
+	f.waitIdle(t)
+	f.wantNoWatches(t)
 }
 
 func linkChat(t *testing.T, st *store.Store, pairing, messengerName, identity, conv string) {

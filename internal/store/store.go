@@ -330,7 +330,19 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		_, err := tx.ExecContext(ctx, `CREATE TABLE server_keys (name TEXT PRIMARY KEY, key BLOB NOT NULL)`)
 		return err
 	},
-	// 25: the people who turned voice replies on with /voice.
+	// 25: schedules record whether the agent made them in a group chat, so
+	// that their runs continue its conversation as the people in it do.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE schedules ADD COLUMN group_chat INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
+	// 26: watches record whether the call came from a group chat, so that
+	// its result continues the conversation as the people in it do.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE watches ADD COLUMN group_chat INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
+	// 27: the people who turned voice replies on with /voice.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `CREATE TABLE voice_replies (user_id TEXT PRIMARY KEY, created INTEGER NOT NULL)`)
 		return err

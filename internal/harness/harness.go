@@ -112,8 +112,9 @@ func Warnings(cfg *agentdir.Config) []string {
 	return out
 }
 
-// providerKeys are the environment variables that opencode reads the key of
-// a provider from, the one to suggest first.
+// providerKeys are the environment variables that hold the key of an
+// opencode provider. opencode reads only the first, which the server also
+// sets from the others; see [withProviderKeys].
 var providerKeys = map[string][]string{
 	"anthropic":  {"ANTHROPIC_API_KEY"},
 	"deepseek":   {"DEEPSEEK_API_KEY"},
@@ -202,6 +203,38 @@ func hasAny(cfg *agentdir.Config, secrets, keys []string) bool {
 		}
 	}
 	return slices.ContainsFunc(secrets, func(name string) bool { return slices.Contains(keys, name) })
+}
+
+// withProviderKeys returns env with the key of each opencode provider also
+// in the variable opencode reads, when env holds it only in another of the
+// provider's variables, such as GEMINI_API_KEY.
+func withProviderKeys(p Profile, env []string) []string {
+	if c, ok := p.(custom); ok && c.base != nil {
+		p = c.base
+	}
+	if _, ok := p.(opencode); !ok {
+		return env
+	}
+	values := map[string]string{}
+	for _, kv := range env {
+		if name, value, ok := strings.Cut(kv, "="); ok {
+			values[name] = value
+		}
+	}
+	out := slices.Clone(env)
+	for _, provider := range slices.Sorted(maps.Keys(providerKeys)) {
+		keys := providerKeys[provider]
+		if _, ok := values[keys[0]]; ok {
+			continue
+		}
+		for _, k := range keys[1:] {
+			if v, ok := values[k]; ok {
+				out = append(out, keys[0]+"="+v)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // ImageRepo is where harness images are published.

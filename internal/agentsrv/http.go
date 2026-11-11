@@ -58,15 +58,22 @@ type listener struct {
 	// tunneled is set when every caller arrives from the address of a
 	// tunnel, such as Funnel or the relay.
 	tunneled bool
+	// host, if set, is the only Host the listener serves. A tailnet over
+	// plain HTTP has no TLS name check, so a web page could rebind its own
+	// name to the agent and reach it from the user's device.
+	host string
 }
 
 // privateListener describes the private listener reached at u: the
-// inspector only over Tailscale's HTTPS, and tunneled on a relay.
+// inspector on a tailnet, and tunneled on a relay.
 func (s *Server) privateListener(u *url.URL) listener {
 	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
 	switch s.private.Name() {
 	case network.ProviderTailscale:
 		l.inspector = true
+		if u.Scheme == "http" {
+			l.host = u.Host
+		}
 	case network.ProviderRelay:
 		l.tunneled = true
 	}
@@ -126,7 +133,34 @@ func (s *Server) routes(l listener) http.Handler {
 	bodies := newGuestBodies(maxGuestBodies, jsonhttp.ReadIdleTimeout)
 	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, bodies, jsonrpc))
 	mux.Handle("/", s.a2aRoute(l.kind, protocolREST, bodies, rest))
-	return http.NewCrossOriginProtection().Handler(mux)
+	h := http.NewCrossOriginProtection().Handler(mux)
+	if l.host != "" {
+		return requireHost(l.host, h)
+	}
+	return h
+}
+
+// requireHost serves next only the requests for host, a host of a URL,
+// with port 80 when it names none.
+func requireHost(host string, next http.Handler) http.Handler {
+	want := hostPort(host)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(hostPort(r.Host), want) {
+			jsonhttp.Error(w, http.StatusMisdirectedRequest, "this server doesn't serve "+r.Host)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostPort returns host with port 80 when it names none, and its name
+// without a trailing dot.
+func hostPort(host string) string {
+	name, port, err := net.SplitHostPort(host)
+	if err != nil {
+		name, port = host, "80"
+	}
+	return net.JoinHostPort(strings.TrimSuffix(name, "."), port)
 }
 
 // a2aRoute serves an A2A transport to authenticated callers, and answers

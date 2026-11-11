@@ -308,6 +308,28 @@ func TestScheduleOfADemotedOwnerFailsInItsConversation(t *testing.T) {
 	ts.ch.WaitFor(t, "dm2", messengertest.HasText("start a new conversation"))
 }
 
+func TestScheduleOfAMemberRunsInAGroupConversationTheOwnerStarted(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "telegram:2", "dm2")
+	inGroup := func(identity, text string) {
+		in := ts.ch.Message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.Deliver(in)
+	}
+	inGroup("telegram:1", "remember red")
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("OK."))
+	inGroup("telegram:2", `call schedules add brief --cron @daily --prompt "brief me"`)
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("Scheduled brief"))
+
+	if _, err := controlapi.NewClient(ts.dir).RunSchedule(context.Background(), "brief"); err != nil {
+		t.Fatalf("RunSchedule() error = %v", err)
+	}
+
+	ts.ch.WaitFor(t, "grp", messengertest.HasText(`ran Scheduled run of "brief"`))
+}
+
 func TestMCPServersNeedTheSecretsOfTheContainer(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})

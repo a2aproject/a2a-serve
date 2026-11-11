@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 const (
@@ -536,7 +537,7 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 		return r, true
 	}
 	content := string(unit)
-	runsSelf := strings.Contains(content, exe) || strings.Contains(content, resolve(exe))
+	runsSelf := strings.Contains(content, exe) || strings.Contains(content, resolve(exe)) || strings.Contains(content, service.StableExecutable(exe, env.LookPath))
 	// systemd units separate arguments with spaces, launchd plists put each in a <string>.
 	runsStart := strings.Contains(content, " start ") || strings.Contains(content, "<string>start</string>")
 	if !runsSelf || !runsStart || !strings.Contains(content, d.Root) {

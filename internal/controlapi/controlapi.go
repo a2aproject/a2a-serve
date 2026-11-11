@@ -52,7 +52,10 @@ type Status struct {
 	// PrivateNote explains a private URL people can't open, such as one on
 	// an Agent Mesh relay.
 	PrivateNote string `json:"privateNote,omitempty"`
-	Public      string `json:"public,omitempty"`
+	// PrivateInspector is set when the private URL serves the web inspector:
+	// on a tailnet, whose traffic WireGuard encrypts.
+	PrivateInspector bool   `json:"privateInspector,omitempty"`
+	Public           string `json:"public,omitempty"`
 	// PrivateProblem and PublicProblem say why the private or public URL
 	// doesn't work now. A URL that won't work again is left out.
 	PrivateProblem *NetworkProblem   `json:"privateProblem,omitempty"`

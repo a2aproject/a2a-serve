@@ -48,6 +48,7 @@ func TestPublic(t *testing.T) {
 		{ip: "224.0.0.1"},
 		{ip: "::ffff:127.0.0.1"},
 		{ip: "::ffff:8.8.8.8", want: true},
+		{ip: "168.63.129.16"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.ip, func(t *testing.T) {

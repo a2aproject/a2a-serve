@@ -2,25 +2,39 @@
 
 The agent gets the MCP servers and skills of its project.
 
-- **MCP servers** come from `.mcp.json` in the workspace, read when a conversation starts:
+## MCP servers
 
-  ```json
-  {"mcpServers": {
-    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
-               "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}},
-    "docs":   {"type": "http", "url": "https://docs.example.com/mcp",
-               "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}}
-  }}
-  ```
+MCP servers come from `.mcp.json` in the workspace, read when a conversation starts:
 
-  `${VAR}` and `${VAR:-default}` take their values from [`--secret`](secrets.md) and `--env`, so tokens stay out of the file: `a2a-serve config set --secret GITHUB_TOKEN`. A server with a variable that has no value is skipped, and `status` names the variable. `${VAR}` takes only the `--env` values and the secrets that the conversation's container gets, so an MCP server that needs a secret the container doesn't get is left out of that conversation ([sandbox rules](sandbox.md#when-a-change-applies)). Servers that run a command run inside the sandbox.
+```json
+{"mcpServers": {
+  "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+             "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}},
+  "docs":   {"type": "http", "url": "https://docs.example.com/mcp",
+             "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}}
+}}
+```
 
-  To turn a server off, run `a2a-serve config set --disable-mcp github`. `config set` warns about a name that .mcp.json has no server for, and suggests the closest one. To turn it back on, run `a2a-serve config unset disable-mcp github`. The change applies to the next conversation, and `status` shows the server as off. The first-run wizard turns off the servers whose variables you skip.
+`${VAR}` and `${VAR:-default}` take their values from [`--secret`](secrets.md) and `--env`, so tokens stay out of the file:
 
-  The server passes these servers to the agent when a conversation starts. The Docker sandbox shows the agent a `.mcp.json` with no servers, so the agent can't start servers from the file on its own. On the first start, a workspace without `.mcp.json` gets one with no servers.
-- **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. Claude Code reads `.claude/skills` itself, so the server links the skills from the other two folders for it. When two skills share a name, Claude Code uses the one in `.claude/skills`, then `.opencode/skills`, then `.agents/skills`. opencode reads all three folders itself and decides which skill wins; `status` lists both skills and doesn't flag the clash. With `--sandbox local`, only the folders your agent reads on its own work.
+```sh
+a2a-serve config set --secret GITHUB_TOKEN
+```
 
-The server reads both inside the workspace only. It refuses a `.mcp.json` that is a symlink to a file outside the workspace, and leaves out skills behind such symlinks, because the agent can create them.
+A server with a variable that has no value is skipped, and `a2a-serve status` names the variable. A server that needs a secret that the caller's container doesn't get is left out of that caller's conversations ([sandbox rules](sandbox.md#what-each-callers-container-gets)). Servers that run a command run inside the sandbox.
+
+To turn a server off or on:
+
+```sh
+a2a-serve config set --disable-mcp github
+a2a-serve config unset disable-mcp github
+```
+
+The change applies to the next conversation, and `status` shows the server as off.
+
+## Skills
+
+Skills in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. With `--sandbox local`, only the folders your agent reads on its own work.
 
 `a2a-serve status` lists the MCP servers and skills the agent found.
 

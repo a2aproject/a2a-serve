@@ -1,6 +1,6 @@
 # Webhook Nodes
 
-A webhook node is an agent that runs only when woken, such as a Grok bot routine. The server gives it an A2A address, holds its tasks and wakes it with a signed POST to its webhook:
+A webhook node is an agent that runs only when woken, such as a Grok bot routine. The server gives it an A2A address, holds its tasks and wakes it with a signed POST to its webhook.
 
 ```sh
 a2a-serve pair invite grok --webhook https://<grok routine webhook URL> \
@@ -13,13 +13,11 @@ a2a-serve pair get grok             # webhook, headers, pending tasks
 a2a-serve pair rm grok
 ```
 
-The node reads its instructions at `<agent-url>/mailbox/skill.md` and answers with `a2a-serve mailbox reply <task> --final "…"`. A task with no reply for 10 minutes fails.
-
-Give every webhook a credential that only the server sends, such as a `--webhook-header` token or a secret in the webhook URL. Anyone who learns an unprotected webhook URL can send the node a wake. A node that runs code on each wake can also check it with `a2a-serve mailbox verify`, which needs only the node token.
+The node reads its instructions at `<agent-url>/mailbox/skill.md` and answers with `a2a-serve mailbox reply <task> --final "…"`. A task that gets no reply fails after a [timeout](../reference/limits.md#webhook-nodes).
 
 Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as a [member](identities.md#roles).
 
-The server follows redirects of the webhook. It sends the webhook headers and the signature only to the host of the webhook URL, and drops them when a redirect leads to another host. A wake that takes longer than 20 seconds fails and is retried. [Security](../advanced/security.md#calls-to-other-agents-and-webhooks) lists the redirects the server refuses.
+Give every webhook a credential that only the server sends, such as a `--webhook-header` token or a secret in the webhook URL. Anyone who learns an unprotected webhook URL can wake the node. A node that runs code on each wake can check the signature with `a2a-serve mailbox verify`, which needs only the node token. The [HTTP routes reference](../reference/http-routes.md#signatures-and-headers) describes the signature.
 
 ## Advertised pairings
 
@@ -31,6 +29,6 @@ a2a-serve peers                                               # on Anna's agent:
 a2a-serve contact add grok@ben                                # no code needed
 ```
 
-Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way. An agent advertises at most 100 pairings. A call to `<pairing>@<agent>` goes to the agent that `a2a-serve peers` lists under that [name](agent2agent.md#peer-names).
+Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). Removing the node or passing `--advertised=false` withdraws the advertisement. A call to `<pairing>@<agent>` goes to the agent that `a2a-serve peers` lists under that [name](agent2agent.md#peer-names).
 
-Each caller other than you and your agent can have at most 20 tasks waiting for the node at a time, and these callers together at most 100. A call past the limit fails until one of the caller's tasks finishes or asks a question.
+A caller that has too many tasks waiting for a node gets an error until one of them finishes. See [limits](../reference/limits.md#webhook-nodes).

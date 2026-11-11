@@ -6,7 +6,7 @@ Turn opencode, Claude Code, or any ACP coding agent into a sandboxed [A2A](https
 > A2A Serve is pre-1.0. Commands, flags, and `config.yaml` keys may change; stored state always migrates forward. Read [Security](advanced/security.md) and [Known Limitations](#known-limitations) before exposing an agent to other people.
 
 - **Use your agent from your phone:** message it on [Telegram, Discord, or email](guide/messengers.md) and approve edits or commands from chat.
-- **Talk to it with voice notes:** send [voice notes from Telegram, Discord, or email](guide/voice.md) and get voice replies with `/voice on`, through OpenAI or a speech server you run.
+- **Talk to it:** send [voice notes](guide/voice.md) and get voice replies, through OpenAI or a speech server you run.
 - **Share an agent with your team:** expose it on [Tailscale, an Agent Mesh relay, or a public URL](guide/networks.md) with [pairing codes](guide/identities.md) or [Google sign-in](guide/email-sign-in.md).
 - **Let agents call other agents:** delegate tasks to [contacts, peers](guide/agent2agent.md), and [webhook nodes](guide/webhook-nodes.md) while keeping tokens outside the sandbox.
 - **Package repeatable setups:** bundle instructions, skills, [MCP servers](guide/mcp-and-skills.md), and [schedules](guide/schedules.md) into a one-command [recipe](guide/recipes.md).
@@ -61,7 +61,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 | **Access & approvals** | [Approvals](guide/approvals.md) · [Inspector](guide/inspector.md) · [Identities](guide/identities.md) · [Email Sign-In](guide/email-sign-in.md) |
 | **Networks & chat** | [Networks](guide/networks.md) · [Relays](guide/relays.md) · [Messengers](guide/messengers.md) · [Voice](guide/voice.md) |
 | **Multi-agent** | [Agent2Agent](guide/agent2agent.md) · [Webhook Nodes](guide/webhook-nodes.md) |
-| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
+| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Sandboxing](advanced/sandboxing.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Audio Messages](reference/audio-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
 
 ## Known Limitations
 

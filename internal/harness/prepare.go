@@ -193,6 +193,7 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err := PrepareHome(spec); err != nil {
 		return nil, err
 	}
+	spec.Env = withProviderKeys(spec.Profile, spec.Env)
 	nested, err := nestedAgents(spec)
 	var warnings []string
 	switch {

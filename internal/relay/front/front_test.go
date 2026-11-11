@@ -16,6 +16,7 @@ package front_test
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multibase"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
@@ -154,6 +158,7 @@ func TestFrontRoutes(t *testing.T) {
 		{method: "GET", path: "/info/%2E%2E/console/", wantStatus: 404},
 		{method: "GET", path: "/x/%2e%2e/info", wantStatus: 200, wantPrefix: "mesh GET /info from"},
 		{method: "GET", path: "/ingress/12D3/a2a/coder/", wantStatus: 200, wantPrefix: "mesh GET /ingress/12D3/a2a/coder/ from"},
+		{method: "GET", path: "/ingress/" + strings.Repeat("1", 513) + "/a2a/coder", wantStatus: 400},
 		{method: "CONNECT", path: "/admin/nodes/../../x", wantStatus: 405},
 		{method: "TRACE", path: "/info", wantStatus: 405},
 	}
@@ -372,6 +377,174 @@ func TestFrontLimitsEachClient(t *testing.T) {
 	}
 }
 
+func TestFrontLimitsTheRateOfEachClient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, method, path string
+		burst              int
+	}{
+		{name: "registration", method: http.MethodPost, path: "/register", burst: 10},
+		{name: "enrollment", method: http.MethodPost, path: "/enroll", burst: 10},
+		{name: "enrollment status", method: http.MethodGet, path: "/enroll/status", burst: 10},
+		{name: "agent's public URL", method: http.MethodGet, path: "/ingress/12D3/a2a/coder/tasks", burst: 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, _ := newFront(t)
+			f.Open(upstream(t))
+			serve := func(c client) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(tt.method, tt.path, nil)
+				req.RemoteAddr = c.remoteAddr
+				req.Header.Set("X-Forwarded-For", c.forwardedFor)
+				rec := httptest.NewRecorder()
+				f.ServeHTTP(rec, req)
+				return rec
+			}
+			a := client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1"}
+			b := client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2"}
+
+			for i := range tt.burst {
+				if got := serve(a).Code; got != http.StatusOK {
+					t.Fatalf("%s %s %d of a client status = %d, want %d", tt.method, tt.path, i+1, got, http.StatusOK)
+				}
+			}
+			var refused *httptest.ResponseRecorder
+			for range tt.burst {
+				if rec := serve(a); rec.Code != http.StatusOK {
+					refused = rec
+					break
+				}
+			}
+			other := serve(b)
+
+			if refused == nil {
+				t.Fatalf("%s %s past the client's burst status = %d, want %d", tt.method, tt.path, http.StatusOK, http.StatusTooManyRequests)
+			}
+			if refused.Code != http.StatusTooManyRequests || refused.Header().Get("Retry-After") == "" || refused.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("%s %s past the client's burst = %d with Retry-After %q and Content-Type %q, want %d with Retry-After and JSON", tt.method, tt.path, refused.Code, refused.Header().Get("Retry-After"), refused.Header().Get("Content-Type"), http.StatusTooManyRequests)
+			}
+			if other.Code != http.StatusOK {
+				t.Fatalf("%s %s of another client status = %d, want %d", tt.method, tt.path, other.Code, http.StatusOK)
+			}
+		})
+	}
+}
+
+// newPeer returns a new peer ID, as an agent on the relay has.
+func newPeer(t *testing.T) peer.ID {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// ingressTryer sends GET requests to an open front from one client and
+// returns their status.
+func ingressTryer(t *testing.T, forwardedFor string) (f *front.Front, serve func(segment string) int) {
+	t.Helper()
+	f, _ = newFront(t)
+	f.Open(upstream(t))
+	return f, func(segment string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ingress/"+url.PathEscape(segment)+"/a2a/coder/tasks", nil)
+		req.RemoteAddr = "127.0.0.1:1000"
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+		rec := httptest.NewRecorder()
+		f.ServeHTTP(rec, req)
+		return rec.Code
+	}
+}
+
+// refusedWithin sends n requests that cycle through segments and reports
+// whether one got 429.
+func refusedWithin(serve func(string) int, segments []string, n int) bool {
+	for i := range n {
+		if serve(segments[i%len(segments)]) == http.StatusTooManyRequests {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
+	t.Parallel()
+	limited, other := newPeer(t), newPeer(t)
+	tests := []struct {
+		name     string
+		segments []string
+		other    string
+	}{
+		{name: "an agent", segments: []string{limited.String()}, other: other.String()},
+		{name: "spellings of one agent", segments: append([]string{limited.String()}, spellings(t, limited)...), other: peer.ToCid(other).String()},
+		{name: "segments that aren't agents", segments: []string{"not-a-peer", "also-not-a-peer", "1" + strings.Repeat("z", 1000)}, other: limited.String()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, serve := ingressTryer(t, "198.51.100.1")
+
+			refused := refusedWithin(serve, tt.segments, 200)
+			got := serve(tt.other)
+
+			if !refused {
+				t.Fatalf("GET /ingress/<%s> 200 times status = %d, want %d past one agent's burst", tt.name, http.StatusOK, http.StatusTooManyRequests)
+			}
+			if got != http.StatusOK {
+				t.Fatalf("GET /ingress/%.20s… of another agent status = %d, want %d", tt.other, got, http.StatusOK)
+			}
+		})
+	}
+}
+
+// spellings returns the CID forms of id in every multibase that fits in a
+// path segment, which Agent Mesh reads as id.
+func spellings(t *testing.T, id peer.ID) []string {
+	t.Helper()
+	var all []string
+	for base := range multibase.EncodingToStr {
+		s, err := peer.ToCid(id).StringOfBase(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if base == multibase.Identity || strings.Contains(s, "/") {
+			continue
+		}
+		all = append(all, s)
+	}
+	return all
+}
+
+func TestFrontLimitsTheIngressRateOfEachClientAcrossAgents(t *testing.T) {
+	t.Parallel()
+	f, serve := ingressTryer(t, "198.51.100.1")
+
+	refused := false
+	for range 1000 {
+		if serve(newPeer(t).String()) == http.StatusTooManyRequests {
+			refused = true
+			break
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ingress/"+newPeer(t).String()+"/a2a/coder/tasks", nil)
+	req.RemoteAddr = "127.0.0.1:1001"
+	req.Header.Set("X-Forwarded-For", "198.51.100.2")
+	rec := httptest.NewRecorder()
+	f.ServeHTTP(rec, req)
+
+	if !refused {
+		t.Fatalf("GET /ingress/<new agent> from a client spraying agents status = %d, want %d", http.StatusOK, http.StatusTooManyRequests)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ingress/<new agent> from another client status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 func TestFrontTellsClientsApart(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -416,6 +589,23 @@ func TestFrontTellsClientsApart(t *testing.T) {
 			name: "direct clients",
 			held: client{remoteAddr: "203.0.113.5:1000"},
 			next: client{remoteAddr: "203.0.113.6:1000"},
+		},
+		{
+			name:     "direct IPv6 clients in one /64",
+			held:     client{remoteAddr: "[2001:db8:1:2::1]:1000"},
+			next:     client{remoteAddr: "[2001:db8:1:2:ffff::9]:1000"},
+			wantSame: true,
+		},
+		{
+			name: "direct IPv6 clients in different /64s",
+			held: client{remoteAddr: "[2001:db8:1:2::1]:1000"},
+			next: client{remoteAddr: "[2001:db8:1:3::1]:1000"},
+		},
+		{
+			name:     "IPv6 clients in one /64 behind a local proxy",
+			held:     client{remoteAddr: "127.0.0.1:1000", forwardedFor: "2001:db8:1:2::1"},
+			next:     client{remoteAddr: "127.0.0.1:1001", forwardedFor: "2001:db8:1:2::2"},
+			wantSame: true,
 		},
 		{
 			name:     "local clients without a header",

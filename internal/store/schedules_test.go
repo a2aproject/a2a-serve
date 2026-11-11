@@ -36,7 +36,7 @@ func TestSchedules(t *testing.T) {
 	}
 	remind := Schedule{
 		Name: "remind", At: next.Add(time.Hour), Prompt: "Remind me.", UserID: "pair:anna",
-		Conversation: "same", ContextID: "ctx1", CreatedBy: "pair:anna", NextRun: next.Add(time.Hour),
+		Conversation: "same", ContextID: "ctx1", GroupChat: true, CreatedBy: "pair:anna", NextRun: next.Add(time.Hour),
 	}
 	for _, sc := range []Schedule{remind, brief} {
 		if err := s.AddSchedule(ctx, sc); err != nil {

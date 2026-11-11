@@ -269,6 +269,67 @@ func TestAssignedName(t *testing.T) {
 	}
 }
 
+func TestLoginLink(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		msg      string
+		want     string
+		wantLink bool
+	}{
+		{msg: "To authenticate, visit:\n\n\thttps://login.tailscale.com/a/abc123\n", want: "https://login.tailscale.com/a/abc123", wantLink: true},
+		{msg: "To authenticate, visit:\n\n\thttp://hs.example.com:8080/register/xyz789\n", want: "http://hs.example.com:8080/register/xyz789", wantLink: true},
+		{msg: "AuthURL is https://hs.example.com/register/k.", want: "https://hs.example.com/register/k", wantLink: true},
+		{msg: "tsnet starting with hostname coder"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.msg, func(t *testing.T) {
+			t.Parallel()
+			got, ok := loginLink(tc.msg)
+			if got != tc.want || ok != tc.wantLink {
+				t.Fatalf("loginLink(%q) = %q, %v, want %q, %v", tc.msg, got, ok, tc.want, tc.wantLink)
+			}
+		})
+	}
+}
+
+func TestPrivateURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		domains    []string
+		dnsName    string
+		controlURL string
+		funnel     bool
+		want       string
+		wantErr    string
+	}{
+		{name: "tailscale with HTTPS", domains: []string{"coder.tail1234.ts.net"}, dnsName: "coder.tail1234.ts.net.", want: "https://coder.tail1234.ts.net"},
+		{name: "tailscale without HTTPS", dnsName: "coder.tail1234.ts.net.", wantErr: "HTTPS certificates are disabled"},
+		{name: "headscale", dnsName: "coder.hs.test.", controlURL: "https://hs.example.com", want: "http://coder.hs.test"},
+		{name: "headscale with HTTPS", domains: []string{"coder.hs.test"}, dnsName: "coder.hs.test.", controlURL: "https://hs.example.com", want: "https://coder.hs.test"},
+		{name: "headscale with funnel", dnsName: "coder.hs.test.", controlURL: "https://hs.example.com", funnel: true, wantErr: "--public tailscale needs Tailscale"},
+		{name: "headscale without MagicDNS", controlURL: "https://hs.example.com", wantErr: "MagicDNS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := privateURL(tc.domains, tc.dnsName, tc.controlURL, tc.funnel)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("privateURL() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("privateURL() error = %v", err)
+			}
+			if got.String() != tc.want {
+				t.Fatalf("privateURL() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFunnelSource(t *testing.T) {
 	t.Parallel()
 	funnel := func(src string) net.Conn {

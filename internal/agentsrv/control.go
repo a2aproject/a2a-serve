@@ -100,6 +100,9 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
+	if u, err := url.Parse(private); err == nil && private != "" && s.private != nil {
+		st.PrivateInspector = s.privateListener(u).inspector
+	}
 	if s.private != nil {
 		st.PrivateProblem = networkProblem(network.HealthOf(s.private))
 	}

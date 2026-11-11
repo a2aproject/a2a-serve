@@ -360,3 +360,71 @@ INSERT INTO pairings (name, kind, role, created) VALUES ('anna', 'person', 'auth
 		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestMigrateSchedulesToGroupChatColumn(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 24 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO schedules (name, cron, prompt, user_id, conversation, context_id, created_by, created) VALUES
+	('brief', '@daily', 'p', 'pair:anna', 'same', 'ctx1', 'pair:anna', 1);
+`); err != nil {
+		t.Fatalf("inserting schedules: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s := openStoreAt(t, path)
+	got, err := s.Schedule(ctx, "brief")
+	if err != nil {
+		t.Fatalf("Schedule() error = %v", err)
+	}
+	if got.GroupChat {
+		t.Fatalf("Schedule() GroupChat = %v, want false", got.GroupChat)
+	}
+}
+
+func TestMigrateWatchesToGroupChatColumn(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 25 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created) VALUES
+	('coder', 't1', 'r1', 'c1', 'pair:anna', 1);
+`); err != nil {
+		t.Fatalf("inserting watches: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s := openStoreAt(t, path)
+	got, err := s.Watch(ctx, "coder", "t1")
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	if got.GroupChat {
+		t.Fatalf("Watch() GroupChat = %v, want false", got.GroupChat)
+	}
+}

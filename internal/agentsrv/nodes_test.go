@@ -326,6 +326,26 @@ func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	}
 }
 
+func TestLongCallOfAMemberIsPostedBackInAGroupConversationTheOwnerStarted(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("fake")})
+	addNode(t, ts, "grok", 200*time.Millisecond)
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "telegram:2", "dm2")
+	inGroup := func(identity, text string) {
+		in := ts.ch.Message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.Deliver(in)
+	}
+	inGroup("telegram:1", "remember red")
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("OK."))
+
+	inGroup("telegram:2", "acall grok what's new?")
+
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("tool result: task"))
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("Hello from fakeacp."))
+}
+
 func TestNodeCardIsServedToCallersWhoMayCallTheNode(t *testing.T) {
 	t.Parallel()
 	fnet := &fakeNet{agents: map[string]string{}}

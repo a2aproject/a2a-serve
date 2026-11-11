@@ -91,28 +91,67 @@ func (qt *questionTasks) Ask(ctx context.Context, contextID string, q *agentprox
 // answered meanwhile has moved on, and is left alone.
 func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID string) {
 	ctx = auth.WithPrincipal(ctx, auth.Owner())
-	res, err := qt.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: contextID, Status: a2a.TaskStateInputRequired})
+	for _, q := range qt.waiting(ctx, contextID) {
+		if q.rec.Contact == agent && q.rec.TaskID == taskID {
+			qt.endWaiting(ctx, q)
+		}
+	}
+}
+
+// EndOrphaned implements [agentproxy.QuestionTasks].
+func (qt *questionTasks) EndOrphaned(ctx context.Context, watched func(agent, taskID string) bool) {
+	ctx = auth.WithPrincipal(ctx, auth.Owner())
+	for _, q := range qt.waiting(ctx, "") {
+		if !watched(q.rec.Contact, q.rec.TaskID) {
+			qt.endWaiting(ctx, q)
+		}
+	}
+}
+
+// waitingQuestion is a task that waits for the answer to the question rec.
+type waitingQuestion struct {
+	task a2a.TaskID
+	rec  store.Question
+}
+
+// waiting lists the question tasks of contextID, or of all conversations if
+// it is empty, that wait for an answer.
+func (qt *questionTasks) waiting(ctx context.Context, contextID string) []waitingQuestion {
+	var out []waitingQuestion
+	req := &a2a.ListTasksRequest{ContextID: contextID, Status: a2a.TaskStateInputRequired}
+	for {
+		res, err := qt.tasks.List(ctx, req)
+		if err != nil {
+			slog.Warn("listing the question tasks", "context", contextID, "error", err)
+			return out
+		}
+		for _, t := range res.Tasks {
+			recID, ok := callerQuestionOf(t)
+			if !ok {
+				continue
+			}
+			rec, err := qt.store.QuestionByID(ctx, recID)
+			if err != nil {
+				slog.Warn("loading the question of a question task", "task", t.ID, "question", recID, "error", err)
+				continue
+			}
+			out = append(out, waitingQuestion{task: t.ID, rec: rec})
+		}
+		if res.NextPageToken == "" {
+			return out
+		}
+		req.PageToken = res.NextPageToken
+	}
+}
+
+func (qt *questionTasks) endWaiting(ctx context.Context, q waitingQuestion) {
+	ev, err := qt.end(ctx, q.task, q.rec)
 	if err != nil {
-		slog.Warn("listing the question tasks of a conversation", "context", contextID, "error", err)
+		slog.Warn("ending a question task", "task", q.task, "error", err)
 		return
 	}
-	for _, t := range res.Tasks {
-		recID, ok := callerQuestionOf(t)
-		if !ok {
-			continue
-		}
-		rec, err := qt.store.QuestionByID(ctx, recID)
-		if err != nil || rec.Contact != agent || rec.TaskID != taskID {
-			continue
-		}
-		ev, err := qt.end(ctx, t.ID, rec)
-		if err != nil {
-			slog.Warn("ending a question task", "task", t.ID, "error", err)
-			continue
-		}
-		if ev != nil {
-			qt.ends.questionEnded(ev)
-		}
+	if ev != nil {
+		qt.ends.questionEnded(ev)
 	}
 }
 

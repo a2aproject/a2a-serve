@@ -2,20 +2,29 @@
 
 Backups keep encrypted snapshots of an agent's conversations, pairings, secrets and network identity, so you can restore it on another machine.
 
+## Take backups
+
 ```sh
 a2a-serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
 a2a-serve backup now
 a2a-serve backup list
-a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
 ```
 
 - `--backup` is a directory, `gs://bucket/prefix` or `s3://bucket/prefix`. Cloud Storage and S3 use the `gcloud` and `aws` CLIs and their usual credentials.
 - Keep a copy of `--backup-key` somewhere other than the backups. A restore needs it.
-- A running agent takes a snapshot every `--backup-interval` (default 24h) and removes snapshots older than `--backup-retention` (default 7d). The latest one is always kept. The destination needs permission to delete objects for that. When removing old snapshots fails, the snapshot is still stored, `a2a-serve backup now` exits 1 with the error, and `a2a-serve status` shows it until the next successful backup.
-- Snapshots don't include the workspace, which is usually in git. They include `.a2a/recipe.lock`, so `a2a-serve recipe` can update a restored agent that came from a [recipe](recipes.md).
-- The agent keeps running during a snapshot. A file that changes while it is copied is copied again, up to three times. If it still changes, the snapshot keeps the last copy and the server log names the file.
-- `backup restore` restores the latest snapshot, or the one named with `--snapshot`. Add `--take-over` to keep the agent's network identity and URLs; stop the agent on the old machine first.
-- `backup restore` needs a directory without a `.a2a` directory, or with one that holds only `config.yaml`, `recipe.lock` or `.gitignore`, as a fresh clone of a repository that commits them has. The restore keeps `recipe.lock` and `.gitignore`, since they match the workspace, and says so when the snapshot's `recipe.lock` differs. It replaces `config.yaml` with the snapshot's, since that one usually holds the settings changed after the commit. When the two differ, the output says so, and names the `git diff` command that shows the change if git tracks `config.yaml`. It extracts the snapshot next to `.a2a` and moves it into place at the end. A damaged snapshot or Ctrl-C leaves the directory as it was, so you can run the restore again. The next restore removes what a killed restore left next to `.a2a`.
-- The agent's sessions belong to the workspace path. After a restore into another directory, or after the agent's directory moves, a message to an earlier conversation starts a new session. The agent gets the earlier messages of the conversation, and the reply notes the new session.
+- A running agent takes a snapshot every `--backup-interval` and removes snapshots older than `--backup-retention`. The destination needs permission to delete objects for that. `a2a-serve status` shows a failure until the next successful backup. The [command reference](../reference/commands/config.md#a2a-serve-config-set) lists the defaults.
+- A snapshot doesn't include the workspace, which is usually in git. It includes `.a2a/recipe.lock`, so `a2a-serve recipe` can update a restored agent that came from a [recipe](recipes.md).
 
-Not in this version: continuous replication. Changes since the last snapshot are lost with the machine.
+## Restore on another machine
+
+```sh
+a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
+```
+
+The restore takes the latest snapshot. `--snapshot` names another one. The directory must have no `.a2a`, or only the `config.yaml`, `recipe.lock` and `.gitignore` of a fresh clone. The snapshot's `config.yaml` replaces the one in the clone, and the output says so when they differ. A failed or interrupted restore leaves the directory as it was, so you can run it again.
+
+Add `--take-over` to keep the agent's network identity and URLs. Stop the agent on the old machine first.
+
+The agent's sessions belong to the workspace path. After a restore into another directory, a message to an earlier conversation starts a new session. The agent gets the earlier messages of the conversation, and the reply says so.
+
+Continuous replication is not available yet, so changes since the last snapshot are lost with the machine.

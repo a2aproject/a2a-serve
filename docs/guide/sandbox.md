@@ -1,36 +1,26 @@
 # Sandbox
 
-By default the agent runs in Docker:
+The agent runs in a Docker container that sees your project and nothing else on your disk, and reaches the network through the server.
 
-- The workspace, the directory that holds `.a2a`, is mounted at the same path. `--workspace` picks another directory, and `--mount src[:dst][:ro]` adds more.
-- `.a2a` appears empty, so the agent can't read its own secrets, tokens or config.
-- The `.a2a` directories of other agents in the workspace and the mounts also appear empty, so the agent can't read their secrets or reach their control sockets. The server searches the mounts before it starts each container, and the start output lists the agents it found. It refuses a mount with more than 500,000 directories, which would take too long to search.
-- The agent's own configuration files in the workspace appear empty, so a caller can't change the agent's permissions for other callers by writing them. For opencode these are `opencode.json` and `opencode.jsonc`, which appear as read-only files with no settings, and `.opencode`, which appears as an empty folder whose changes stay in the container; `.opencode/skills` stays visible. For Claude Code they are `.claude/settings.json` and `.claude/settings.local.json`. On the first start, the workspace gets the ones it lacks, empty. The same files appear empty where they exist in the `--mount` directories. opencode also reads its files in the folders between a mount and the workspace it holds. When one appears there later, the server refuses to start more containers until you run `a2a-serve restart`. The server refuses to start when one of them in the workspace, or for opencode in those folders, is a symlink. The start output warns when a hidden file holds settings. Put the agent's settings, such as a model provider, in its home directories instead: `state/home` for you, and the homes in `state/homes` and `state/home-anonymous` for members and guests.
-- The agent's configuration in the homes of members and guests is read-only in their containers, so a member can't turn off the permissions that you set for their calls by changing it. For opencode these are `.config/opencode`, `.opencode` and `.local/share/opencode/auth.json`. For Claude Code they are `.claude/settings.json` and the `agents`, `commands` and `skills` folders in `.claude`, and Claude Code ignores the MCP servers in `.claude.json`. The server creates the ones a home lacks, puts its own permission settings back into the `permission` key of `opencode.json` and the `permissions` key of `.claude/settings.json` at each start, and refuses to start the container when one of them is a symlink. The rest of the home stays writable. You can still change these settings on your disk, and the agent of your own conversations can change the settings in `state/home`.
-- `a2a-serve start` refuses to create an agent inside the directory of a running agent. Stop that agent first; its next start hides the new agent. When an agent appears in the mounts of a running agent in another way, such as through `--mount`, the server refuses to start more containers for the running agent until you run `a2a-serve restart`.
-- The server refuses a workspace or a mount that is your home directory, `/` or a directory that holds your home directory, because the agent could read your credentials and the secrets of every agent in it. Use a project directory. `--allow-broad-mount <path>` mounts that path anyway, and the agents in it stay visible to the agent.
-- The server checks the mount sources, `.a2a` and the agent home directory before it starts each container. It refuses a path that goes through a symlink inside a writable mount, because the agent can repoint that symlink. The error names the resolved path to configure.
-- The server also remembers the agent directory, `.a2a`, `state` and each agent home directory when it first uses them. When the agent renames one of them through a writable mount and creates another in its place, the server refuses to start a container until you check the directory and restart the server.
-- `state/home` is the agent's home directory. Each [member](identities.md#roles) gets a container with a home of their own, and [guests](identities.md#guests) share one more. [Sandbox rules](#what-each-callers-container-gets) set how much of the workspace and which secrets those containers get.
-- The agent runs as your user, with no capabilities and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`). With rootless Docker it runs as container root, which is your user on the host.
-- The agent has no network of its own. Its connections go through the server, which decides each one by its destination ([Network](#network)).
+## What the agent sees
 
-The image is pulled from `ghcr.io/a2aproject`. If the pull fails, a2a-serve builds it from a Dockerfile in its binary. `--image` uses another image, which needs a compatible `a2a` CLI.
+- The workspace, the directory that holds `.a2a`, at the same path. `--workspace` picks another directory, and `--mount src[:dst][:ro]` adds more.
+- `.a2a` appears empty, so the agent can't read its own secrets, tokens or config. The same goes for the `.a2a` directories of other agents in the workspace.
+- The agent's own settings files in the workspace, such as `opencode.json` and `.claude/settings.json`, appear empty, so a caller can't change the agent's permissions. Put settings such as a model provider in the agent home directory, `.a2a/state/home`, instead.
+- The agent runs as your user, with memory, CPU and process limits that `--memory`, `--cpus` and `--pids` change.
 
-`--sandbox local` runs the agent on the host, as you, with no isolation. Every conversation can read the others, and the agent can read the `.a2a` directories of every agent on the machine, its own included. The server only warns when the workspace holds other agents. Use it only when you trust the agent and everyone who can call it. On Linux, the server kills the processes that an agent process started, such as tool commands, once that agent process exits.
+The server refuses a workspace or mount that is your home directory or `/`, because the agent could read your credentials there. Use a project directory.
 
-When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `--env A2ACLI_TIMEOUT=<duration>` changes this.
+The image comes from `ghcr.io/a2aproject`. `--image` uses another one.
+
+`--sandbox local` runs the agent on the host, as you, with no isolation. Use it only when you trust the agent and everyone who can call it.
 
 ## What each caller's container gets
 
-Each caller's conversations run in an agent container. You and your owner pairings share yours, guests share one, and each member gets one of their own. [Identities](identities.md#roles) defines the roles.
-
-Without sandbox rules:
+You and your owner pairings share one container. Each [member](identities.md#roles) gets a container of their own, and [guests](identities.md#guests) share one more. By default:
 
 - your container and the containers of members get the shared workspace and every `--secret` value;
 - the container of guests gets a read-only workspace and no secrets.
-
-Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. The `members` line, or `other members` after rule lines, covers the members that no rule matches. They get the default.
 
 `a2a-serve status` shows what each kind of caller gets:
 
@@ -41,18 +31,6 @@ Sandbox rules set what chosen callers get, such as a read-only workspace for a p
            guests: read-only workspace, no secrets
 ```
 
-These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent. `config set`, `config edit`, `messenger add`, `messenger rm` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
-
-### Share the agent
-
-Invite someone, with no extra flags:
-
-```sh
-a2a-serve pair invite anna
-```
-
-Anna's agent container gets the defaults above. No rule is needed.
-
 ### Set what a pairing gets
 
 ```sh
@@ -60,110 +38,61 @@ a2a-serve pair invite ben --storage read-only --secrets none
 a2a-serve pair set ben --storage own --secrets ANTHROPIC_API_KEY
 ```
 
-`pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule. A part the rule leaves out comes from a broader rule that matches the pairing, such as a rule of `private`, or from the default. A pairing that becomes an owner loses its rule. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
+`--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`.
 
 ### Give guests a key of their own
 
-Guests get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so. A caller can read a key their container gets, so give them a key of their own that you can revoke. Store it and pass it to the agent under the name it expects, in one command:
+Guests get no secrets, so the agent can't reach a model that needs a key for them. Store a separate key that you can revoke, and pass it to the guests' agent under the name it expects:
 
 ```sh
 a2a-serve config set --secret GUEST_ANTHROPIC_KEY --guest-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY --restart
 ```
 
-The agent sees `ANTHROPIC_API_KEY` in the container of guests, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the other containers that get every `--secret` value also get `GUEST_ANTHROPIC_KEY`. Those callers already get your own key. A new secret loads at restart, so the rule waits for it, and `status` lists it as pending until then.
-
-To share your own key instead, which takes effect at once:
-
-```sh
-a2a-serve config set --guest-secrets ANTHROPIC_API_KEY
-```
-
-`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`. When you stored the key since the agent started, the pairing gets it after `a2a-serve restart`. Until then, `pair set` and `pair get` show what the pairing gets after the restart.
+A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`.
 
 ### Rules for several callers
 
-`--guest-storage` and `--guest-secrets` set the rule of guests, `guests` in `config.yaml`, and `pair` sets the rule of one pairing. Write the rest, such as a rule for a whole email domain, in `a2a-serve config edit`, in the `policy.sandbox` list that the [configuration reference](../reference/configuration.md#sandbox-rules) describes. `a2a-serve config unset sandbox-rules` removes every rule except the one of guests, including the rules of pairings and of `self`.
+To set what a group of callers gets, such as everyone with an email of your company, edit the `policy.sandbox` list with `a2a-serve config edit`. The [configuration reference](../reference/configuration.md#sandbox-rules) describes the rules.
 
 ### Storage modes
 
 | Mode | Workspace | Mounts |
 | --- | --- | --- |
-| `shared` | The workspace, as you mounted it. | As configured, writable unless `:ro`. |
+| `shared` | The workspace, as you mounted it. | As configured. |
 | `read-only` | The workspace, read-only. | Read-only. |
 | `own` | A private copy of the workspace. | Read-only. |
-| `empty` | An empty private directory. | None. |
+| `empty` | An empty directory. | None. |
 
-In every mode, the agent home directory and `/tmp` stay writable, except the agent's configuration in the homes of members and guests.
-
-An `own` copy is made once, when the caller's container first starts. Nothing is copied back to your workspace, so the caller gets work back in the agent's replies. The copy:
-
-- leaves out every `.a2a` directory;
-- holds at most 1 GiB in at most 200,000 entries. When the workspace is larger, the container fails to start with an error that suggests `read-only`;
-- lives in `.a2a/state/workspaces/`, and [backups](backups.md) leave it out;
-- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. The copy of a person behind another agent also goes when a new person takes their home, as [the access model](../advanced/access-model.md#agent-processes) describes. `pair rm --dry-run` lists the copy and the rule it would delete. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
-
-The server keeps at most 100 copies. A caller whose copy would be the 101st gets an error that suggests `read-only` storage.
-
-The agent's instructions name its storage mode and say how to return work in it.
-
-Storage rules need the Docker sandbox. With `--sandbox local`, every caller's agent runs on your machine as you: rules still keep secrets out of its environment, but it can read them in `.a2a/state/secrets`, and `status` says so.
+An `own` copy is made when the caller's container first starts. Nothing is copied back, so the caller gets their work back in the agent's replies. Copies have a [size limit](../reference/limits.md#sandbox).
 
 ### When a change applies
 
-A running agent applies the changes of the rules made with `config set`, `config edit` and the `pair` commands at once. A grant of a secret stored since the agent started waits for the restart that loads the secret, and the rest of the change applies at once. A change you make to `config.yaml` in another editor applies at `a2a-serve restart`, and `status` lists it as pending until then.
+The running agent applies rule changes at once. A change that gives a caller less stops their running tasks. Your own container applies a change at `a2a-serve restart`, and `status` lists the change as pending until then.
 
-A change that gives a caller less ends the tasks in their container and stops it, so that they can't keep the access they had by keeping a task waiting. Their next message starts the container with the new rule. A secret the agent already saved in its home stays there, so rotate a secret you take away. Another change reaches a container when its current tasks end. Until then, it takes only answers to the tasks that wait in it, and other messages get an error that asks the caller to send them again. Your own container, which the `self` rule covers, applies a change at `a2a-serve restart`, and `status` notes a change waiting for it.
-
-A conversation runs in the container of the user who started it. When someone else sends a message in it and their rule gives less than that container does, the server refuses the message and suggests that they start a conversation of their own.
-
-`${VAR}` in `.mcp.json` takes the `--env` values and the secrets that the conversation's container gets. An MCP server that needs a variable the container doesn't get is left out of that conversation ([MCP and Skills](mcp-and-skills.md)). A container with `own` storage gets the servers of the `.mcp.json` in its copy, and a container with `empty` storage gets none.
-
-[Security](../advanced/security.md#the-sandbox) lists what the sandbox doesn't protect yet.
 ## Network
 
-In Docker, every connection the agent opens goes through the server ([where it applies](#where-it-applies)). By default:
-
-- The agent reaches the public internet.
-- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through another route than the internet, such as a split-tunnel VPN or a bridge. Behind a full-tunnel VPN or a Tailscale exit node, the internet is still the internet.
-- `host.docker.internal` reaches the ports that other containers publish on all addresses of this machine, such as with `-p 5432:5432`. With Docker Desktop, it also reaches the ports published on `127.0.0.1`. `--egress-allow host.docker.internal:11434` opens another port of this machine, such as one that a container publishes on `127.0.0.1` on Linux.
-
-The server resolves each name itself and checks every address it gets, so a public name can't lead to a private address. The agent calls other agents through its socket to the server, as before. A blocked connection fails in the agent's tools like a refused one.
-
-`--egress-allow` decides where the agent's own network connections may go. `--private-allow-outgoing` decides which agents on the private network the agent may call through the server.
+The agent reaches the public internet. Private destinations are blocked: the tailnet, the LAN, this machine and the cloud metadata services. `host.docker.internal` reaches the ports that other containers publish, such as with `-p 5432:5432`.
 
 ### Allow a private host
-
-```console
-$ a2a-serve config set --egress-allow nas.lan:22
-```
-
-The next connection uses the new rule; the agent keeps running. A rule is one of:
-
-- a host, such as `nas.lan`;
-- `*.corp.example.com`, for every name under that domain;
-- an IP address, such as `192.168.1.20`, or a range, such as `192.168.1.0/24`.
-
-Each can end with a port, such as `:22`. Without a port, the rule allows every port. An IPv6 address takes brackets before a port, such as `[fd00::1]:22`. A pasted URL, such as `http://grafana.lan:3000/d/x`, gives its host and port. Remove a rule with `a2a-serve config unset egress-allow nas.lan:22`.
-
-A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`. A rule with a tailnet IPv4 address isn't accepted.
 
 | To reach | Run |
 | --- | --- |
 | A NAS or another LAN host | `a2a-serve config set --egress-allow nas.lan:22` |
 | A model server on another machine | `a2a-serve config set --egress-allow 192.168.1.30:11434` |
 | A model server on this machine | `a2a-serve config set --egress-allow host.docker.internal:11434`, and point the agent at `host.docker.internal:11434` |
+| A tailnet host | `a2a-serve config set --egress-allow nas.example.ts.net` |
 
-A rule that names `host.docker.internal` reaches that port on this machine's loopback. The ports that containers publish on all addresses stay reachable. With `--egress allowlist`, `host.docker.internal` reaches only the ports of its rules.
+A rule is a host, `*.corp.example.com`, an IP address or a range such as `192.168.1.0/24`, with an optional port. The agent keeps running and the next connection uses the rule. `a2a-serve config unset egress-allow nas.lan:22` removes it.
 
 ### Allow only some hosts
 
-```console
-$ a2a-serve config set --egress allowlist \
-    --egress-allow generativelanguage.googleapis.com:443 \
-    --egress-allow github.com:443 --restart
+```sh
+a2a-serve config set --egress allowlist \
+  --egress-allow generativelanguage.googleapis.com:443 \
+  --egress-allow github.com:443 --restart
 ```
 
-With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts and the hosts of the [inject rules](secrets.md#keep-keys-out-of-the-sandbox) whose secrets the container gets. Include the API host of the agent's model provider in one of them, or the agent can't answer. Start from the hosts the agent needs:
+The agent then reaches only the hosts you list. Include the API of its model provider:
 
 | Agent or provider | Hosts |
 | --- | --- |
@@ -178,13 +107,11 @@ With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts and
 | Mistral | `api.mistral.ai:443` |
 | DeepSeek | `api.deepseek.com:443` |
 
-`a2a-serve status` lists the hosts it blocked, such as those of the agent's MCP servers. The server doesn't resolve names that no rule lists, and a range allows only connections to its addresses. A name in it needs a rule of its own. `a2a-serve config unset egress --restart` goes back to the internet.
-
-`--egress allowlist` needs the egress boundary. Where it doesn't apply, the agent doesn't start.
+`a2a-serve config unset egress --restart` goes back to the internet.
 
 ### See what was blocked
 
-`a2a-serve status` counts the blocked connections and shows the latest:
+`a2a-serve status` shows the latest blocked connections and the rule that allows one:
 
 ```console
 $ a2a-serve status
@@ -194,45 +121,12 @@ $ a2a-serve status
              allow one with a2a-serve config set --egress-allow 192.168.1.10:22
 ```
 
-A destination stays listed until a connection to it succeeds. One that a rule now allows says `(allowed, retry)`. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine. An address on the tailnet gets no suggested rule: allow the host by its tailnet name.
+`a2a-serve logs | grep egress` lists each one.
 
-`a2a-serve logs` has one line for each blocked connection:
-
-```console
-$ a2a-serve logs | grep egress
-... level=WARN msg="egress blocked" sandbox=a2a-coder-1a2b3c4d5e destination=192.168.1.10:22 reason=ip-not-on-allowlist
-```
-
-Allowed connections are logged too when the server runs with `a2a-serve start --verbose`. A container logs at most 600 decisions a minute. The server logs the number of the others.
-
-| Message | Reason | Meaning |
-| --- | --- | --- |
-| `egress blocked` | `not-on-allowlist` | With `--egress allowlist`, no rule names the host. For `host.docker.internal`, no rule names the port, and no container publishes it on all addresses ([which ports](#network)). |
-| `egress blocked` | `port-not-allowed` | A rule names the host for another port. |
-| `egress blocked` | `ip-not-on-allowlist` | The address is private, and no rule allows it. |
-| `egress blocked` | `resolved-address-denied` | No address of the name may be reached. `addresses` lists them. |
-| `egress blocked` | `resolve-failed` | The name doesn't resolve. |
-| `egress blocked` | `busy` | The container has too many open connections. |
-| `egress failed` | `dial-failed` | The destination doesn't accept the connection. |
-
-### Limits
-
-- The sandbox has TCP only. UDP is dropped, apart from DNS. QUIC and HTTP/3 clients fall back to TCP, and `ping` doesn't work.
-- The sandbox answers DNS queries for A and AAAA records with addresses of its own, and the server resolves the name when the agent connects. Other record types, such as SRV and TXT, get empty answers.
-- A container holds at most 256 open connections, and new ones wait beyond 50 per second. A connection that carries no data for an hour is closed.
-- `--egress unrestricted` gives the sandbox Docker's own network, with the LAN and the tailnet. Use it for tools that need UDP. It takes effect on restart, as every change of `--egress` does.
+The sandbox has TCP only, apart from DNS. For tools that need UDP, `--egress unrestricted` gives the sandbox Docker's own network, with the LAN and the tailnet.
 
 ### Where it applies
 
-The server routes the sandbox's connections with Docker, rootless Docker and Docker Desktop.
+Network rules work with Docker, rootless Docker and Docker Desktop. Where the server can't route the sandbox's connections, such as with some Podman setups, the sandbox keeps Docker's own network, and `start`, `status` and `doctor` say why. `--egress allowlist` then doesn't start the agent. `--sandbox local` has no network rules.
 
-- On Linux, the container gets the socket of its connections and runs the server's binary to set up its network. This needs an a2a-serve built without cgo, as the releases are, an image for the same CPU architecture, and the `tun` kernel module.
-- With Docker Desktop, which can't mount the server's sockets, an egress container runs next to each agent's container and forwards its connections to the server. Its name ends in `-egress`, and it starts again when it stops. Its image is `ghcr.io/a2aproject/a2a-serve`, with the version of your a2a-serve. When the pull fails, the server builds the image from the a2a-serve repository at that version, which takes a few minutes the first time. `A2A_SERVE_EGRESS_IMAGE` names an image of your own, such as one built from a work tree with `docker build -f internal/sandboxnet/Dockerfile .`.
-
-Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. With `--egress allowlist`, the agent doesn't start.
-
-At each start, the server also runs a short check: a container with the agent's settings whose launcher sets up the network, drops its capabilities and exits. When the launcher can't set up the network, or the runtime refuses `NET_ADMIN` or `/dev/net/tun`, egress control is off until the server stops, and the sandbox keeps Docker's own network. This happens with some Podman setups. `start` and the log say what failed, and so do `status` and `doctor`. The next start checks again, so the boundary comes back once the cause is fixed. When the check fails for another reason, such as an error of the Docker daemon, the server runs it again a few times, and then the agent doesn't start. Each start of an agent's container checks the same way, and a check that fails for another reason fails that start of the container. With `--egress allowlist`, the agent doesn't start, and `--egress unrestricted` skips the check.
-
-On Windows, the server doesn't read the routing table: it counts the subnets of its own interfaces as private, and misses networks that a VPN routes.
-
-`--sandbox local` has no egress rules. The agent reaches every network you reach.
+[Security](../advanced/security.md#the-sandbox) lists what the sandbox doesn't protect yet.

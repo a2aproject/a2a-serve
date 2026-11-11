@@ -9,13 +9,12 @@ a2a-serve config set --google-client-id env:GOOGLE_CLIENT_ID \
 a2a send -a https://coder.example.com "hi"      # signs in once
 ```
 
-- Add `<agent-url>/oauth/callback` to the authorized redirect URIs of your Google app. Use the URL people call, usually the public one.
-- `*@example.com` matches accounts of the example.com Google Workspace, and mail from example.com that passes DMARC. Anyone can create a personal Google account with an @example.com address, so such accounts don't match. Tailnet and relay logins match only full addresses.
-- People who sign in are [members](identities.md#roles). Their tokens carry the email, so removing it from the allowlist cuts them off at their next request. The server then deletes their tokens within an hour.
-- A sign-in expires after 90 days without use. Each use extends it, so people who call the agent now and then stay signed in, and a device that stays idle for 90 days signs in again.
-- `a2a-serve pair rm --email anna@example.com` revokes the sign-ins of one person. They can sign in again while the allowlist matches their email.
-- Only the public URL serves sign-in: Funnel or a relay. On the local URL and the private network, people use pairings or their network identity.
-- The agent card on the public URL names the sign-in scheme, which tells clients how to sign in. See [Sign-in schemes](../reference/http-routes.md#sign-in-schemes).
-- `--google-client-id` needs an email on the allowlist.
+Add `<agent-url>/oauth/callback` to the authorized redirect URIs of your Google app. Use the URL people call, usually the public one.
+
+`*@example.com` admits everyone of the example.com Google Workspace, and anyone who can send verified mail for that domain counts as any of its addresses. Tailnet and relay logins match only full addresses.
+
+People who sign in are [members](identities.md#roles). Removing an email from the allowlist cuts them off. A sign-in lasts as long as the person keeps using it; see [limits](../reference/limits.md#sign-in). To revoke one person's sign-ins, run `a2a-serve pair rm --email anna@example.com`. They can sign in again while the allowlist matches their email.
+
+Only the public URL (Funnel or a relay) serves sign-in. On the local URL and the private network, people use pairings or their network identity.
 
 Not in this version: providers other than Google, and sign-in without your own Google app.
