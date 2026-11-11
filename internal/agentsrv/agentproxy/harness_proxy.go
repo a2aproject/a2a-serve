@@ -559,24 +559,35 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 	if state.Terminal() || state == a2a.TaskStateAuthRequired {
 		return
 	}
+	var q *approvals.Question
 	if state == a2a.TaskStateInputRequired {
-		q := approvals.FromStatus(task.Status)
+		q = approvals.FromStatus(task.Status)
 		if q == nil || q.Type != approvals.TypePermission {
 			return
 		}
-		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
 	}
 	identity, err := json.Marshal(g.claims.User.Identity)
 	if err != nil {
 		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
+		if q != nil {
+			g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
+		}
 		return
 	}
 	w := store.Watch{
 		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
 		OnBehalfOf: g.claims.User.ID, Identity: string(identity),
 	}
-	if err := g.proxy.store.PutWatch(ctx, w); err != nil {
-		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
+	// The watch is stored before the question is relayed, so that a
+	// question task never exists without it.
+	putErr := g.proxy.store.PutWatch(ctx, w)
+	if putErr != nil {
+		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", putErr)
+	}
+	if q != nil {
+		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
+	}
+	if putErr != nil {
 		return
 	}
 	g.proxy.watches.watch(w)

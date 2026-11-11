@@ -862,6 +862,22 @@ func TestGuardedHandlerWatchesTasksTheHarnessDoesNotWaitFor(t *testing.T) {
 	}
 }
 
+func TestGuardedHandlerStoresWatchBeforeAskingQuestionOnTask(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	agent := &recordingAgent{task: &a2a.Task{ID: "t9", ContextID: "r9", Status: permissionStatus(t)}}
+	agent.task.Status.State = a2a.TaskStateInputRequired
+
+	if _, err := f.guarded(agent, "c1", auth.Owner()).SendMessage(context.Background(), message("", "")); err != nil {
+		t.Fatalf("guardedHandler.SendMessage() error = %v", err)
+	}
+
+	asked := f.asked.questions()
+	if len(asked) != 1 || !asked[0].Watched {
+		t.Fatalf("questions asked on tasks = %+v, want one asked after its watch was stored", asked)
+	}
+}
+
 func TestGuardedHandlerWatchesTaskOfDroppedStream(t *testing.T) {
 	t.Parallel()
 	f := newProxyFixture(t)
