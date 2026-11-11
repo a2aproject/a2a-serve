@@ -68,14 +68,17 @@ type Envelope struct {
 const (
 	// SenderAgent is the hosting agent, calling the node for a user.
 	SenderAgent = "agent"
-	SenderOwner = "owner"
+	// SenderOwner and SenderMember are callers with the owner or member
+	// role, such as the agents of other people on the private network.
+	SenderOwner  = "owner"
+	SenderMember = "member"
 	// SenderServer is the hosting agent server itself.
 	SenderServer = "server"
 )
 
 // Sender identifies the caller of a node.
 type Sender struct {
-	// Kind is agent, owner or server.
+	// Kind is agent, owner, member or server.
 	Kind string `json:"kind"`
 	// Name is the agent name.
 	Name string `json:"name,omitempty"`
