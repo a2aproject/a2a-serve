@@ -9,8 +9,8 @@ its messengers, pairings, webhook nodes and contacts.
 The link logs in once and works for 5 minutes. The session lasts 12 hours. The
 server keeps sessions in memory, so they end when it restarts.
 The page is served on the local URL, and with --url private on the private
-URL of a tailnet, which is HTTPS. It is never served on a relay or the public
-URL.
+URL of a tailnet, whose traffic WireGuard encrypts. It is never served on a
+relay or the public URL.
 
 ```
 a2a-serve inspect [flags]

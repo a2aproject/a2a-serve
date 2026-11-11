@@ -61,7 +61,7 @@ type listener struct {
 }
 
 // privateListener describes the private listener reached at u: the
-// inspector only over Tailscale's HTTPS, and tunneled on a relay.
+// inspector on a tailnet, and tunneled on a relay.
 func (s *Server) privateListener(u *url.URL) listener {
 	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
 	switch s.private.Name() {

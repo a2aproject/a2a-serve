@@ -39,7 +39,8 @@ import (
 // own machine with tsnet: private network, verified identity, discovery and
 // an optional public URL through Funnel, all in-process.
 type Tailscale struct {
-	// Hostname is the machine name: https://<hostname>.<tailnet>.ts.net.
+	// Hostname is the machine name: https://<hostname>.<tailnet>.ts.net, or
+	// http://<hostname>.<base domain> on a Headscale tailnet.
 	Hostname string
 	// StateDir holds the node identity, so the URL survives restarts and moves.
 	StateDir string
@@ -86,8 +87,8 @@ func (t *Tailscale) start(ctx context.Context) error {
 		AuthKey:    t.AuthKey,
 		UserLogf: func(format string, args ...any) {
 			msg := fmt.Sprintf(format, args...)
-			if strings.Contains(msg, "login.") || strings.Contains(msg, "/a/") || strings.Contains(msg, "AuthURL") {
-				if u := extractURL(msg); login.show(u) {
+			if u, ok := loginLink(msg); ok {
+				if login.show(u) {
 					logf("tailscale: open %s to add %q to your tailnet", u, t.Hostname)
 				}
 				return
@@ -101,10 +102,15 @@ func (t *Tailscale) start(ctx context.Context) error {
 		return errors.Join(fmt.Errorf("joining the tailnet: %w", err), srv.Close())
 	}
 	domains := srv.CertDomains()
-	if len(domains) == 0 {
-		return errors.Join(errors.New("tailscale: HTTPS certificates are disabled in this tailnet; enable HTTPS on the DNS page of the admin console (https://login.tailscale.com/admin/dns)"), srv.Close())
+	var dnsName string
+	if st.Self != nil {
+		dnsName = st.Self.DNSName
 	}
-	if name, renamed := assignedName(t.Hostname, domains[0]); renamed {
+	u, err := privateURL(domains, dnsName, t.ControlURL, t.Funnel)
+	if err != nil {
+		return errors.Join(err, srv.Close())
+	}
+	if name, renamed := assignedName(t.Hostname, u.Hostname()); renamed {
 		where := "in the admin console"
 		if t.ControlURL == "" {
 			where = "at https://login.tailscale.com/admin/machines"
@@ -112,11 +118,13 @@ func (t *Tailscale) start(ctx context.Context) error {
 		logf("tailscale: the name %q is taken on this tailnet, so this machine is %q; remove the old machine and rename this one %s", dnsname.SanitizeHostname(t.Hostname), name, where)
 	}
 	t.srv = srv
-	t.url = &url.URL{Scheme: "https", Host: domains[0]}
+	t.url = u
 	t.cards = newCardCache()
-	slog.Info("joined tailnet", "host", domains[0], "ip", st.TailscaleIPs)
+	slog.Info("joined tailnet", "host", u.Host, "ip", st.TailscaleIPs)
 	t.started.Store(true)
-	go t.fetchCert(ctx, domains[0], logf)
+	if u.Scheme == "https" {
+		go t.fetchCert(ctx, u.Host, logf)
+	}
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		go t.logFilterRules(ctx)
 	}
@@ -165,6 +173,27 @@ func (t *Tailscale) logFilterRules(ctx context.Context) {
 	}
 }
 
+// privateURL returns the private URL of a machine on a tailnet: HTTPS at
+// its certificate domain, or plain HTTP at its MagicDNS name with a control
+// server that issues no certificates, such as Headscale. WireGuard encrypts
+// tailnet traffic either way. Funnel needs Tailscale's control server.
+func privateURL(certDomains []string, dnsName, controlURL string, funnel bool) (*url.URL, error) {
+	if len(certDomains) > 0 {
+		return &url.URL{Scheme: "https", Host: certDomains[0]}, nil
+	}
+	if controlURL == "" {
+		return nil, errors.New("tailscale: HTTPS certificates are disabled in this tailnet; enable HTTPS on the DNS page of the admin console (https://login.tailscale.com/admin/dns)")
+	}
+	if funnel {
+		return nil, fmt.Errorf("tailscale: --public tailscale needs Tailscale's control server, and %s offers no Funnel; remove it with `a2a-serve config unset public`", controlURL)
+	}
+	host := strings.TrimSuffix(dnsName, ".")
+	if host == "" {
+		return nil, fmt.Errorf("tailscale: %s gave this machine no DNS name; turn on MagicDNS there", controlURL)
+	}
+	return &url.URL{Scheme: "http", Host: host}, nil
+}
+
 // fetchCert gets the TLS certificate at startup: tsnet otherwise requests it
 // on the first handshake, which delays the first request and hides issuance
 // errors until then.
@@ -190,6 +219,13 @@ func (t *Tailscale) fetchCert(ctx context.Context, domain string, logf func(stri
 func (t *Tailscale) ListenPrivate(ctx context.Context) (net.Listener, *url.URL, error) {
 	if err := t.start(ctx); err != nil {
 		return nil, nil, err
+	}
+	if t.url.Scheme == "http" {
+		ln, err := t.srv.Listen("tcp", ":80")
+		if err != nil {
+			return nil, nil, err
+		}
+		return ln, t.url, nil
 	}
 	if !t.Funnel {
 		ln, err := t.srv.ListenTLS("tcp", ":443")
@@ -370,7 +406,7 @@ func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 			taken = append(taken, name)
 			continue
 		}
-		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true, Node: string(p.ID)})
+		candidates = append(candidates, PeerInfo{Name: name, URL: t.url.Scheme + "://" + host, Online: true, Node: string(p.ID)})
 	}
 	return t.cards.ProbeAgents(ctx, t.HTTPClient(), candidates, taken), nil
 }
@@ -435,11 +471,17 @@ func assignedName(hostname, domain string) (string, bool) {
 	return name, name != dnsname.SanitizeHostname(hostname)
 }
 
-func extractURL(msg string) string {
+// loginLink returns the login link in a message of tsnet: Tailscale's
+// login.tailscale.com/a/… or Headscale's …/register/….
+func loginLink(msg string) (string, bool) {
 	for f := range strings.FieldsSeq(msg) {
-		if strings.HasPrefix(f, "https://") {
-			return strings.TrimRight(f, ".,")
+		if !strings.HasPrefix(f, "https://") && !strings.HasPrefix(f, "http://") {
+			continue
+		}
+		u := strings.TrimRight(f, ".,")
+		if strings.Contains(u, "/a/") || strings.Contains(u, "/register/") {
+			return u, true
 		}
 	}
-	return msg
+	return "", false
 }
