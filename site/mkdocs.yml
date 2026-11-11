@@ -96,6 +96,7 @@ nav:
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
+      - Sandboxing: advanced/sandboxing.md
       - Access Model: advanced/access-model.md
       - Agent Mesh: advanced/agent-mesh.md
       - Security: advanced/security.md
