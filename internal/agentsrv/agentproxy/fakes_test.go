@@ -399,6 +399,8 @@ func (c *fakeQuestionChat) questions() []askedQuestion {
 // fakeQuestionTasks records the questions asked on tasks of their own and
 // the tasks ended.
 type fakeQuestionTasks struct {
+	store *store.Store
+
 	mu    sync.Mutex
 	asked []taskQuestion
 	ended []endedQuestions
@@ -410,16 +412,19 @@ type taskQuestion struct {
 	ContextID string
 	Header    string
 	Rec       store.Question
+	// Watched is whether the watch of the question's task existed when it was asked.
+	Watched bool
 }
 
 type endedQuestions struct {
 	ContextID, Agent, TaskID string
 }
 
-func (f *fakeQuestionTasks) Ask(_ context.Context, contextID string, q *CallerQuestion) error {
+func (f *fakeQuestionTasks) Ask(ctx context.Context, contextID string, q *CallerQuestion) error {
+	_, err := f.store.Watch(ctx, q.Rec.Contact, q.Rec.TaskID)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.asked = append(f.asked, taskQuestion{ContextID: contextID, Header: q.Header, Rec: q.Rec})
+	f.asked = append(f.asked, taskQuestion{ContextID: contextID, Header: q.Header, Rec: q.Rec, Watched: err == nil})
 	return nil
 }
 

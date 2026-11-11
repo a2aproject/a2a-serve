@@ -93,7 +93,7 @@ func newWatchesFixtureOf(t *testing.T, timings Timings, net network.Provider, cl
 func newWatchesFixtureClients(t *testing.T, st *store.Store, remote *fakeContact, timings Timings, net network.Provider, clients *ContactClients) *watchesFixture {
 	t.Helper()
 	chain := &auth.Chain{Store: st, Net: net, Policy: func() auth.Policy { return auth.Policy{} }}
-	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{}, remote: remote}
+	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{store: st}, remote: remote}
 	ctx, cancel := context.WithCancel(context.Background())
 	f.ws = NewWatches(ctx, WatchesDeps{
 		Store:   st,

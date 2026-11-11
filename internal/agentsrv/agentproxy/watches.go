@@ -200,13 +200,17 @@ func (ws *Watches) Resume(ctx context.Context) {
 		slog.Error("loading watches", "error", err)
 		return
 	}
-	watched := make(map[[2]string]bool, len(all))
-	for _, w := range all {
-		watched[[2]string{w.Contact, w.TaskID}] = true
-	}
 	// A watch removed with its contact or node while the server was down
-	// leaves its question tasks waiting for good.
-	ws.asked.EndOrphaned(ctx, func(agent, taskID string) bool { return watched[[2]string{agent, taskID}] })
+	// leaves its question tasks waiting for good. The watch is looked up when
+	// a task is judged, since a turn may start a watch and its question task
+	// meanwhile.
+	ws.asked.EndOrphaned(ctx, func(agent, taskID string) bool {
+		_, err := ws.store.Watch(ctx, agent, taskID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("reading a watch", "agent", agent, "task", taskID, "error", err)
+		}
+		return !errors.Is(err, store.ErrNotFound)
+	})
 	for _, w := range all {
 		ws.watch(w)
 	}

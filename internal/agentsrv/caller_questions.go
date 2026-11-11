@@ -132,6 +132,7 @@ func (qt *questionTasks) waiting(ctx context.Context, contextID string) []waitin
 			}
 			rec, err := qt.store.QuestionByID(ctx, recID)
 			if err != nil {
+				slog.Warn("loading the question of a question task", "task", t.ID, "question", recID, "error", err)
 				continue
 			}
 			out = append(out, waitingQuestion{task: t.ID, rec: rec})
