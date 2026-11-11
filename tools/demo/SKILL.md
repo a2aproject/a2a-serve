@@ -52,6 +52,7 @@ mkdir -p ~/.claude/skills && ln -s "$PWD/tools/demo" ~/.claude/skills/record-dem
 ```bash
 tools/demo/record.sh list                          # scenarios and what they need
 tools/demo/record.sh 01-agent-server --fake        # dry run: fakeacp, no Docker or API key
+tools/demo/record.sh 01-agent-server --fake --no-record # what CI runs: no recording, no asciinema
 tools/demo/record.sh 01-agent-server --build --gif # real agents, local build, plus a GIF
 ```
 

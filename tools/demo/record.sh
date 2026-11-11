@@ -33,6 +33,7 @@ usage: tools/demo/record.sh <scenario>|list [flags]
   --gif           also render a GIF, with the browser videos spliced in (needs agg and ffmpeg)
   --gif-speed N   play the GIF N times faster (default 1.5)
   --keep          keep the work directory with the agent home directories
+  --no-record     play the scenario without recording it, as CI does (no asciinema needed)
 EOF
 }
 
@@ -58,6 +59,7 @@ SPEED=1
 GIF=""
 GIF_SPEED=1.5
 KEEP=""
+NO_RECORD=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fake) DEMO_FAKE=1; BUILD=1; shift ;;
@@ -68,6 +70,7 @@ while [[ $# -gt 0 ]]; do
     --gif) GIF=1; shift ;;
     --gif-speed) GIF_SPEED="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
+    --no-record) NO_RECORD=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "error: unknown flag $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -77,10 +80,18 @@ DEMO_ROWS="${SIZE#*x}"
 DEMO_TYPE_DELAY="$(awk -v s="$SPEED" 'BEGIN { print 0.035 / s }')"
 DEMO_PAUSE_SCALE="$(awk -v s="$SPEED" 'BEGIN { print 1 / s }')"
 
-for tool in tmux asciinema; do
+if [[ -n "$NO_RECORD" && -n "$GIF" ]]; then
+  echo "error: --gif needs a recording; drop --no-record" >&2
+  exit 2
+fi
+tools=(tmux)
+[[ -n "$NO_RECORD" ]] || tools+=(asciinema)
+for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || { echo "error: $tool is not installed" >&2; exit 1; }
 done
-ASCIINEMA_MAJOR="$(asciinema --version | sed -E 's/^asciinema ([0-9]+).*/\1/')"
+if [[ -z "$NO_RECORD" ]]; then
+  ASCIINEMA_MAJOR="$(asciinema --version | sed -E 's/^asciinema ([0-9]+).*/\1/')"
+fi
 
 mkdir -p "$DEMO_OUT"
 DEMO_OUT="$(cd "$DEMO_OUT" && pwd)"
@@ -213,6 +224,15 @@ if declare -F prepare >/dev/null; then
   prepare
 fi
 layout
+
+if [[ -n "$NO_RECORD" ]]; then
+  log "playing $DEMO_NAME without recording (watch: tmux -L $DEMO_SOCKET attach -r)"
+  scene
+  browser_wait
+  t kill-server
+  ls -1 "$DEMO_OUT/$DEMO_NAME"-browser-*.webm 2>/dev/null || true
+  exit 0
+fi
 
 if [[ "$ASCIINEMA_MAJOR" -ge 3 ]]; then
   REC=(asciinema rec --headless --window-size "${DEMO_COLS}x${DEMO_ROWS}" -f asciicast-v2)
