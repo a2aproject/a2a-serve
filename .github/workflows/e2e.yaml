@@ -61,12 +61,10 @@ jobs:
 
     - name: Install tools
       run: |
-        sudo apt-get update -q
-        sudo apt-get install -y -q tmux asciinema
         version="$(sed -n 's/^const MinVersion = "\(.*\)"$/\1/p' internal/a2acli/a2acli.go)"
         GOBIN="$RUNNER_TEMP/bin" go install "github.com/a2aproject/a2a-cli@$version"
         mv "$RUNNER_TEMP/bin/a2a-cli" "$RUNNER_TEMP/bin/a2a"
         echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
     - name: Run ${{ matrix.scenario }}
-      run: tools/demo/record.sh ${{ matrix.scenario }} --fake --speed 20 --out "$RUNNER_TEMP/demo"
+      run: tools/demo/record.sh ${{ matrix.scenario }} --fake --no-record --speed 20 --out "$RUNNER_TEMP/demo"

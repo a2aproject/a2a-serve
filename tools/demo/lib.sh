@@ -269,6 +269,7 @@ fake() {
 
 # cast_time prints the time of the last event recorded in the cast.
 cast_time() {
+  [[ -f "$CAST" ]] || { echo 0; return; }
   tail -n 1 "$CAST" | awk -F'[[,]' '{ print $2 }'
 }
 
