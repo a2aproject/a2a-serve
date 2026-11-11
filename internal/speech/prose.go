@@ -20,8 +20,8 @@ import (
 	"unicode/utf8"
 )
 
-// MaxSpoken is about how many bytes of a reply are spoken when the agent
-// didn't choose what to speak.
+// MaxSpoken is about how many characters of a reply are spoken when the
+// agent didn't choose what to speak.
 const MaxSpoken = 1000
 
 // restNote ends a reply cut at MaxSpoken.
@@ -38,7 +38,7 @@ var (
 
 // Prose returns the part of a markdown reply that is read aloud: its text
 // without code blocks, tables, links and markup, cut at a sentence within
-// limit bytes.
+// limit characters and within the MaxSpeechText bytes the services speak.
 func Prose(markdown string, limit int) string {
 	var lines []string
 	fence := ""
@@ -75,20 +75,32 @@ func Prose(markdown string, limit int) string {
 	return cut(strings.Join(lines, " "), limit)
 }
 
-// cut shortens text to the last sentence that ends within limit bytes,
-// and says that the rest is in the text.
+// cut shortens text to the last sentence that ends within limit
+// characters and MaxSpeechText bytes, and says that the rest is in the
+// text.
 func cut(text string, limit int) string {
-	if len(text) <= limit {
+	end := len(text)
+	if n := 0; utf8.RuneCountInString(text) > limit {
+		for i := range text {
+			if n == limit {
+				end = i
+				break
+			}
+			n++
+		}
+	}
+	end = min(end, MaxSpeechText)
+	if end == len(text) {
 		return text
 	}
-	limit -= len(restNote) + 1
-	for limit > 0 && !utf8.RuneStart(text[limit]) {
-		limit--
+	end = max(end-len(restNote)-1, 0)
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
 	}
-	head := text[:max(limit, 0)]
-	end := max(strings.LastIndex(head, ". "), strings.LastIndex(head, "! "), strings.LastIndex(head, "? "))
-	if end > len(head)/2 {
-		head = head[:end+1]
+	head := text[:end]
+	stop := max(strings.LastIndex(head, ". "), strings.LastIndex(head, "! "), strings.LastIndex(head, "? "))
+	if stop > len(head)/2 {
+		head = head[:stop+1]
 	} else if sp := strings.LastIndex(head, " "); sp > 0 {
 		head = head[:sp]
 	}

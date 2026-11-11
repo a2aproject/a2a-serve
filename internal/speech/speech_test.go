@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -447,8 +448,9 @@ func TestProseFitsTheLimit(t *testing.T) {
 	t.Parallel()
 	text := strings.Repeat("Ünïcödé wörds without a full stop ", 300)
 	for _, limit := range []int{speech.MaxSpoken, speech.MaxSpeechText} {
-		if got := speech.Prose(text, limit); len(got) > limit || !strings.HasSuffix(got, "The rest is in the text.") {
-			t.Fatalf("Prose(%d) = %d bytes ending %q, want at most %d bytes ending with the rest note", limit, len(got), got[max(len(got)-30, 0):], limit)
+		got := speech.Prose(text, limit)
+		if utf8.RuneCountInString(got) > limit || len(got) > speech.MaxSpeechText || !strings.HasSuffix(got, "The rest is in the text.") {
+			t.Fatalf("Prose(%d) = %d characters, %d bytes, want at most %d characters and %d bytes, ending with the rest note", limit, utf8.RuneCountInString(got), len(got), limit, speech.MaxSpeechText)
 		}
 	}
 }
@@ -464,11 +466,15 @@ func TestSpeakFilter(t *testing.T) {
 	}{
 		{name: "no block", chunks: []string{"Fixed ", "it."}, want: "Fixed it."},
 		{name: "block", chunks: []string{"Long.\n<speak>Short.</speak>"}, want: "Long.\n", wantSpoken: "Short.", wantFound: true},
-		{name: "tags split across chunks", chunks: []string{"Long.\n<spe", "ak>Sho", "rt.</sp", "eak> End."}, want: "Long.\n End.", wantSpoken: "Short.", wantFound: true},
-		{name: "last block wins", chunks: []string{"<speak>One.</speak>a<speak>Two.</speak>b"}, want: "ab", wantSpoken: "Two.", wantFound: true},
-		{name: "unclosed block", chunks: []string{"Long.<speak>Short"}, want: "Long.", wantSpoken: "Short", wantFound: true},
+		{name: "tags split across chunks", chunks: []string{"Long.\n  <spe", "ak>Sho", "rt.</sp", "eak> End."}, want: "Long.\n End.", wantSpoken: "Short.", wantFound: true},
+		{name: "last block wins", chunks: []string{"<speak>One.</speak>\n<speak>Two.</speak>\nb"}, want: "\n\nb", wantSpoken: "Two.", wantFound: true},
+		{name: "unclosed block stays text", chunks: []string{"Long.\n<speak>Short"}, want: "Long.\n<speak>Short"},
+		{name: "tag in a sentence", chunks: []string{"Wrap SSML in `<speak>`. Then call the API."}, want: "Wrap SSML in `<speak>`. Then call the API."},
+		{name: "tag in a code fence", chunks: []string{"Use:\n``", "`xml\n<speak>Hi</speak>\n```\nDone."}, want: "Use:\n```xml\n<speak>Hi</speak>\n```\nDone."},
+		{name: "block after a code fence", chunks: []string{"```\nx\n```\n<speak>Short.</speak>"}, want: "```\nx\n```\n", wantSpoken: "Short.", wantFound: true},
 		{name: "text that looks like a tag start", chunks: []string{"a <", " b <sp", "an>"}, want: "a < b <span>"},
-		{name: "tag start at the end", chunks: []string{"a <spe"}, want: "a <spe"},
+		{name: "non-ascii lines", chunks: []string{"Привет\nмир\n<speak>Да.</speak>"}, want: "Привет\nмир\n", wantSpoken: "Да.", wantFound: true},
+		{name: "tag start at the end of the stream", chunks: []string{"x\n<spe"}, want: "x\n<spe"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -519,4 +525,30 @@ func TestSpeakRefusedRequestSaysWhy(t *testing.T) {
 	if want := "the speech service refused the request: Invalid value: 'robot'. Supported values are: 'alloy' and 'nova'."; speech.Reason(err) != want {
 		t.Fatalf("Speak() error = %v, want %q", err, want)
 	}
+}
+
+func FuzzSpeakFilterIgnoresChunking(f *testing.F) {
+	f.Add("Long.\n<speak>Short.</speak> End.", uint(9))
+	f.Add("```\n<speak>x</speak>\n```\n<speak>y", uint(4))
+	f.Fuzz(func(t *testing.T, text string, split uint) {
+		run := func(chunks ...string) (string, string, bool) {
+			var sf speech.SpeakFilter
+			var out strings.Builder
+			for _, c := range chunks {
+				out.WriteString(sf.Write(c))
+			}
+			out.WriteString(sf.Flush())
+			spoken, found := sf.Spoken()
+			return out.String(), spoken, found
+		}
+		at := int(split % uint(len(text)+1))
+		wantOut, wantSpoken, wantFound := run(text)
+		gotOut, gotSpoken, gotFound := run(text[:at], text[at:])
+		if gotOut != wantOut || gotSpoken != wantSpoken || gotFound != wantFound {
+			t.Fatalf("SpeakFilter split at %d = %q, %q, %v, want %q, %q, %v", at, gotOut, gotSpoken, gotFound, wantOut, wantSpoken, wantFound)
+		}
+		if !strings.Contains(text, "<speak>") && wantOut != text {
+			t.Fatalf("SpeakFilter(%q) = %q, want the text unchanged", text, wantOut)
+		}
+	})
 }

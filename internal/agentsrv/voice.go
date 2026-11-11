@@ -121,8 +121,17 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 					}
 				}
 			}
-			if speak && err == nil && completes(ev) {
-				if extra, ok := v.speak(ctx, execCtx, reply.spoken(), accepted); ok && !yield(extra, nil) {
+			if err == nil && completes(ev) {
+				spoken := false
+				if speak {
+					var extra a2a.Event
+					extra, spoken = v.speak(ctx, execCtx, reply.spoken(), accepted)
+					if extra != nil && !yield(extra, nil) {
+						return
+					}
+				}
+				// A reply that is only a block would be lost unless spoken.
+				if back, ok := reply.unspoken(execCtx); ok && !spoken && !yield(back, nil) {
 					return
 				}
 			}
@@ -140,7 +149,7 @@ const speakLinePrefix = "[a2a voice]"
 // withSpeakLine returns execCtx with the line that tells the agent how to
 // choose what is spoken of its reply.
 func withSpeakLine(execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
-	line := speakLinePrefix + " The reply to this message is also read aloud. To choose what is spoken, end the reply with a short spoken version in <speak>…</speak>: plain sentences, no code, tables or links. The server takes the block out of the text. Without it, the start of the reply is read."
+	line := speakLinePrefix + " The reply to this message is also read aloud. To choose what is spoken, end the reply with a short spoken version on a line of its own, in <speak>…</speak>: plain sentences, no code, tables or links. The server takes the block out of the text. Without it, the start of the reply is read."
 	ec := *execCtx
 	msg := *execCtx.Message
 	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)
@@ -233,7 +242,8 @@ func (v *voiceTurns) transcribe(ctx context.Context, execCtx *a2asrv.ExecutorCon
 }
 
 // speak returns the event that adds text, spoken, to the task, or a note
-// that it failed. It reports false when there is nothing to speak.
+// that it failed, and reports whether it was spoken. The event is nil when
+// there is nothing to speak.
 func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext, text string, accepted []string) (a2a.Event, bool) {
 	if text == "" {
 		return nil, false
@@ -242,7 +252,7 @@ func (v *voiceTurns) speak(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 	if err != nil {
 		slog.Info("speaking a reply", "task", execCtx.TaskID, "error", err)
 		note := fmt.Sprintf("(The voice reply failed: %s.)", speech.Reason(err))
-		return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(note)), true
+		return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(note)), false
 	}
 	part := a2a.NewRawPart(audio.Data)
 	part.MediaType = audio.MediaType
@@ -391,19 +401,32 @@ func (r *speakReply) flush(execCtx *a2asrv.ExecutorContext) []a2a.Event {
 	return out
 }
 
-// spoken is what is read aloud: the <speak> block, or else the start of
-// the text that chats show.
-func (r *speakReply) spoken() string {
-	if r.found {
-		return speech.Prose(r.block, speech.MaxSpeechText)
+// unspoken returns the event that shows the <speak> block as text, when
+// the reply has nothing else to show.
+func (r *speakReply) unspoken(execCtx *a2asrv.ExecutorContext) (a2a.Event, bool) {
+	if !r.found || strings.TrimSpace(r.visible()) != "" {
+		return nil, false
 	}
+	return a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(strings.TrimSpace(r.block))), true
+}
+
+func (r *speakReply) visible() string {
 	var parts []string
 	for _, id := range r.ids {
 		if t := r.texts[id].String(); t != "" {
 			parts = append(parts, t)
 		}
 	}
-	return speech.Prose(strings.Join(parts, "\n\n"), speech.MaxSpoken)
+	return strings.Join(parts, "\n\n")
+}
+
+// spoken is what is read aloud: the <speak> block, or else the start of
+// the text that chats show.
+func (r *speakReply) spoken() string {
+	if r.found {
+		return speech.Prose(r.block, speech.MaxSpeechText)
+	}
+	return speech.Prose(r.visible(), speech.MaxSpoken)
 }
 
 // acceptedModesKey is the context key of the acceptedOutputModes of a

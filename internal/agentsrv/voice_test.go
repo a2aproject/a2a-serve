@@ -419,15 +419,28 @@ func TestVoiceTurnSpeaksTheSpeakBlock(t *testing.T) {
 		},
 		{
 			name:   "block without voice reply is still removed",
-			chunks: []string{"Long answer.<speak>Short.</speak>"},
-			want:   []string{"task:submitted", "artifact:Long answer.", "status:completed"},
+			chunks: []string{"Long answer.\n<speak>Short.</speak>"},
+			want:   []string{"task:submitted", "artifact:Long answer.\n", "status:completed"},
+		},
+		{
+			name:   "block alone without voice reply is shown",
+			chunks: []string{"<speak>Yes, the build passes.</speak>"},
+			want:   []string{"task:submitted", "artifact:", "artifact:Yes, the build passes.", "status:completed"},
+		},
+		{
+			name:      "block in code is kept",
+			accepted:  []string{"audio/ogg"},
+			chunks:    []string{"Wrap it in `<speak>` tags."},
+			want:      []string{"task:submitted", "artifact:Wrap it in `<speak>` tags.", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Wrap it in <speak> tags."},
+			wantLine:  true,
 		},
 		{
 			name:      "unfinished tag start is shown at the end",
 			accepted:  []string{"audio/ogg"},
-			chunks:    []string{"Compare a <sp"},
-			want:      []string{"task:submitted", "artifact:Compare a ", "artifact:<sp", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
-			wantSpoke: []string{"Compare a <sp."},
+			chunks:    []string{"Compare:\n<sp"},
+			want:      []string{"task:submitted", "artifact:Compare:\n", "artifact:<sp", "artifact:reply.ogg audio/ogg OggS", "status:completed"},
+			wantSpoke: []string{"Compare: <sp."},
 			wantLine:  true,
 		},
 	}
@@ -457,6 +470,26 @@ func TestVoiceTurnSpeaksTheSpeakBlock(t *testing.T) {
 				t.Fatalf("agent message has the speak line = %v, want %v", gotLine, tc.wantLine)
 			}
 		})
+	}
+}
+
+func TestVoiceTurnShowsBlockWhenSpeechFails(t *testing.T) {
+	t.Parallel()
+	fake := &speechtest.Fake{SpeakErr: &speech.Error{Reason: "the speech service timed out"}}
+	v := newVoiceTurns(fake, fake, time.Now, context.Background())
+	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("does it build?")), TaskID: "t1", ContextID: "c1"}
+	agent := &chunkedTurn{chunks: []string{"<speak>Yes, the build passes.</speak>"}}
+	ctx := withAcceptedModes(auth.WithPrincipal(t.Context(), auth.Owner()), []string{"audio/ogg"})
+	var got []a2a.Event
+	for ev, err := range v.turn(ctx, execCtx, agent.run) {
+		if err != nil {
+			t.Fatalf("voiceTurns.turn() error = %v", err)
+		}
+		got = append(got, ev)
+	}
+	want := []string{"task:submitted", "artifact:", "artifact:(The voice reply failed: the speech service timed out.)", "artifact:Yes, the build passes.", "status:completed"}
+	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
+		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
 	}
 }
 

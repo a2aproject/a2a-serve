@@ -24,80 +24,102 @@ const (
 )
 
 // SpeakFilter takes the <speak> blocks out of streamed text and keeps the
-// last complete one. Tags may be split across chunks.
+// last complete one. A block starts with <speak> at the start of a line
+// outside code fences, so that a reply that mentions the tag in code or in
+// a sentence keeps it. Tags may be split across chunks.
 type SpeakFilter struct {
 	inside bool
-	// pending is the end of a chunk that may start a tag.
-	pending string
-	block   strings.Builder
-	spoken  string
-	found   bool
+	// fence is set inside a fenced code block.
+	fence bool
+	// midLine is set once the current line has text that can't start a
+	// block or a fence.
+	midLine bool
+	// head is the start of the current line while it may still start a
+	// block or a fence.
+	head string
+	// tail is the end of the open block, which tells its closing tag.
+	tail   string
+	block  strings.Builder
+	spoken string
+	found  bool
 }
 
-// Write returns the text of chunk outside <speak> blocks. The end of chunk
-// that may start a tag is held back until the next chunk tells.
+// Write returns the text of chunk outside <speak> blocks. The start of a
+// line that may start a block is held back until the next chunk tells.
 func (f *SpeakFilter) Write(chunk string) string {
-	s := f.pending + chunk
-	f.pending = ""
 	var out strings.Builder
-	for s != "" {
-		tag := speakOpen
+	for i := 0; i < len(chunk); i++ {
+		c := chunk[i]
 		if f.inside {
-			tag = speakClose
+			f.inBlock(c)
+			continue
 		}
-		i := strings.Index(s, tag)
-		if i < 0 {
-			keep := partialTag(s, tag)
-			f.emit(&out, s[:len(s)-keep])
-			f.pending = s[len(s)-keep:]
-			break
+		if c == '\n' {
+			out.WriteString(f.head)
+			out.WriteByte(c)
+			f.head, f.midLine = "", false
+			continue
 		}
-		f.emit(&out, s[:i])
-		s = s[i+len(tag):]
-		if f.inside {
-			f.spoken, f.found = f.block.String(), true
+		if f.midLine {
+			out.WriteByte(c)
+			continue
 		}
-		f.block.Reset()
-		f.inside = !f.inside
+		f.head += chunk[i : i+1]
+		start := strings.TrimLeft(f.head, " \t")
+		switch {
+		case start == "":
+		case !f.fence && start == speakOpen:
+			f.head, f.inside, f.midLine = "", true, true
+			f.block.Reset()
+		case !f.fence && strings.HasPrefix(speakOpen, start):
+		case strings.HasPrefix(start, "```") || strings.HasPrefix(start, "~~~"):
+			f.fence = !f.fence
+			out.WriteString(f.head)
+			f.head, f.midLine = "", true
+		case strings.HasPrefix("```", start) || strings.HasPrefix("~~~", start):
+		default:
+			out.WriteString(f.head)
+			f.head, f.midLine = "", true
+		}
 	}
 	return out.String()
 }
 
-func (f *SpeakFilter) emit(out *strings.Builder, s string) {
-	if f.inside {
-		// A block longer than what is spoken is cut later anyway.
-		if f.block.Len() < 4*MaxSpeechText {
-			f.block.WriteString(s)
-		}
+// inBlock adds c to the open block, and closes it at </speak>.
+func (f *SpeakFilter) inBlock(c byte) {
+	// A block longer than what is spoken is cut later anyway.
+	if f.block.Len() < 4*MaxSpeechText {
+		f.block.WriteByte(c)
+	}
+	f.tail = f.tail[max(len(f.tail)-len(speakClose)+1, 0):] + string([]byte{c})
+	if f.tail != speakClose {
 		return
 	}
-	out.WriteString(s)
+	b := f.block.String()
+	for k := len(speakClose); k > 0; k-- {
+		if strings.HasSuffix(b, speakClose[:k]) {
+			b = b[:len(b)-k]
+			break
+		}
+	}
+	f.spoken, f.found, f.inside, f.tail = b, true, false, ""
+	f.block.Reset()
 }
 
 // Flush returns the text held back at the end of the stream: the start of
-// a tag that never completed. An unclosed block counts as complete.
+// a line that didn't become a block, or a block that was never closed,
+// which isn't one.
 func (f *SpeakFilter) Flush() string {
-	pending := f.pending
-	f.pending = ""
-	if !f.inside {
-		return pending
+	rest := f.head
+	f.head = ""
+	if f.inside {
+		rest = speakOpen + f.block.String()
+		f.inside, f.tail = false, ""
+		f.block.Reset()
 	}
-	f.block.WriteString(pending)
-	f.spoken, f.found, f.inside = f.block.String(), true, false
-	f.block.Reset()
-	return ""
+	return rest
 }
 
 // Spoken returns the last complete <speak> block, and whether there was
 // one.
 func (f *SpeakFilter) Spoken() (string, bool) { return f.spoken, f.found }
-
-// partialTag returns the length of the longest end of s that starts tag.
-func partialTag(s, tag string) int {
-	for n := min(len(s), len(tag)-1); n > 0; n-- {
-		if strings.HasSuffix(s, tag[:n]) {
-			return n
-		}
-	}
-	return 0
-}
