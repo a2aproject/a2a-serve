@@ -37,9 +37,12 @@ func Duration(a Audio) (time.Duration, bool) {
 }
 
 // oggOpusDuration adds up the frames of the Opus packets of an Ogg stream.
+// The data must hold that stream alone: another one could hold audio that
+// isn't counted.
 func oggOpusDuration(data []byte) (time.Duration, bool) {
 	const header = 27
 	var total uint64
+	var serial uint32
 	var packet []byte
 	index := 0
 	end := func() bool {
@@ -56,6 +59,11 @@ func oggOpusDuration(data []byte) (time.Duration, bool) {
 	}
 	for off := 0; off < len(data); {
 		if len(data)-off < header || !bytes.Equal(data[off:off+4], []byte("OggS")) || data[off+4] != 0 {
+			return 0, false
+		}
+		if s := binary.LittleEndian.Uint32(data[off+14:]); off == 0 {
+			serial = s
+		} else if s != serial {
 			return 0, false
 		}
 		segments := int(data[off+26])
@@ -115,8 +123,8 @@ func opusSamples(packet []byte) (uint64, bool) {
 
 // mp3Duration adds up the durations of the MPEG audio frames, which must
 // make up all of the data but an ID3v2 tag at the start, zero padding, and
-// an ID3v1 or APE tag or a cut frame at the end. Other data could hold
-// audio the server doesn't count.
+// APE and ID3v1 tags or a cut frame at the end. Other data could hold audio
+// the server doesn't count.
 func mp3Duration(data []byte) (time.Duration, bool) {
 	off := 0
 	if len(data) >= 10 && bytes.HasPrefix(data, []byte("ID3")) {
@@ -134,7 +142,7 @@ func mp3Duration(data []byte) (time.Duration, bool) {
 		}
 		length, d, ok := mp3Frame(rest[:4])
 		if !ok {
-			if bytes.HasPrefix(rest, []byte("TAG")) && len(rest) == 128 || bytes.HasPrefix(rest, []byte("APETAGEX")) {
+			if mp3Tags(rest) {
 				break
 			}
 			return 0, false
@@ -147,6 +155,33 @@ func mp3Duration(data []byte) (time.Duration, bool) {
 		off += length
 	}
 	return total, frames > 0
+}
+
+// maxAPETag is the largest APE tag that ends MP3 data. Decoders play the
+// frames inside a tag, and at the lowest bitrate 8 KiB holds about 8 seconds.
+const maxAPETag = 8 << 10
+
+// mp3Tags reports whether rest is an APE tag, an ID3v1 tag, or both, that
+// end the data.
+func mp3Tags(rest []byte) bool {
+	id3v1 := func(b []byte) bool { return len(b) == 128 && bytes.HasPrefix(b, []byte("TAG")) }
+	if id3v1(rest) {
+		return true
+	}
+	if len(rest) < 32 || !bytes.HasPrefix(rest, []byte("APETAGEX")) {
+		return false
+	}
+	// The size counts the items and the footer, and a flag tells whether a
+	// header comes first. A tag without a header can only be a lone footer
+	// here, since its items would come before it.
+	size := uint64(binary.LittleEndian.Uint32(rest[12:]))
+	if binary.LittleEndian.Uint32(rest[20:])&(1<<29) != 0 {
+		size += 32
+	}
+	if size < 32 || size > maxAPETag || size > uint64(len(rest)) {
+		return false
+	}
+	return size == uint64(len(rest)) || id3v1(rest[size:])
 }
 
 var (
@@ -208,16 +243,20 @@ func mp3Frame(h []byte) (int, time.Duration, bool) {
 // sample rate and block size: PCM, float, A-law and mu-law.
 var wavFormats = map[uint16]bool{1: true, 3: true, 6: true, 7: true}
 
-// wavDuration divides the size of the data chunk by the byte rate that the
-// sample rate and block size give, which is what decoders play.
+// wavDuration divides the size of the data chunks by the byte rate that the
+// sample rate and block size give, which is what decoders play. ffmpeg
+// plays the last data chunk of a file and every one of a stream, so it adds
+// up all of them.
 func wavDuration(data []byte) (time.Duration, bool) {
-	byteRate := uint64(0)
+	var byteRate, total uint64
+	found := false
 	for off := 12; off+8 <= len(data); {
-		id, size := string(data[off:off+4]), binary.LittleEndian.Uint32(data[off+4:off+8])
+		id, size := string(data[off:off+4]), uint64(binary.LittleEndian.Uint32(data[off+4:off+8]))
 		body := off + 8
 		switch id {
 		case "fmt ":
-			if body+16 > len(data) {
+			// Decoders differ on which of several fmt chunks they follow.
+			if byteRate != 0 || body+16 > len(data) {
 				return 0, false
 			}
 			format := binary.LittleEndian.Uint16(data[body:])
@@ -237,13 +276,20 @@ func wavDuration(data []byte) (time.Duration, bool) {
 			if byteRate == 0 {
 				return 0, false
 			}
-			// Streamed WAV files may give the data chunk the largest size.
-			n := min(uint64(size), uint64(len(data)-body))
-			return samples(n, byteRate), true
+			// Streamed WAV files may give the data chunk the largest size,
+			// and ffmpeg plays a data chunk of size 0 to the end.
+			if rest := uint64(len(data) - body); size == 0 || size > rest {
+				size = rest
+			}
+			total += size
+			found = true
 		}
 		off = body + int(size) + int(size%2)
 	}
-	return 0, false
+	if !found {
+		return 0, false
+	}
+	return samples(total, byteRate), true
 }
 
 // samples returns the duration of n samples at rate, capped well before

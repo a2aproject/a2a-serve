@@ -168,6 +168,9 @@ func FuzzDuration(f *testing.F) {
 	f.Add(mp3(3))
 	f.Add(wavWithByteRate(time.Second, 0xFFFFFFFF))
 	f.Add(append([]byte("OggS"), append(make([]byte, 42), 200)...))
+	f.Add(wavWithDataSize(time.Second, 0))
+	f.Add(concat(mp3(3), apeTag(apeItems, true), mp3(3)[12:]))
+	f.Add(concat(append(oggOpusStream(1, time.Second), oggPage(2, []byte{0x03, 0x00}))...))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		speech.Duration(speech.Audio{Data: data})
 	})
