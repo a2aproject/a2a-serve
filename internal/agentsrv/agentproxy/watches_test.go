@@ -1022,6 +1022,26 @@ func TestWatchesWatchEndsQuestionTasksOnceTheTaskMovesOn(t *testing.T) {
 	}
 }
 
+func TestWatchesWatchEndsQuestionTasksWhenContactIsRemoved(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptAsk)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+	waitFor(t, "the question to be asked", func() bool { return len(f.asked.questions()) > 0 })
+
+	if err := f.store.DeleteContact(context.Background(), "coder"); err != nil {
+		t.Fatalf("store.DeleteContact() error = %v", err)
+	}
+
+	waitFor(t, "the question tasks to end", func() bool { return len(f.asked.ends()) > 0 })
+	want := []endedQuestions{{ContextID: "origin", Agent: "coder", TaskID: string(task.ID)}}
+	if diff := cmp.Diff(want, slices.Compact(f.asked.ends())); diff != "" {
+		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
+	}
+	f.waitIdle(t)
+	f.wantNoWatches(t)
+}
+
 func linkChat(t *testing.T, st *store.Store, pairing, messengerName, identity, conv string) {
 	t.Helper()
 	ctx := context.Background()

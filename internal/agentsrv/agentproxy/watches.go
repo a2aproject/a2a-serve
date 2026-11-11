@@ -246,6 +246,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		// again.
 		cur, err := ws.store.Watch(ctx, w.Contact, w.TaskID)
 		if errors.Is(err, store.ErrNotFound) {
+			ws.endQuestions(ctx, w)
 			ws.endToCaller(w, reasonRemoved)
 			return
 		}
