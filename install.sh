@@ -106,15 +106,22 @@ main() {
   "$INSTALL_DIR/a2a-serve" doctor --fix || true
 
   say ""
-  if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
-    printf 'Set up an agent in %s now? [y/N] ' "$PWD" >/dev/tty
-    read -r answer </dev/tty || answer=
-    case "$answer" in
-      y | Y | yes)
-        exec "$INSTALL_DIR/a2a-serve" start </dev/tty >/dev/tty 2>&1
-        ;;
-    esac
-  fi
+  # start refuses the home directory, where `curl | sh` runs from a new
+  # terminal, so the offer is only made in a project directory.
+  case "$PWD" in
+    "$HOME" | /) ;;
+    *)
+      if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
+        printf 'Set up an agent in %s now? [y/N] ' "$PWD" >/dev/tty
+        read -r answer </dev/tty || answer=
+        case "$answer" in
+          y | Y | yes)
+            exec "$INSTALL_DIR/a2a-serve" start </dev/tty >/dev/tty 2>&1
+            ;;
+        esac
+      fi
+      ;;
+  esac
   say "Set up an agent from a project directory with:"
   say "    cd ~/src/app && a2a-serve start"
 }
