@@ -23,6 +23,17 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | New connections of a container | 50 a second; more wait |
 | Idle connection | Closed after 1 hour |
 
+## Network providers
+
+| Limit | Value |
+| --- | --- |
+| A message on the provider's stdin or stdout | 1 MiB |
+| Answer to `describe` or `member` | 30 seconds; `listen` 2 minutes, `peers` 15 seconds, `join` no limit |
+| Header of a connection from the provider | 4096 bytes, sent within 10 seconds |
+| Connections from the provider waiting for their header | 256 |
+| Exit after the server closes the provider's stdin | 10 seconds, then the server kills it |
+| Release archive of a provider | 512 MiB |
+
 ## Approvals
 
 | Limit | Value |

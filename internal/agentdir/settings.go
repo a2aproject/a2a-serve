@@ -91,9 +91,11 @@ type Settings struct {
 	TailscaleControlURL string
 	// TailscaleAuthKey is env:VAR, secret:NAME or the value.
 	TailscaleAuthKey string
-	// RelayToken joins an Agent Mesh relay without signing in: env:VAR,
+	// NetworkProvider is the network provider of network URLs.
+	NetworkProvider string
+	// NetworkToken joins a network without signing in: env:VAR,
 	// secret:NAME or the value.
-	RelayToken string
+	NetworkToken string
 
 	GoogleClientID string
 	// GoogleClientSecret is env:VAR, secret:NAME or the value.
@@ -140,9 +142,12 @@ const (
 	SecretEmailClient   = "EMAIL_OAUTH_CLIENT_SECRET"
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
-	SecretRelayToken    = "RELAY_TOKEN"
-	SecretBackupKey     = "BACKUP_KEY"
-	SecretVoiceKey      = "VOICE_API_KEY"
+	SecretNetworkToken  = "NETWORK_TOKEN"
+	// SecretRelayToken is where --relay-token was stored before network
+	// providers.
+	SecretRelayToken = "RELAY_TOKEN"
+	SecretBackupKey  = "BACKUP_KEY"
+	SecretVoiceKey   = "VOICE_API_KEY"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns

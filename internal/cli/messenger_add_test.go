@@ -66,7 +66,8 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
 		{name: "messenger add email", args: []string{"messenger", "add", "email", "--email-password", "-"}, wantErr: "--email-password: empty secret"},
 		{name: "messenger add email OAuth", args: []string{"messenger", "add", "email", "--email-oauth-refresh-token", "-"}, wantErr: "--email-oauth-refresh-token: empty secret"},
-		{name: "config set", args: []string{"config", "set", "--relay-token", "-"}, wantErr: "--relay-token: empty secret"},
+		{name: "config set", args: []string{"config", "set", "--network-token", "-"}, wantErr: "--network-token: empty secret"},
+		{name: "config set with the old flag name", args: []string{"config", "set", "--relay-token", "-"}, wantErr: "--network-token: empty secret"},
 		{name: "proxy auth", args: []string{"start", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
 	}
 	for _, tc := range tests {

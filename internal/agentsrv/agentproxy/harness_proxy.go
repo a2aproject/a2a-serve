@@ -156,6 +156,7 @@ func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 		}
 		h, principal, err := hp.clients.agentHandler(r.Context(), claims, name)
 		if err != nil {
+			slog.Warn("reaching an agent for the agent process", "agent", name, "error", err)
 			jsonhttp.Error(w, http.StatusBadGateway, err.Error())
 			return
 		}

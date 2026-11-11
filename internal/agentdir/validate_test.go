@@ -45,7 +45,7 @@ func TestValidate(t *testing.T) {
 		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown agent "gemini"`},
 		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
-		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, a relay URL such as https://relay.example.com, or none`},
+		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, a network URL such as https://relay.example.com, or none`},
 		{name: "removed lan", modify: func(c *Config) { c.Network.Private = "lan" }, wantErr: `invalid --private "lan": lan was removed`},
 		{name: "public", modify: func(c *Config) { c.Network.Public = "lan" }, wantErr: `invalid --public "lan"`},
 		{name: "mount", modify: func(c *Config) { c.Mounts = []string{"/a:rel"} }, wantErr: `invalid --mount "/a:rel": destination must be absolute`},
@@ -127,7 +127,7 @@ func TestValidate(t *testing.T) {
 		{name: "private-allow-incoming", modify: func(c *Config) { c.Policy.PrivateAllowIncoming = AccessAnyone }, wantErr: `invalid --private-allow-incoming "anyone": want everyone (or anyone) or paired`},
 		{name: "public-allow-incoming", modify: func(c *Config) { c.Policy.PublicAllowIncoming = AccessEveryone }, wantErr: `invalid --public-allow-incoming "everyone": want paired or anyone (or everyone)`},
 		{name: "private-allow-outgoing", modify: func(c *Config) { c.Policy.PrivateAllowOutgoing = AccessPaired }, wantErr: `invalid --private-allow-outgoing "paired": want everyone (or anyone) or contacts`},
-		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale, a relay URL such as https://relay.example.com, or none`},
+		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale, a network URL such as https://relay.example.com, or none`},
 		{name: "google client without secret", modify: func(c *Config) {
 			c.Policy.AllowEmails = []string{"mom@example.org"}
 			c.Auth.GoogleClientID = "id"
@@ -143,10 +143,24 @@ func TestValidate(t *testing.T) {
 		{name: "relay over http on loopback", modify: func(c *Config) { c.Network.Private = "http://127.0.0.1:8443" }},
 		{name: "two relays", modify: func(c *Config) {
 			c.Network = NetworkConfig{Private: "https://a.example.com", Public: "https://b.example.com"}
-		}, wantErr: "different relays"},
+		}, wantErr: "different networks"},
 		{name: "backup", modify: func(c *Config) {
 			c.Backup = BackupConfig{To: "s3://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h", Retention: "14d"}
 		}},
+		{name: "slim network", modify: func(c *Config) {
+			c.Network.Private, c.Network.Provider = "http://127.0.0.1:46357?org=a2a&namespace=demo", "slim"
+		}},
+		{name: "relay URL with a query", modify: func(c *Config) { c.Network.Private = "https://relay.example.com?x=1" }, wantErr: `invalid --private "https://relay.example.com?x=1"`},
+		{name: "unknown network provider", modify: func(c *Config) {
+			c.Network.Private, c.Network.Provider = "https://relay.example.com", "nebula"
+		}, wantErr: `invalid --network-provider "nebula": unknown network provider`},
+		{name: "network provider release over http", modify: func(c *Config) {
+			c.Network.Private, c.Network.Provider = "https://relay.example.com", "http://example.com/p.tar.gz"
+		}, wantErr: "must use https"},
+		{name: "network provider without a network URL", modify: func(c *Config) { c.Network.Provider = "slim" }, wantErr: "--network-provider slim needs a network URL"},
+		{name: "network URL with credentials", modify: func(c *Config) {
+			c.Network.Private, c.Network.Provider = "http://user:pw@127.0.0.1:46357", "slim"
+		}, wantErr: "without credentials"},
 		{name: "backup without a key", modify: func(c *Config) { c.Backup.To = "/backups" }, wantErr: "--backup needs --backup-key"},
 		{name: "backup to an unknown scheme", modify: func(c *Config) { c.Backup = BackupConfig{To: "ftp://x", Key: "k"} }, wantErr: `invalid --backup "ftp://x"`},
 		{name: "backup interval", modify: func(c *Config) { c.Backup.Interval = "10s" }, wantErr: `invalid --backup-interval "10s": want at least 1m`},

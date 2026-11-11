@@ -35,7 +35,7 @@ func fullConfig() *agentdir.Config {
 		TaskTTL: "48h", ContactRefresh: "20m",
 		Card: agentdir.CardConfig{Skills: []agentdir.CardSkill{{ID: "review-x"}}},
 		Network: agentdir.NetworkConfig{
-			Private: "tailscale", Public: "https://relay-x.example.com", TailscaleControlURL: "https://headscale-x.example.com",
+			Private: "tailscale", Public: "https://relay-x.example.com", TailscaleControlURL: "https://headscale-x.example.com", Provider: "slim",
 		},
 		Messengers: agentdir.MessengersConfig{
 			Telegram: &agentdir.TelegramConfig{Token: "secret:telegram"},

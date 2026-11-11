@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
@@ -54,6 +55,10 @@ func (sf *settingsFlags) register(cmd *cobra.Command, sets agentdir.FlagSet) {
 		}
 		registerSettingFlag(cmd, fl)
 	}
+	// Old flag names, such as --relay-token, keep working.
+	cmd.Flags().SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+		return pflag.NormalizedName(agentdir.CanonicalFlag(name))
+	})
 }
 
 // registerSettingFlag adds a settings flag to cmd, in its help section.

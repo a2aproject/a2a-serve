@@ -75,7 +75,7 @@ JSON"
 EOF"
     fi
     run B "a2a-serve config set --agent $AGENT --name $name $AGENT_FLAGS \\
-  --private \"\$RELAY\" --public \"\$RELAY\" --relay-token env:RELAY_TOKEN"
+  --private \"\$RELAY\" --public \"\$RELAY\" --network-token env:RELAY_TOKEN"
     run B "a2a-serve start --detach"
   done
   clear_pane B

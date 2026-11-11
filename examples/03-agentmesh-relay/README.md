@@ -17,12 +17,11 @@ relay.
 
 ## Prerequisites
 
-- `a2a-serve` built with Agent Mesh support, and the `a2a` CLI (see
-  [Getting Started](../../docs/getting-started.md#install)):
-
-  ```bash
-  CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest
-  ```
+- `a2a-serve` and the `a2a` CLI (see
+  [Getting Started](../../docs/getting-started.md#install)). Release archives
+  include the Agent Mesh network provider that agents join relays with; a
+  build from source needs it built next to `a2a-serve`, as Getting Started
+  shows.
 
 - Docker, and an API key for the agent, as in the [prerequisites of Serve a coding agent](../01-agent-server/README.md#prerequisites)
 - `jq`, to read the invites
@@ -54,12 +53,12 @@ cat > README.md <<'EOF'
 `greet` prints a greeting in the language you pick: `greet --lang fr` prints `Bonjour`.
 EOF
 printf '%s' "$CODER_TOKEN" | a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
-  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --relay-token -
+  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --network-token -
 a2a-serve start --detach
 
 mkdir -p ~/a2a-example3/reviewer && cd ~/a2a-example3/reviewer
 printf '%s' "$REVIEWER_TOKEN" | a2a-serve config set --agent opencode --name reviewer --secret OPENROUTER_API_KEY \
-  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --relay-token -
+  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --network-token -
 a2a-serve start --detach
 ```
 

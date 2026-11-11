@@ -138,6 +138,23 @@ The e2e build of `a2a-serve` (`-tags e2e`) reads `A2A_SERVE_E2E_TELEGRAM_URL` an
 
 The nightly workflow runs it with the repository secrets `E2E_TELEGRAM_BOT_TOKEN` and `E2E_TELEGRAM_CHAT_ID`.
 
+### Network providers
+
+Networks other than Tailscale run in network providers, each a Go module of its own under [`providers/`](providers/), so the core `go.mod` has none of their dependencies. They build against this checkout through a `replace` in their `go.mod`. Run their tests from their directory:
+
+```bash
+cd providers/agentmesh && go test ./...    # downloads the pinned agentmesh-one
+cd providers/slim && go run github.com/agntcy/slim-bindings-go/v3/cmd/slim-bindings-setup && go test ./...
+```
+
+The SLIM provider links the SLIM library with cgo. Its integration tests need a SLIM node: `docker compose up -d --wait` in [`examples/07-slim-network`](examples/07-slim-network/). To try a provider with a local build of `a2a-serve`, build it next to the binary, as release archives do:
+
+```bash
+go build -o /tmp/a2a/a2a-serve . && (cd providers/agentmesh && CGO_ENABLED=0 go build -o /tmp/a2a/netprovider-agentmesh .)
+```
+
+The [`netprovider`](netprovider/) package is the Go SDK and specifies the protocol with [the reference](docs/reference/network-providers.md); `netprovider/internal/loopnet` is a small provider that the core tests run. `go test ./netprovider/conformance -provider <absolute path> -url <network>` checks a provider in any language. A well-known provider gets a release archive per platform pinned in `internal/netinstall` once one is published.
+
 ### Documentation
 
 The site at <https://a2aproject.github.io/a2a-serve/> is built from `docs/` and `examples/`; links between them are written the way GitHub resolves them. The command reference in `docs/reference/commands` is generated from the command definitions, and a test fails when it is out of date. Diagrams are Graphviz sources in `docs/graphs`.
@@ -155,6 +172,7 @@ Releases are cut by [release-please](https://github.com/googleapis/release-pleas
 from the Conventional Commits on `main`: it keeps a release pull request up to
 date, and merging it tags the release. [GoReleaser](https://goreleaser.com)
 (`.goreleaser.yaml`) then attaches the binaries for Linux and macOS with
-their checksums, and opens a pull request with the Homebrew formula in the
+their checksums, puts the Agent Mesh network provider in each archive next to
+`a2a-serve`, and opens a pull request with the Homebrew formula in the
 `a2aproject/a2a-cli` tap. Try the build locally with
 `goreleaser release --snapshot --clean --skip=publish`.

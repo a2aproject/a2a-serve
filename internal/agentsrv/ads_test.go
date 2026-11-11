@@ -105,6 +105,16 @@ func (p *fakeProvider) WhoIs(_ context.Context, remoteAddr string) (*network.Pee
 	return &network.Peer{Node: "peer"}, nil
 }
 
+// ClientKey keys callers as a relay does, by the peer the provider
+// identified.
+func (p *fakeProvider) ClientKey(remoteAddr string, _ bool) string {
+	peer, err := p.WhoIs(context.Background(), remoteAddr)
+	if err != nil {
+		return ""
+	}
+	return "peer:" + peer.Node
+}
+
 func (p *fakeProvider) Member(_ context.Context, node string) (*network.Peer, error) {
 	if p.unidentified {
 		return nil, network.ErrNoIdentity

@@ -12,6 +12,7 @@ project_name: a2a-serve
 before:
   hooks:
     - go mod download
+    - sh -c "cd providers/agentmesh && go mod download"
 
 builds:
   - id: a2a-serve
@@ -33,10 +34,31 @@ builds:
       - amd64
       - arm64
 
+  # The Agent Mesh network provider ships in the archive next to a2a-serve,
+  # which runs it to join relays. It is its own module, so the core go.mod
+  # has no Agent Mesh dependencies.
+  - id: netprovider-agentmesh
+    dir: providers/agentmesh
+    main: .
+    binary: netprovider-agentmesh
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - id: a2a-serve
     ids:
       - a2a-serve
+      - netprovider-agentmesh
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     formats:
@@ -65,6 +87,7 @@ brews:
     commit_msg_template: "release: update Homebrew formula for a2a-serve {{ .Tag }}"
     install: |
       bin.install "a2a-serve"
+      (libexec/"a2a-serve").install "netprovider-agentmesh"
     caveats: |
       Enable the a2a CLI plugin and credential helper, and check Docker:
         a2a-serve doctor --fix

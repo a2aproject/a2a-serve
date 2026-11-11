@@ -60,7 +60,7 @@ tools/demo/record.sh 01-agent-server --build --gif # real agents, local build, p
 | --- | --- |
 | `01-agent-server` | Docker and a model key. `--fake` works. |
 | `02-tailscale-telegram-grok` | Tailscale with HTTPS and Funnel (example step 1), `CODER_BOT_TOKEN`, Telegram Web sign-in. Grok steps run when `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_TOKEN` are set. No `--fake`. The first run asks you to approve the `coder` machine; later runs reuse it from `~/.cache/a2a-demo/tsnet-coder`. |
-| `03-agentmesh-relay` | `--build` (Agent Mesh support), free port 8443. Installs `agentmesh-one` if missing. `--fake` works. |
+| `03-agentmesh-relay` | `--build` (builds the Agent Mesh network provider next to a2a-serve), free port 8443. Installs `agentmesh-one` if missing. `--fake` works. |
 | `04-observability-agent` | Docker, a model key, `jq`, and free ports 3000, 4317 and 4318. Runs `grafana/otel-lgtm` with generated telemetry off camera, and fetches the recipe from GitHub with your git credentials. No `--fake`. |
 | `inspector` | Docker and a model key, plus the browser setup. `--fake` works. |
 | `05-relay-cloud-run` | `--build`, `gcloud` signed in, and `DEMO_PROJECT`, a project where Cloud Run may serve the public and Cloud SQL may have a public IP. `05-relay-cloud-run/setup.sh` runs steps 1-3 of the example off camera first, so a new Cloud SQL instance's 10 minutes stay out of the recording. It creates billed resources named as in the example, which you delete afterwards. A Cloud SQL instance name can't be reused for a week after deletion; `DEMO_SQL_INSTANCE` picks another. Before a release, set `DEMO_RELAY_IMAGE` to an image repository you pushed the relay image to, tagged `v0.1.0`. `--fake` works. |

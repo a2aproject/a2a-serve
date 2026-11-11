@@ -15,15 +15,9 @@
 package relay
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,15 +27,13 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/download"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // BinaryEnv names an agentmesh-one to run in place of the pinned release,
 // such as the one in the relay image.
 const BinaryEnv = "A2A_SERVE_AGENTMESH_ONE"
-
-// maxArchive bounds a downloaded release archive; v0.2.0's are about 65 MB.
-const maxArchive = 512 << 20
 
 // Fetcher gets the pinned agentmesh-one.
 type Fetcher struct {
@@ -134,80 +126,14 @@ func (f *Fetcher) Get(ctx context.Context) (string, error) {
 }
 
 func (f *Fetcher) download(ctx context.Context, url string, dst *os.File, want string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := f.hc.Do(req)
-	if err != nil {
+	if _, err := download.ToFile(ctx, f.hc, url, dst, want); err != nil {
 		return fmt.Errorf("downloading agentmesh-one: %w", err)
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			slog.Debug("closing the download", "error", err)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading agentmesh-one: %s: %s", url, resp.Status)
-	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(resp.Body, maxArchive+1))
-	if err != nil {
-		return fmt.Errorf("downloading agentmesh-one: %w", err)
-	}
-	if n > maxArchive {
-		return fmt.Errorf("downloading agentmesh-one: %s is larger than %d MB", url, maxArchive>>20)
-	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != want {
-		return fmt.Errorf("the download of %s has SHA-256 %s, want %s; not running it", url, got, want)
-	}
-	_, err = dst.Seek(0, io.SeekStart)
-	return err
+	return nil
 }
 
-// maxBinary bounds the extracted binary.
-const maxBinary = 512 << 20
-
 func extract(archive *os.File, archiveName, binary string) ([]byte, error) {
-	if strings.HasSuffix(archiveName, ".zip") {
-		fi, err := archive.Stat()
-		if err != nil {
-			return nil, err
-		}
-		zr, err := zip.NewReader(archive, fi.Size())
-		if err != nil {
-			return nil, err
-		}
-		for _, zf := range zr.File {
-			if zf.Name != binary {
-				continue
-			}
-			rc, err := zf.Open()
-			if err != nil {
-				return nil, err
-			}
-			data, err := io.ReadAll(io.LimitReader(rc, maxBinary))
-			return data, errors.Join(err, rc.Close())
-		}
-		return nil, fmt.Errorf("no %s in the archive", binary)
-	}
-	gz, err := gzip.NewReader(archive)
-	if err != nil {
-		return nil, err
-	}
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("no %s in the archive", binary)
-		}
-		if err != nil {
-			return nil, err
-		}
-		if hdr.Name == binary && hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(io.LimitReader(tr, maxBinary))
-		}
-	}
+	return download.Extract(archive, archiveName, binary)
 }
 
 func (f *Fetcher) progress(format string, args ...any) {

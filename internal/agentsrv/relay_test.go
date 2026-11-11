@@ -16,8 +16,6 @@ package agentsrv
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +34,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
-	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -58,7 +55,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	ctx := context.Background()
 	fabric := newTestRelayFabric(t, "Ben@example.com")
 
-	reviewer := startServer(t, serverOpts{
+	startServer(t, serverOpts{
 		name:     "reviewer",
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
@@ -75,13 +72,6 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 			c.Network.Public = fabric.url()
 		},
 	})
-
-	if got := network.SavedOwner(coder.dir.AgentMeshDir()); got != "ben@example.com" {
-		t.Fatalf("network.SavedOwner(coder) = %q, want %q", got, "ben@example.com")
-	}
-	if got := network.SavedOwner(reviewer.dir.AgentMeshDir()); got != "ben@example.com" {
-		t.Fatalf("network.SavedOwner(reviewer) = %q, want %q", got, "ben@example.com")
-	}
 
 	coderCtl := controlapi.NewClient(coder.dir)
 	st, err := coderCtl.Status(ctx)
@@ -244,7 +234,7 @@ type joinFailingRelay struct {
 	err error
 }
 
-func (r joinFailingRelay) Name() string               { return network.ProviderRelay }
+func (r joinFailingRelay) Name() string               { return network.ProviderAgentMesh }
 func (r joinFailingRelay) Join(context.Context) error { return r.err }
 func (r joinFailingRelay) Close() error               { return nil }
 
@@ -282,7 +272,7 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 
 	reviewer := startServer(t, serverOpts{
 		name:     "reviewer",
-		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
+		secrets:  agentdir.Secrets{agentdir.SecretNetworkToken: "join-secret"},
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
@@ -291,17 +281,13 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	})
 	coder := startServer(t, serverOpts{
 		name:     "coder",
-		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
+		secrets:  agentdir.Secrets{agentdir.SecretNetworkToken: "join-secret"},
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
 			c.Network.Public = fabric.url()
 		},
 	})
-
-	if got := network.SavedOwner(coder.dir.AgentMeshDir()); got != "" {
-		t.Fatalf("network.SavedOwner(coder) = %q, want empty for --relay-token", got)
-	}
 
 	coderCtl := controlapi.NewClient(coder.dir)
 	if _, err := coderCtl.AddContact(ctx, controlapi.ContactRequest{Name: "reviewer"}); err != nil {
@@ -368,7 +354,7 @@ func TestRelayStatusAndPeersShowTheConnection(t *testing.T) {
 	fabric := newTestRelayFabric(t, "")
 	coder := startServer(t, serverOpts{
 		name:     "coder",
-		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
+		secrets:  agentdir.Secrets{agentdir.SecretNetworkToken: "join-secret"},
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
@@ -424,6 +410,9 @@ func TestRelayStatusAndPeersShowTheConnection(t *testing.T) {
 	}
 }
 
+// testRelayHost is the host of private URLs on the fake relay.
+const testRelayHost = "agentmesh.local"
+
 type testRelayFabric struct {
 	t            *testing.T
 	srv          *httptest.Server
@@ -431,7 +420,6 @@ type testRelayFabric struct {
 
 	mu            sync.RWMutex
 	accountByName map[string]string
-	deviceEmail   map[string]string
 	nodes         map[string]*testRelayNode
 	seq           atomic.Int64
 }
@@ -442,14 +430,9 @@ func newTestRelayFabric(t *testing.T, defaultEmail string) *testRelayFabric {
 		t:             t,
 		defaultEmail:  defaultEmail,
 		accountByName: map[string]string{},
-		deviceEmail:   map[string]string{},
 		nodes:         map[string]*testRelayNode{},
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /info", f.handleInfo)
-	mux.HandleFunc("GET /idp/.well-known/openid-configuration", f.handleOIDCDiscovery)
-	mux.HandleFunc("POST /idp/device", f.handleOIDCDevice)
-	mux.HandleFunc("POST /idp/token", f.handleOIDCToken)
 	mux.HandleFunc("/ingress/", f.handleIngress)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -468,72 +451,6 @@ func (f *testRelayFabric) setAccountForAgent(agentName, email string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.accountByName[agentName] = email
-}
-
-func (f *testRelayFabric) handleInfo(w http.ResponseWriter, _ *http.Request) {
-	var b []byte
-	appendStr := func(num protowire.Number, v string) {
-		if v == "" {
-			return
-		}
-		b = protowire.AppendTag(b, num, protowire.BytesType)
-		b = protowire.AppendString(b, v)
-	}
-	if f.defaultEmail != "" {
-		appendStr(1, f.srv.URL+"/idp")
-		appendStr(2, "mesh-client")
-		appendStr(3, "agentmesh")
-	}
-	appendStr(4, "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	if _, err := w.Write(b); err != nil {
-		f.t.Errorf("writing /info: %v", err)
-	}
-}
-
-func (f *testRelayFabric) handleOIDCDiscovery(w http.ResponseWriter, _ *http.Request) {
-	if err := json.NewEncoder(w).Encode(map[string]string{
-		"device_authorization_endpoint": f.srv.URL + "/idp/device",
-		"token_endpoint":                f.srv.URL + "/idp/token",
-	}); err != nil {
-		f.t.Errorf("encoding discovery: %v", err)
-	}
-}
-
-func (f *testRelayFabric) handleOIDCDevice(w http.ResponseWriter, r *http.Request) {
-	email := r.Header.Get("X-Test-Email")
-	if email == "" {
-		email = f.defaultEmail
-	}
-	dc := fmt.Sprintf("dc-%d", f.seq.Add(1))
-	f.mu.Lock()
-	f.deviceEmail[dc] = email
-	f.mu.Unlock()
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"device_code":               dc,
-		"user_code":                 "ABCD-1234",
-		"verification_uri_complete": f.srv.URL + "/idp/activate?code=" + dc,
-		"interval":                  0,
-		"expires_in":                60,
-	}); err != nil {
-		f.t.Errorf("encoding device response: %v", err)
-	}
-}
-
-func (f *testRelayFabric) handleOIDCToken(w http.ResponseWriter, r *http.Request) {
-	dc := r.FormValue("device_code")
-	f.mu.RLock()
-	email := f.deviceEmail[dc]
-	f.mu.RUnlock()
-	claims, err := json.Marshal(map[string]any{"email": email, "email_verified": true})
-	if err != nil {
-		f.t.Errorf("marshaling claims: %v", err)
-		return
-	}
-	tok := "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
-	if err := json.NewEncoder(w).Encode(map[string]string{"id_token": tok}); err != nil {
-		f.t.Errorf("encoding token response: %v", err)
-	}
 }
 
 func (f *testRelayFabric) handleIngress(w http.ResponseWriter, r *http.Request) {
@@ -557,7 +474,7 @@ func (f *testRelayFabric) handleIngress(w http.ResponseWriter, r *http.Request) 
 	target.servePipe(w, r, rest, target.pubLn, nil)
 }
 
-func (f *testRelayFabric) newRelay(cfg network.RelayConfig) (network.Provider, error) {
+func (f *testRelayFabric) newRelay(cfg network.ExternalConfig) (network.Provider, error) {
 	// Tests start and stop agents faster than the cards would expire.
 	cards := network.NewCardCache(0, 0, time.Now)
 	return &testRelayNode{fabric: f, cfg: cfg, peerID: "peer-" + cfg.AgentName, cards: cards}, nil
@@ -565,7 +482,7 @@ func (f *testRelayFabric) newRelay(cfg network.RelayConfig) (network.Provider, e
 
 type testRelayNode struct {
 	fabric    *testRelayFabric
-	cfg       network.RelayConfig
+	cfg       network.ExternalConfig
 	peerID    string
 	principal string
 	owner     string
@@ -593,42 +510,22 @@ func (n *testRelayNode) Health() network.Health {
 	return n.health
 }
 
-func (n *testRelayNode) Name() string { return network.ProviderRelay }
+func (n *testRelayNode) Name() string { return network.ProviderAgentMesh }
 
 func (n *testRelayNode) start(ctx context.Context) error {
 	n.startOnce.Do(func() {
+		// Without a token, the agent signs in to the relay with the account
+		// of its person.
 		if n.cfg.Token == "" {
-			if saved := network.SavedOwner(n.cfg.StateDir); saved != "" {
-				n.owner = saved
-				n.principal = saved
-			} else {
-				n.fabric.mu.RLock()
-				email := n.fabric.accountByName[n.cfg.AgentName]
-				n.fabric.mu.RUnlock()
-				hc := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-					if email != "" {
-						r = r.Clone(r.Context())
-						r.Header.Set("X-Test-Email", email)
-					}
-					return n.fabric.srv.Client().Transport.RoundTrip(r)
-				})}
-				login := &network.RelayLogin{
-					RelayURL: n.cfg.URL,
-					StateDir: n.cfg.StateDir,
-					HTTP:     hc,
-					Logf:     n.cfg.Logf,
-					Poll:     time.Millisecond,
-				}
-				if _, err := login.Token(ctx); err != nil {
-					n.startErr = err
-					return
-				}
-				n.owner = network.SavedOwner(n.cfg.StateDir)
-				if email != "" {
-					n.principal = email
-				} else {
-					n.principal = n.fabric.defaultEmail
-				}
+			n.fabric.mu.RLock()
+			email := n.fabric.accountByName[n.cfg.AgentName]
+			if email == "" {
+				email = n.fabric.defaultEmail
+			}
+			n.fabric.mu.RUnlock()
+			n.principal, n.owner = email, strings.ToLower(email)
+			if n.cfg.Logf != nil {
+				n.cfg.Logf("✓ signed in to the relay as %s", n.owner)
 			}
 		} else {
 			n.principal = "node:" + n.peerID
@@ -653,7 +550,7 @@ func (n *testRelayNode) ListenPrivate(ctx context.Context) (net.Listener, *url.U
 	if n.privLn == nil {
 		return nil, nil, network.ErrUnsupported
 	}
-	u, err := url.Parse(fmt.Sprintf("http://%s/mesh/%s/a2a/%s", network.AgentMeshHost, n.peerID, n.cfg.AgentName))
+	u, err := url.Parse(fmt.Sprintf("http://%s/mesh/%s/a2a/%s", testRelayHost, n.peerID, n.cfg.AgentName))
 	return n.privLn, u, err
 }
 
@@ -682,6 +579,18 @@ func (n *testRelayNode) WhoIs(_ context.Context, remoteAddr string) (*network.Pe
 	return p, nil
 }
 
+func (n *testRelayNode) ClientKey(remoteAddr string, _ bool) string {
+	v, ok := n.conns.Load(remoteAddr)
+	if !ok {
+		return ""
+	}
+	return "peer:" + v.(*testRelayNode).peerID
+}
+
+func (n *testRelayNode) PrivateNote() string {
+	return "works only from other a2a-serve agents on the relay; give people the public URL"
+}
+
 func (n *testRelayNode) Member(context.Context, string) (*network.Peer, error) {
 	return nil, network.ErrUnsupported
 }
@@ -695,7 +604,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 		}
 		candidates = append(candidates, network.PeerInfo{
 			Name:   other.cfg.AgentName,
-			URL:    fmt.Sprintf("http://%s/mesh/%s/a2a/%s", network.AgentMeshHost, other.peerID, other.cfg.AgentName),
+			URL:    fmt.Sprintf("http://%s/mesh/%s/a2a/%s", testRelayHost, other.peerID, other.cfg.AgentName),
 			Online: true,
 			Node:   other.peerID,
 		})
@@ -706,7 +615,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 
 func (n *testRelayNode) HTTPClient() *http.Client {
 	return &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL == nil || !strings.EqualFold(r.URL.Host, network.AgentMeshHost) {
+		if r.URL == nil || !strings.EqualFold(r.URL.Host, testRelayHost) {
 			return testHTTP.Transport.RoundTrip(r)
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")

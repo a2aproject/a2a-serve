@@ -23,7 +23,7 @@ import (
 func TestIdentityDescribe(t *testing.T) {
 	t.Parallel()
 	relay := func(id Identity) Identity {
-		id.Network, id.Provider = network.ListenerPrivate, network.ProviderRelay
+		id.Network, id.Provider = network.ListenerPrivate, network.ProviderAgentMesh
 		return id
 	}
 	tests := []struct {

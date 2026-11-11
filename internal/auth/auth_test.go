@@ -486,7 +486,7 @@ func TestChainRefresh(t *testing.T) {
 	}
 	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "n1"}
 	ownerDevice := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "n2", Self: true}
-	relay := Identity{Network: network.ListenerPrivate, Provider: network.ProviderRelay, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "p1"}
+	relay := Identity{Network: network.ListenerPrivate, Provider: network.ProviderAgentMesh, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "p1"}
 	onTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{"n1": {Email: "anna@example.com", Node: "n1"}}}
 	leftTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{}}
 
@@ -580,7 +580,7 @@ func TestChainRefresh(t *testing.T) {
 		{
 			name:     "relay user on a relay that can't look up its members",
 			policy:   testPolicy(true, nil),
-			net:      fakeNet{name: network.ProviderRelay},
+			net:      fakeNet{name: network.ProviderAgentMesh},
 			id:       "email:anna@example.com",
 			identity: relay,
 			want:     Principal{ID: "email:anna@example.com", Role: RoleMember, Identity: relay},

@@ -33,9 +33,11 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -225,15 +227,49 @@ func TestDockerFix(t *testing.T) {
 	}
 }
 
-func TestCheckRelayWithoutAgentMeshFix(t *testing.T) {
+func TestCheckRelayNetworkProvider(t *testing.T) {
 	t.Parallel()
-	if network.AgentMeshBuilt {
-		t.Skip("this build has Agent Mesh")
+	tests := []struct {
+		name string
+		cfg  agentdir.NetworkConfig
+		find func(string) (netinstall.Provider, error)
+		want Result
+	}{
+		{
+			name: "bundled Agent Mesh",
+			cfg:  agentdir.NetworkConfig{Private: "https://relay.example.com"},
+			find: func(string) (netinstall.Provider, error) {
+				return netinstall.Provider{Name: "agentmesh", Path: "/bin/p"}, nil
+			},
+			want: Result{ID: "relay", Status: StatusOK, Message: "joins https://relay.example.com with Agent Mesh " + agentmesh.Version},
+		},
+		{
+			name: "missing provider",
+			cfg:  agentdir.NetworkConfig{Private: "http://127.0.0.1:46357?org=a2a", Provider: "slim"},
+			find: func(string) (netinstall.Provider, error) {
+				return netinstall.Provider{}, errors.New("no release of slim; build it: (cd providers/slim && go build .)")
+			},
+			want: Result{ID: "network", Status: StatusFail, Message: "can't join http://127.0.0.1:46357?org=a2a: no release of slim", Fix: "build it: (cd providers/slim && go build .)"},
+		},
+		{
+			name: "provider downloaded on start",
+			cfg:  agentdir.NetworkConfig{Private: "http://127.0.0.1:46357", Provider: "slim"},
+			find: func(string) (netinstall.Provider, error) {
+				return netinstall.Provider{Name: "slim"}, netinstall.ErrDownload
+			},
+			want: Result{ID: "network", Status: StatusOK, Message: "joins http://127.0.0.1:46357 with the network provider slim, which is downloaded on the next start"},
+		},
 	}
-	cfg := &agentdir.Config{Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}}
-	got := checkRelay(context.Background(), newFakeMachine(t).Env(), cfg, false)
-	if want := "CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"; len(got) != 1 || got[0].Fix != want {
-		t.Fatalf("checkRelay() = %+v, want one result with the fix %q", got, want)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := newFakeMachine(t).Env()
+			env.FindNetworkProvider = tc.find
+			got := checkRelay(context.Background(), env, &agentdir.Config{Network: tc.cfg}, false)
+			if diff := cmp.Diff([]Result{tc.want}, got, cmpopts.IgnoreUnexported(Result{})); diff != "" {
+				t.Fatalf("checkRelay() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 
@@ -637,9 +673,8 @@ func newAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
 	return d
 }
 
-// relayStatus is how doctor sees a relay offline: fine when the build can
-// join one.
-var relayStatus = map[bool]Status{true: StatusOK, false: StatusFail}[network.AgentMeshBuilt]
+// relayStatus is how doctor sees a relay offline.
+const relayStatus = StatusOK
 
 func TestAgentChecks(t *testing.T) {
 	t.Parallel()
@@ -868,7 +903,7 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusFail}, {"running", StatusWarn}},
 		},
 		{
-			name: "relay without Agent Mesh in the build",
+			name: "relay",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}},
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
@@ -880,7 +915,7 @@ func TestAgentChecks(t *testing.T) {
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
-				if err := network.RecordJoin(d.AgentMeshDir(), &network.InviteError{Problem: "the invite was already used"}); err != nil {
+				if err := network.RecordJoin(d.AgentMeshDir(), &network.TokenError{Problem: "the invite was already used", Fix: "ask for a new invite"}); err != nil {
 					t.Fatalf("network.RecordJoin() error = %v", err)
 				}
 			},

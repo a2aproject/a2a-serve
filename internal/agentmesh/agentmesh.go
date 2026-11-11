@@ -22,8 +22,9 @@ import (
 	"strings"
 )
 
-// Version is the Agent Mesh version. It equals the version of
-// github.com/google/agentmesh in go.mod.
+// Version is the Agent Mesh version that relays run and the Agent Mesh
+// network provider joins them with. It equals the version of
+// github.com/google/agentmesh in providers/agentmesh/go.mod.
 const Version = "v0.2.0"
 
 // Image is the agentmesh-one image of Version, by digest, which the relay

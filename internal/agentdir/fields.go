@@ -26,6 +26,7 @@ import (
 	"github.com/google/shlex"
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
@@ -95,6 +96,9 @@ type field struct {
 	secret string
 	// secretOnly settings are kept in the secrets file alone.
 	secretOnly bool
+	// oldSecrets are names the setting was stored under before, which
+	// unsetting it removes too.
+	oldSecrets []string
 	// values are the completions of the flag.
 	values []string
 	// unsetTo describes the value of a number setting without an entry,
@@ -467,13 +471,13 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Network.Private }, func(s *Settings) *string { return &s.Private }),
 		flag:   "private", path: "network.private", scope: scopeOwner, section: SectionNetwork, parse: parseNetwork,
-		usage:  "Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com",
+		usage:  "Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it",
 		values: []string{NetworkTailscale, NetworkNone},
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Network.Public }, func(s *Settings) *string { return &s.Public }),
 		flag:   "public", path: "network.public", scope: scopeOwner, section: SectionNetwork, parse: parseNetwork,
-		usage:  "Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay",
+		usage:  "Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay",
 		values: []string{NetworkTailscale, NetworkNone},
 	},
 	{
@@ -541,11 +545,18 @@ var fields = []field{
 		usage: "Tailscale auth key, to join without the login link",
 	},
 	{
-		access: storedSecret(func(s *Settings) *string { return &s.RelayToken }),
-		flag:   "relay-token", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
-		secret: SecretRelayToken, secretOnly: true,
-		usage: "Join token of an Agent Mesh relay, to join without the sign-in link",
+		access: str(func(c *Config) *string { return &c.Network.Provider }, func(s *Settings) *string { return &s.NetworkProvider }),
+		flag:   "network-provider", path: "network.provider", scope: scopeOwner, section: SectionNetwork,
+		usage:  "Network provider that joins the network URL of --private and --public: " + strings.Join(netinstall.Names(), ", ") + ", a release URL or a path (default " + NetworkAgentMesh + ")",
+		values: netinstall.Names(),
 	},
+	{
+		access: storedSecret(func(s *Settings) *string { return &s.NetworkToken }),
+		flag:   "network-token", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
+		secret: SecretNetworkToken, secretOnly: true, oldSecrets: []string{SecretRelayToken},
+		usage: "Join token of the network, such as an Agent Mesh relay invite, to join without the sign-in link",
+	},
+
 	{
 		access: token(MessengerTelegram, func(c *Config, v string) {
 			c.Messengers.Telegram = nil
@@ -774,7 +785,20 @@ func emailSecret(f field, name string) field {
 	return f
 }
 
+// flagAliases are the old names of flags, which still work.
+var flagAliases = map[string]string{"relay-token": "network-token"}
+
+// CanonicalFlag returns the name of the flag that name stands for: name,
+// or the flag it is an old name of.
+func CanonicalFlag(name string) string {
+	if to, ok := flagAliases[name]; ok {
+		return to
+	}
+	return name
+}
+
 func lookupField(flag string) (field, bool) {
+	flag = CanonicalFlag(flag)
 	i := slices.IndexFunc(fields, func(f field) bool { return f.flag == flag })
 	if i < 0 {
 		return field{}, false
@@ -979,6 +1003,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 		return nil, unsetEntriesError(setting+" takes no entries", "", setting, entries)
 	case f.secretOnly:
 		deleted = append(deleted, f.secret)
+		deleted = append(deleted, f.oldSecrets...)
 	case !f.list && len(entries) > 0:
 		return nil, unsetEntriesError(setting+" is not a list", " to reset it", setting, entries)
 	case setting == "name":

@@ -62,6 +62,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 4. **[Observability Agent](./examples/04-observability-agent/README.md):** run a read-only production assistant from a Grafana recipe.
 5. **[Relay on Cloud Run](./examples/05-relay-cloud-run/README.md):** deploy a persistent relay with Cloud SQL and Secret Manager.
 6. **[Talk to Your Agent on Telegram](./examples/06-telegram-voice/README.md):** send voice notes to the agent and get voice replies.
+7. **[SLIM Network](./examples/07-slim-network/README.md):** connect two agents through a SLIM node, and call one from any SLIM client.
 
 ## User Guide
 

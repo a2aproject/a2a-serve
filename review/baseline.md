@@ -44,6 +44,8 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **In a group chat, any linked member can answer the owner's form questions and `/stop` the owner's task** (from the release review at `3890ffe`). Tool approvals still need the starter or an owner. The people in a group chat share its conversation, and the owner chose to link them.
 - **A member's schedule made in a group chat keeps running there after the member leaves the chat** (from the review of #483). A run checks the member's role, not their place in the chat. The run still gets only the member's sandbox, its prompt is fixed, and the owner or the member can remove it.
 
+- **A well-known network provider downloaded into the data directory isn't checked against its pin on every start** (`internal/netinstall/netinstall.go`, `local`). The pin is the archive's checksum, checked at download; the installed binary is as writable to the user as `a2a-serve` itself, which runs it. Bundled providers next to `a2a-serve` have the same trust as the server binary.
+
 ### Correctness
 
 - **A first request right after a restart can have its new task failed by `FailUnfinished`** (`internal/agentsrv/nodes/nodes.go:141-152`). The window is narrow and the impact is low.

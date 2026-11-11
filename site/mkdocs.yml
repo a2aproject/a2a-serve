@@ -95,6 +95,7 @@ nav:
       - Observability Agent: examples/04-observability-agent/index.md
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
       - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
+      - SLIM Network: examples/07-slim-network/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
@@ -128,6 +129,7 @@ nav:
       - Configuration File: reference/configuration.md
       - Output and Exit Codes: reference/output.md
       - HTTP Routes: reference/http-routes.md
+      - Network Provider Protocol: reference/network-providers.md
       - Approval Messages: reference/approval-messages.md
       - Audio Messages: reference/audio-messages.md
       - Limits: reference/limits.md

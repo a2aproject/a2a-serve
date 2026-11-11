@@ -147,7 +147,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | no flag (`sandbox-rules` in `config unset`) | `policy.sandbox` | `config edit` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |
-| `--relay-token` | the secret `RELAY_TOKEN` in `state/secrets` | `config set` |
+| `--network-provider` | `network.provider` | `start <agent>`, `config set` |
+| `--network-token` | the secret `NETWORK_TOKEN` in `state/secrets` | `config set` |
 | `--token` | `messengers.telegram.token` | `messenger add telegram` |
 | `--token` | `messengers.discord.token` | `messenger add discord` |
 | `--email-address` | `messengers.email.address` | `messenger add email` |
