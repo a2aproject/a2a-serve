@@ -131,6 +131,8 @@ func TestAuthorize(t *testing.T) {
 		{name: "loopback literal", policy: mustPolicy(t, ""), host: "127.0.0.1", port: 80, reason: "ip-not-on-allowlist"},
 		{name: "metadata service", policy: mustPolicy(t, ""), host: "169.254.169.254", port: 80, reason: "ip-not-on-allowlist"},
 		{name: "Azure WireServer", policy: mustPolicy(t, ""), host: "168.63.129.16", port: 80, reason: "ip-not-on-allowlist"},
+		{name: "Azure WireServer an address rule allows", policy: mustPolicy(t, "", "168.63.129.16"), host: "168.63.129.16", port: 80,
+			want: grant{rule: "168.63.129.16", addrs: []netip.AddrPort{netip.MustParseAddrPort("168.63.129.16:80")}}},
 		{name: "name of the Azure WireServer", policy: mustPolicy(t, ""), host: "wire.corp", port: 80, reason: "resolved-address-denied"},
 		{name: "unknown name", policy: mustPolicy(t, ""), host: "missing.test", port: 443, reason: "resolve-failed"},
 		{name: "neighbor on this host's link", policy: mustPolicy(t, ""), host: "203.0.113.9", port: 80, reason: "ip-not-on-allowlist"},
