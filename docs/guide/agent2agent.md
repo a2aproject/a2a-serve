@@ -36,6 +36,10 @@ card:
 
 Edit them with `a2a-serve config edit`. A running agent serves the new card at once. The [configuration reference](../reference/configuration.md#card-skills) lists the rules.
 
+## Audio
+
+With a [speech service](voice.md) set up, callers can send recordings, and the agent gets them as text. A caller that lists `audio/ogg` in `acceptedOutputModes` also gets the reply as a voice note. [Audio Messages](../reference/audio-messages.md) describes the parts.
+
 ## Cards of other agents
 
 `a2a-serve contact add` fetches the contact's agent card, keeps its description and skills, and prints them. The server fetches the cards again regularly, and refreshes them now with `a2a-serve contact refresh [name]`. Change the period with `a2a-serve config set --contact-refresh 30m`.

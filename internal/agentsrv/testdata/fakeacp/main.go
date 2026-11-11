@@ -99,6 +99,10 @@ const earlierPrefix = "[a2a earlier conversation]"
 // prompt of a session.
 const agentsLinePrefix = "[a2a agents]"
 
+// speakLinePrefix starts the line the server adds to a message whose reply
+// is read aloud.
+const speakLinePrefix = "[a2a voice]"
+
 // fakeModels are the models of the model config option; the first is the default.
 var fakeModels = []string{"fake/default", "fake/other"}
 
@@ -471,6 +475,7 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 	}
 	var texts []string
 	agentsURL, earlier := "", ""
+	spoken := false
 	for _, b := range p.Prompt {
 		if b.Type != "text" {
 			continue
@@ -481,6 +486,10 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		}
 		if strings.HasPrefix(b.Text, agentsLinePrefix) {
 			agentsURL = parseAgentsURL(b.Text)
+			continue
+		}
+		if strings.HasPrefix(b.Text, speakLinePrefix) {
+			spoken = true
 			continue
 		}
 		texts = append(texts, b.Text)
@@ -665,6 +674,16 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		end("end_turn")
 	case "scheduled":
 		a.chunk(sid, "ran "+text)
+		end("end_turn")
+	case "speak":
+		// The tags split across chunks, as streamed text splits them.
+		if spoken {
+			a.chunk(sid, "The long answer, with details.\n<spe")
+			a.chunk(sid, "ak>The short answer.</sp")
+			a.chunk(sid, "eak>")
+		} else {
+			a.chunk(sid, "The long answer, unaware it is read aloud.")
+		}
 		end("end_turn")
 	case "markdown":
 		a.chunk(sid, markdownSample)

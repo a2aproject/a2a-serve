@@ -201,7 +201,7 @@ func TestCatchUp(t *testing.T) {
 			maps.Copy(init, tc.kv)
 			kv := messengertest.NewKV(init)
 			in := make(chan messenger.Inbound, len(tc.api.msgs))
-			c := New("token", kv)
+			c := New("token", kv, nil)
 			c.me = &discordgo.User{ID: botID}
 			c.in, c.ctx = in, t.Context()
 
@@ -332,7 +332,7 @@ func TestCursorOnlyAdvancesOnInboundMessages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			kv := messengertest.NewKV(tc.init)
-			c := New("token", kv)
+			c := New("token", kv, nil)
 
 			tc.do(c)
 
@@ -346,7 +346,7 @@ func TestCursorOnlyAdvancesOnInboundMessages(t *testing.T) {
 func TestOnMessageKeepsArrivalOrderWithoutWaitingForTheRouter(t *testing.T) {
 	t.Parallel()
 	const n = 30
-	c := New("token", messengertest.NewKV(nil))
+	c := New("token", messengertest.NewKV(nil), nil)
 	c.me = &discordgo.User{ID: botID}
 	in := make(chan messenger.Inbound)
 	c.in, c.ctx = in, t.Context()
@@ -391,7 +391,7 @@ func TestReadyCatchesUpBeforeLiveMessagesMoveTheCursor(t *testing.T) {
 		commandsRelease: make(chan struct{}),
 	}
 	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
-	c := New("token", kv)
+	c := New("token", kv, nil)
 	c.me = &discordgo.User{ID: botID}
 	in := make(chan messenger.Inbound, 10)
 	c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
@@ -418,7 +418,7 @@ func TestReadyCatchesUpBeforeLiveMessagesMoveTheCursor(t *testing.T) {
 func TestCursorStaysWhenDeliveryIsCutOff(t *testing.T) {
 	t.Parallel()
 	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
-	c := New("token", kv)
+	c := New("token", kv, nil)
 	c.me = &discordgo.User{ID: botID}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -434,7 +434,7 @@ func TestCursorStaysWhenDeliveryIsCutOff(t *testing.T) {
 func TestRememberDropsRowsOfEvictedConversations(t *testing.T) {
 	t.Parallel()
 	kv := messengertest.NewKV(nil)
-	c := New("token", kv)
+	c := New("token", kv, nil)
 	for i := range maxConvs {
 		conv := "c" + strconv.Itoa(i)
 		c.trackInbound(conv, "1000")
@@ -465,7 +465,7 @@ func TestRememberDropsRowsOfEvictedConversations(t *testing.T) {
 
 func TestConnectionEventsReportState(t *testing.T) {
 	t.Parallel()
-	c := New("token", messengertest.NewKV(nil))
+	c := New("token", messengertest.NewKV(nil), nil)
 	var got []bool
 	c.report = func(err error) { got = append(got, err == nil) }
 
@@ -522,7 +522,7 @@ func TestPrepareThreadStart(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := New("token", messengertest.NewKV(nil))
+			c := New("token", messengertest.NewKV(nil), nil)
 			c.me = &discordgo.User{ID: botID}
 			c.threadRetry = time.Millisecond
 			in := make(chan messenger.Inbound, 1)
@@ -560,7 +560,7 @@ func TestHandleMessageKeepsTheRepliedToMessage(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := New("token", messengertest.NewKV(nil))
+			c := New("token", messengertest.NewKV(nil), nil)
 			c.me = &discordgo.User{ID: botID}
 			in := make(chan messenger.Inbound, 1)
 			c.in, c.ctx = in, t.Context()
@@ -588,7 +588,7 @@ func TestPrepareReportsFailedAttachments(t *testing.T) {
 		http.Error(w, "gone", http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	c := New("token", messengertest.NewKV(nil))
+	c := New("token", messengertest.NewKV(nil), nil)
 	c.me = &discordgo.User{ID: botID}
 	in := make(chan messenger.Inbound, 1)
 	c.in, c.ctx = in, t.Context()
@@ -688,7 +688,7 @@ func TestCatchUpRetriesWhatMayPass(t *testing.T) {
 			t.Parallel()
 			api := tc.api()
 			kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
-			c := newMessenger("token", kv, time.Millisecond)
+			c := newMessenger("token", kv, nil, time.Millisecond)
 			c.me = &discordgo.User{ID: botID}
 			in := make(chan messenger.Inbound, 10)
 			c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
@@ -725,7 +725,7 @@ func TestCatchUpTakesChannelThatIsGoneForGuildChannel(t *testing.T) {
 	t.Parallel()
 	api := &fakeAPI{msgs: []*discordgo.Message{message(1001, false)}}
 	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
-	c := newMessenger("token", kv, time.Millisecond)
+	c := newMessenger("token", kv, nil, time.Millisecond)
 	c.me = &discordgo.User{ID: botID}
 	c.in, c.ctx, c.convs = make(chan messenger.Inbound, 10), t.Context(), []string{"c1"}
 
@@ -750,7 +750,7 @@ func TestLiveMessagesKeepTheCursorUntilCatchUpSucceeds(t *testing.T) {
 	}
 	api.unavailable.Store(true)
 	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
-	c := newMessenger("token", kv, time.Millisecond)
+	c := newMessenger("token", kv, nil, time.Millisecond)
 	c.me = &discordgo.User{ID: botID}
 	in := make(chan messenger.Inbound, 10)
 	c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
@@ -864,5 +864,27 @@ func TestDownloadRefusesAttachmentsOverTheLimit(t *testing.T) {
 				t.Fatalf("download() read %d bytes, want %d", len(f.Data), tc.size)
 			}
 		})
+	}
+}
+
+func TestSlashCommands(t *testing.T) {
+	t.Parallel()
+	got := slashCommands([]messenger.Command{
+		{Name: "new", Description: "Start a new conversation"},
+		{Name: "voice", Description: "Turn voice replies on or off for you", Choices: []string{"on", "off"}},
+	})
+	want := []*discordgo.ApplicationCommand{
+		{Name: "join", Description: "Join with a pairing code from the agent's owner", Options: []*discordgo.ApplicationCommandOption{
+			{Type: discordgo.ApplicationCommandOptionString, Name: "code", Description: "The pairing code", Required: true},
+		}},
+		{Name: "new", Description: "Start a new conversation"},
+		{Name: "voice", Description: "Turn voice replies on or off for you", Options: []*discordgo.ApplicationCommandOption{
+			{Type: discordgo.ApplicationCommandOptionString, Name: "choice", Description: "One of: on, off", Choices: []*discordgo.ApplicationCommandOptionChoice{
+				{Name: "on", Value: "on"}, {Name: "off", Value: "off"},
+			}},
+		}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("slashCommands() wrong result (-want +got) diff = %s", diff)
 	}
 }

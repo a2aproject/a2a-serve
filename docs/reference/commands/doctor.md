@@ -16,9 +16,9 @@ container can't set up its network.
 --fix enables command plugins and the credential helper in
 ~/.config/a2a-cli/config.yaml and makes credentials.json and .a2a/state
 private. It never installs software and never touches a running agent.
---online also checks bot tokens, whether the agent image can be pulled, and
-that the relay answers at its URL with the Agent Mesh version this
-a2a-serve pins.
+--online also checks bot tokens, whether the agent image can be pulled,
+that the speech service of --voice transcribes and speaks, and that the
+relay answers at its URL with the Agent Mesh version this a2a-serve pins.
 
 ```
 a2a-serve doctor [flags]

@@ -62,6 +62,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		} else {
 			results = append(results, checkSecrets(cfg, secrets)...)
 			results = append(results, checkMCP(d, cfg, secrets)...)
+			if r, ok := checkVoice(ctx, cfg, secrets, online); ok {
+				results = append(results, r)
+			}
 		}
 		results = append(results, checkMounts(d, cfg)...)
 		results = append(results, checkRelay(ctx, env, cfg, online)...)
@@ -180,6 +183,7 @@ func secretRefs(cfg *agentdir.Config) []secretRef {
 	}
 	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a-serve config set --google-client-secret -"})
 	refs = append(refs, secretRef{"--backup-key", cfg.Backup.Key, "a2a-serve config set --backup-key -"})
+	refs = append(refs, secretRef{"--voice-key", cfg.Voice.Key, "a2a-serve config set --voice-key -"})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {

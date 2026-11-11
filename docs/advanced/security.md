@@ -64,7 +64,7 @@ A wake signature stays valid for a few minutes, so a node that must not act twic
 
 Starting an agent runs what its files say. Read the files you didn't write before you start an agent from a cloned repository, as you would a Makefile or a CI config.
 
-- **`.a2a/config.yaml`** decides the agent's command, image, mounts, secrets, network, who may call it, which tool calls run without asking, and where backups go. `sandbox: local` turns off isolation, and `allowBroadMounts` can expose your home directory.
+- **`.a2a/config.yaml`** decides the agent's command, image, mounts, secrets, network, who may call it, which tool calls run without asking, where backups go, and which speech service gets voice notes. `sandbox: local` turns off isolation, and `allowBroadMounts` can expose your home directory.
 - **`.a2a/state/`** holds secrets, pairings and the network identity. Delete a `state/` that came with a repository before you start the agent.
 - **`.a2a/recipe.lock`** names the repository that `a2a-serve recipe` fetches. Check that you trust it.
 - **`.mcp.json`** decides which MCP servers the agent starts and which URLs it calls.

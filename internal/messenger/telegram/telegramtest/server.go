@@ -67,7 +67,9 @@ type Message struct {
 	ParseMode string
 	Buttons   []Button
 	Document  string
-	Edits     int
+	// Voice is the file name of a voice note.
+	Voice string
+	Edits int
 }
 
 // Plain returns the text without MarkdownV2 escapes and markers.
@@ -178,6 +180,19 @@ func (s *Server) Say(u User, text string) {
 	s.mu.Unlock()
 	s.push(map[string]any{"message": map[string]any{
 		"message_id": id, "date": time.Now().Unix(), "chat": privateChat(u.ID), "from": u, "text": text,
+	}})
+}
+
+// SayVoice queues a voice note from u to the bot in their private chat,
+// whose audio is the file fileID, which [Server.SetFile] sets.
+func (s *Server) SayVoice(u User, fileID string) {
+	s.mu.Lock()
+	id := s.nextMessage
+	s.nextMessage++
+	s.mu.Unlock()
+	s.push(map[string]any{"message": map[string]any{
+		"message_id": id, "date": time.Now().Unix(), "chat": privateChat(u.ID), "from": u,
+		"voice": map[string]any{"file_id": fileID, "file_unique_id": fileID, "duration": 3, "mime_type": "audio/ogg"},
 	}})
 }
 
@@ -327,8 +342,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch method {
 	case "getMe":
 		s.writeResult(w, Bot)
-	case "sendMessage", "sendDocument":
-		s.writeResult(w, s.send(params, doc, 0))
+	case "sendMessage", "sendDocument", "sendVoice":
+		s.writeResult(w, s.send(method, params, doc, 0))
 	case "editMessageText":
 		s.edit(w, params)
 	default:
@@ -368,8 +383,10 @@ func parseParams(contentType string, body []byte) (url.Values, string, error) {
 	}
 	maps.Copy(params, form.Value)
 	doc := ""
-	if fs := form.File["document"]; len(fs) > 0 {
-		doc = fs[0].Filename
+	for _, field := range []string{"document", "voice"} {
+		if fs := form.File[field]; len(fs) > 0 {
+			doc = fs[0].Filename
+		}
 	}
 	return params, doc, form.RemoveAll()
 }
@@ -435,10 +452,16 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// send records a message the bot sent; id is its ID, or 0 for the next.
-func (s *Server) send(params url.Values, doc string, id int) map[string]any {
+// send records a message the bot sent with method; id is its ID, or 0 for
+// the next. file is the name of an uploaded document or voice note.
+func (s *Server) send(method string, params url.Values, file string, id int) map[string]any {
 	chat, _ := strconv.ParseInt(params.Get("chat_id"), 10, 64)
-	m := &Message{ID: id, ChatID: chat, Text: params.Get("text"), ParseMode: params.Get("parse_mode"), Buttons: buttons(params), Document: doc}
+	m := &Message{ID: id, ChatID: chat, Text: params.Get("text"), ParseMode: params.Get("parse_mode"), Buttons: buttons(params)}
+	if method == "sendVoice" {
+		m.Voice = file
+	} else {
+		m.Document = file
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m.ID == 0 {
@@ -533,8 +556,8 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, method string, 
 		s.mu.Lock()
 		s.upstreamErrors = append(s.upstreamErrors, method+": "+result.Description)
 		s.mu.Unlock()
-	case method == "sendMessage" || method == "sendDocument":
-		s.send(params, doc, result.Result.MessageID)
+	case method == "sendMessage" || method == "sendDocument" || method == "sendVoice":
+		s.send(method, params, doc, result.Result.MessageID)
 	case method == "editMessageText":
 		s.edit(httptest.NewRecorder(), params)
 	}

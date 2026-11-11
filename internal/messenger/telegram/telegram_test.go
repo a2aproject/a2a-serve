@@ -39,7 +39,7 @@ func TestMessenger(t *testing.T) {
 	api.Push(`{"callback_query":{"id":"cb1","from":{"id":42,"is_bot":false,"first_name":"Anna"},"data":"h:abcd1234:1","message":{"message_id":7,"date":1700000000,"chat":{"id":42,"type":"private"}}}}`)
 	api.Push(`{"message":{"message_id":8,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna","username":"anna"},"text":"approve",` +
 		`"reply_to_message":{"message_id":7,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":99,"is_bot":true,"first_name":"Coder"}}}}`)
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 
 	if got := c.Describe(); got != "@my_coder_bot" {
@@ -112,7 +112,7 @@ func TestRunKeepsUpdateOrder(t *testing.T) {
 	for _, u := range updates {
 		api.Push(u)
 	}
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 
 	ctx := t.Context()
@@ -143,7 +143,7 @@ func TestRunLeavesUpdatesNotHandedOverForTheNextRun(t *testing.T) {
 		api.Push(fmt.Sprintf(`{"message":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"m%d"}}`, i+1, i))
 	}
 	run := func(ctx context.Context, in chan messenger.Inbound) <-chan struct{} {
-		c := New("123:abc")
+		c := New("123:abc", nil)
 		c.ServerURL = api.URL
 		done := make(chan struct{})
 		go func() {
@@ -189,7 +189,7 @@ func TestRunReportsPollingState(t *testing.T) {
 	t.Parallel()
 	api := telegramtest.NewServer(t, telegramtest.Options{})
 	api.Fail("getUpdates", telegramtest.Failure{Status: http.StatusUnauthorized, Body: `{"ok":false,"error_code":401,"description":"Unauthorized"}`})
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 	reports := make(chan error, 100)
 	go func() {
@@ -236,7 +236,7 @@ func TestGroupMessages(t *testing.T) {
 	} {
 		api.Push(u)
 	}
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 
 	in := make(chan messenger.Inbound, 10)
@@ -286,7 +286,7 @@ func TestDownload(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := New("123:abc")
+			c := New("123:abc", nil)
 			c.ServerURL = api.URL
 			if tc.timeout != 0 {
 				c.downloadTimeout = tc.timeout
@@ -325,7 +325,7 @@ func TestValidateInvalidToken(t *testing.T) {
 			t.Parallel()
 			api := telegramtest.NewServer(t, telegramtest.Options{})
 			api.Fail("getMe", telegramtest.Failure{Status: http.StatusNotFound, Body: tc.response})
-			c := New("123:abc")
+			c := New("123:abc", nil)
 			c.ServerURL = api.URL
 			err := c.Validate(t.Context())
 			if err == nil || err.Error() != "invalid Telegram bot token" {
@@ -356,7 +356,7 @@ func TestSendAndEditRateLimit(t *testing.T) {
 			api := telegramtest.NewServer(t, telegramtest.Options{})
 			api.Fail("sendMessage", limited)
 			api.Fail("editMessageText", limited)
-			c := New("123:abc")
+			c := New("123:abc", nil)
 			c.ServerURL = api.URL
 			var limit *messenger.RateLimitError
 			err := tc.call(c)
@@ -395,7 +395,7 @@ func TestSendAndEditFallBackToPlainTextWhenTooLong(t *testing.T) {
 			t.Parallel()
 			api := telegramtest.NewServer(t, telegramtest.Options{})
 			api.Fail(tc.method, tooLong)
-			c := New("123:abc")
+			c := New("123:abc", nil)
 			c.ServerURL = api.URL
 			if err := tc.call(c); err != nil {
 				t.Fatalf("Messenger error = %v, want nil", err)
@@ -435,7 +435,7 @@ func TestSendAndEditShowLiteralTextWithoutMarkup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			api := telegramtest.NewServer(t, telegramtest.Options{})
-			c := New("123:abc")
+			c := New("123:abc", nil)
 			c.ServerURL = api.URL
 
 			if err := tc.call(c); err != nil {
@@ -457,7 +457,7 @@ func TestDownloadErrorHidesBotToken(t *testing.T) {
 	t.Parallel()
 	api := telegramtest.NewServer(t, telegramtest.Options{})
 	api.SetFile("slow.bin", nil)
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 	c.downloadTimeout = 100 * time.Millisecond
 	if err := c.Validate(t.Context()); err != nil {
@@ -476,7 +476,7 @@ func TestHandleMessageReportsFailedAttachments(t *testing.T) {
 	api := telegramtest.NewServer(t, telegramtest.Options{})
 	api.SetFile("big.bin", bytes.Repeat([]byte("x"), maxFile+1))
 	api.Push(`{"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"caption":"look","document":{"file_id":"big.bin","file_name":"big.bin"}}}`)
-	c := New("123:abc")
+	c := New("123:abc", nil)
 	c.ServerURL = api.URL
 	in := make(chan messenger.Inbound, 1)
 	go func() {
@@ -508,5 +508,136 @@ func TestKeyboardRows(t *testing.T) {
 	}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("keyboard() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestHandleMessageDownloadsVoiceNotes(t *testing.T) {
+	t.Parallel()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.SetFile("voice1", []byte("OggS voice"))
+	api.SetFile("song1", []byte("ID3 song"))
+	api.SayVoice(telegramtest.User{ID: 42, FirstName: "Anna"}, "voice1")
+	api.Push(`{"message":{"message_id":9,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"audio":{"file_id":"song1","file_unique_id":"song1","duration":5,"file_name":"memo.mp3","mime_type":"audio/mpeg"}}}`)
+	c := New("123:abc", nil)
+	c.ServerURL = api.URL
+	in := make(chan messenger.Inbound, 2)
+	go func() {
+		if err := c.Run(t.Context(), in, func(error) {}); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+	var got [][]messenger.File
+	for range 2 {
+		var m messenger.Inbound
+		select {
+		case m = <-in:
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run() delivered no message")
+		}
+		if err := m.Prepare(t.Context(), &m); err != nil {
+			t.Fatalf("Inbound.Prepare() error = %v, want nil", err)
+		}
+		got = append(got, m.Files)
+	}
+	want := [][]messenger.File{
+		{{Name: "voice.ogg", MediaType: "audio/ogg", Data: []byte("OggS voice")}},
+		{{Name: "memo.mp3", MediaType: "audio/mpeg", Data: []byte("ID3 song")}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Inbound.Prepare() wrong files (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSendFiles(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		file      messenger.File
+		failVoice bool
+		voiceErr  string
+		want      telegramtest.Message
+	}{
+		{
+			name: "voice note",
+			file: messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
+			want: telegramtest.Message{ID: 1, ChatID: 42, Voice: "reply.ogg"},
+		},
+		{
+			name: "mp3 voice note",
+			file: messenger.File{Name: "reply.mp3", MediaType: "audio/mpeg", Data: []byte("ID3"), Voice: true},
+			want: telegramtest.Message{ID: 1, ChatID: 42, Voice: "reply.mp3"},
+		},
+		{
+			name: "audio file",
+			file: messenger.File{Name: "song.mp3", MediaType: "audio/mpeg", Data: []byte("ID3")},
+			want: telegramtest.Message{ID: 1, ChatID: 42, Document: "song.mp3"},
+		},
+		{
+			name:      "voice notes refused",
+			file:      messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
+			failVoice: true,
+			want:      telegramtest.Message{ID: 1, ChatID: 42, Document: "reply.ogg"},
+		},
+		{
+			name:     "voice note failing otherwise",
+			file:     messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
+			voiceErr: "Bad Request: chat not found",
+		},
+		{
+			name: "document",
+			file: messenger.File{Name: "report.pdf", MediaType: "application/pdf", Data: []byte("%PDF")},
+			want: telegramtest.Message{ID: 1, ChatID: 42, Document: "report.pdf"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
+			if tc.failVoice {
+				api.Fail("sendVoice", telegramtest.Failure{Status: http.StatusBadRequest, Body: `{"ok":false,"error_code":400,"description":"Bad Request: VOICE_MESSAGES_FORBIDDEN"}`})
+			}
+			if tc.voiceErr != "" {
+				api.Fail("sendVoice", telegramtest.Failure{Status: http.StatusBadRequest, Body: `{"ok":false,"error_code":400,"description":"` + tc.voiceErr + `"}`})
+			}
+			c := New("123:abc", nil)
+			c.ServerURL = api.URL
+			_, err := c.Send(t.Context(), messenger.Outbound{Conv: "42", Files: []messenger.File{tc.file}})
+			if tc.voiceErr != "" {
+				if err == nil || len(api.Messages()) != 0 {
+					t.Fatalf("Send() error = %v, messages %v, want the error and no file sent", err, api.Messages())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Send() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff([]telegramtest.Message{tc.want}, api.Messages()); diff != "" {
+				t.Fatalf("Send() wrong messages (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestRunSetsCommandMenu(t *testing.T) {
+	t.Parallel()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	c := New("123:abc", []messenger.Command{{Name: "new", Description: "Start a new conversation"}, {Name: "voice", Description: "Turn voice replies on or off for you", Choices: []string{"on", "off"}}})
+	c.ServerURL = api.URL
+	go func() {
+		if err := c.Run(t.Context(), make(chan messenger.Inbound), func(error) {}); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(api.Calls("setMyCommands")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("Run() didn't set the command menu")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := api.Calls("setMyCommands")[0].Get("commands")
+	want := `[{"command":"new","description":"Start a new conversation"},{"command":"voice","description":"Turn voice replies on or off for you"}]`
+	if got != want {
+		t.Fatalf("setMyCommands commands = %s, want %s", got, want)
 	}
 }

@@ -107,6 +107,11 @@ type Settings struct {
 
 	TaskTTL        string
 	ContactRefresh string
+
+	Voice string
+	// VoiceKey is env:VAR, secret:NAME or the value.
+	VoiceKey  string
+	VoiceName string
 }
 
 // EmailSettings configure the email messenger. Password, OAuthClientSecret
@@ -137,6 +142,7 @@ const (
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 	SecretRelayToken    = "RELAY_TOKEN"
 	SecretBackupKey     = "BACKUP_KEY"
+	SecretVoiceKey      = "VOICE_API_KEY"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns

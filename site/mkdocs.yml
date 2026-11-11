@@ -81,6 +81,7 @@ nav:
       - Networks: guide/networks.md
       - Relays: guide/relays.md
       - Messengers: guide/messengers.md
+      - Voice: guide/voice.md
       - Agent2Agent: guide/agent2agent.md
       - Schedules: guide/schedules.md
       - Webhook Nodes: guide/webhook-nodes.md
@@ -93,6 +94,7 @@ nav:
       - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
       - Observability Agent: examples/04-observability-agent/index.md
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
+      - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
@@ -127,5 +129,6 @@ nav:
       - Output and Exit Codes: reference/output.md
       - HTTP Routes: reference/http-routes.md
       - Approval Messages: reference/approval-messages.md
+      - Audio Messages: reference/audio-messages.md
       - Limits: reference/limits.md
       - The a2a CLI: reference/a2a-cli.md

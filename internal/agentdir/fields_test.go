@@ -109,6 +109,21 @@ func TestUnset(t *testing.T) {
 	}
 }
 
+func TestUnsetVoiceClearsKeyAndName(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Voice: VoiceConfig{Service: "openai", Key: SecretPrefix + SecretVoiceKey, Name: "nova"}}
+	deleted, err := (Dir{}).Unset(cfg, "voice", nil)
+	if err != nil {
+		t.Fatalf("Dir.Unset() error = %v, want nil", err)
+	}
+	if diff := cmp.Diff([]string{SecretVoiceKey}, deleted); diff != "" {
+		t.Fatalf("Dir.Unset() wrong deleted secrets (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(&Config{}, cfg); diff != "" {
+		t.Fatalf("Dir.Unset() wrong config (-want +got) diff = %s", diff)
+	}
+}
+
 func TestDiff(t *testing.T) {
 	t.Parallel()
 	old := fullConfig()
@@ -337,6 +352,8 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 	}
 	// The inject flags take rules, and also store the secrets they name.
 	ruleValues := map[string]string{InjectHeaderSetting: "h.example=X-Token: $V", InjectModelKeySetting: "openrouter=V"}
+	// --voice takes a service name or a URL.
+	scalarValues := map[string]string{"voice": "openai"}
 	for _, fl := range (&Settings{}).Flags(all) {
 		t.Run(fl.Name, func(t *testing.T) {
 			t.Parallel()
@@ -346,6 +363,9 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 			switch v := flags[slices.IndexFunc(flags, func(f Flag) bool { return f.Name == fl.Name })].Value.(type) {
 			case *string:
 				*v = "V"
+				if sv, ok := scalarValues[fl.Name]; ok {
+					*v = sv
+				}
 			case *int:
 				*v = 7
 			case *[]string:

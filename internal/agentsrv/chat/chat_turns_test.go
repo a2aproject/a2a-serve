@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -181,6 +182,7 @@ type turnsFixture struct {
 	sender     *fakeTurnSender
 	unattended *ContextSet
 	turns      *ChatTurns
+	cfg        atomic.Pointer[agentdir.Config]
 }
 
 func newTurnsFixture(t *testing.T) *turnsFixture {
@@ -201,7 +203,9 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
 	unattended := &ContextSet{}
-	config := func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }
+	tf := &turnsFixture{chatFixture: fx, ch: ch, sender: sender, unattended: unattended}
+	tf.cfg.Store(&agentdir.Config{Name: "coder"})
+	config := tf.cfg.Load
 	svc := approvals.New(approvals.Deps{
 		Records:      fx.records,
 		Sender:       sender,
@@ -237,7 +241,8 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 		}
 	})
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, messenger: "fake", identity: "telegram:1", conv: "dm1"})
-	return &turnsFixture{chatFixture: fx, ch: ch, sender: sender, unattended: unattended, turns: turns}
+	tf.turns = turns
+	return tf
 }
 
 func (fx *turnsFixture) setContext(t *testing.T, conv, contextID string) {
@@ -359,6 +364,10 @@ func TestChatTurnsKeepsContextUntilNewConversation(t *testing.T) {
 	}
 }
 
+const helpList = "Commands:\n/new - Start a new conversation\n/stop - Stop the current task\n/allowed - Show and remove what runs without asking for you\n/voice - Turn voice replies on or off for you\n/help - List the commands"
+
+const startText = "Hi! I'm coder. Write what you need.\n\n" + helpList
+
 func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -371,12 +380,32 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 		{
 			name:     "start greets",
 			identity: "telegram:1", conv: "dm1", text: "/start",
-			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.",
+			want: startText,
 		},
 		{
 			name:     "start addressed to the bot greets",
 			identity: "telegram:1", conv: "dm1", text: "/START@coder_bot",
-			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.",
+			want: startText,
+		},
+		{
+			name:     "help lists the commands",
+			identity: "telegram:1", conv: "dm1", text: "/help",
+			want: helpList,
+		},
+		{
+			name:     "voice without a speech service tells the owner how to set it up",
+			identity: "telegram:1", conv: "dm1", text: "/voice on",
+			want: "Voice replies aren't set up on this agent. Set up voice with `a2a-serve config set --voice <service>`; see `a2a-serve help config set`.",
+		},
+		{
+			name:     "voice state without a speech service tells the owner how to set it up",
+			identity: "telegram:1", conv: "dm1", text: "/voice",
+			want: "Voice replies aren't set up on this agent. Set up voice with `a2a-serve config set --voice <service>`; see `a2a-serve help config set`.",
+		},
+		{
+			name:     "voice off",
+			identity: "telegram:1", conv: "dm1", text: "/voice off",
+			want: "Voice replies are off. /voice on turns them on.",
 		},
 		{
 			name:     "new tells it started a conversation",
@@ -1208,4 +1237,56 @@ func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
 	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1"); err != nil || !slices.Contains(ids, rec.ID) {
 		t.Fatalf("PendingQuestions() = %q, %v, want %q among them", ids, err, rec.ID)
 	}
+}
+
+func TestChatTurnsCommandWithTextGoesToAgent(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.ch.Write("telegram:1", "dm1", "/new idea for the parser")
+	call := fx.sender.nextStream(t)
+	if got := call.req.Message.Parts[0].Text(); got != "/new idea for the parser" {
+		t.Fatalf("SendStreamingMessage() text = %q, want the message as sent", got)
+	}
+}
+
+func TestChatTurnsVoiceReplies(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.cfg.Store(&agentdir.Config{Name: "coder", Voice: agentdir.VoiceConfig{Service: "http://localhost:8000/v1"}})
+	fx.link(t, linkSpec{pairing: "anna", role: auth.RoleMember, messenger: "fake", identity: "telegram:2", conv: "dm2"})
+	modes := func(conv, identity string) []string {
+		t.Helper()
+		fx.ch.Write(identity, conv, "hello")
+		call := fx.sender.nextStream(t)
+		if call.req.Config == nil {
+			return nil
+		}
+		return call.req.Config.AcceptedOutputModes
+	}
+
+	if got := modes("dm2", "telegram:2"); got != nil {
+		t.Fatalf("accepted output modes before /voice on = %q, want none", got)
+	}
+	fx.ch.Write("telegram:2", "dm2", "/voice on")
+	fx.ch.WaitFor(t, "dm2", messengertest.HasText("Voice replies are on. I'll send a voice note with each answer. /voice off turns them off."))
+	if diff := cmp.Diff([]string{"text/plain", "audio/ogg"}, modes("dm2", "telegram:2")); diff != "" {
+		t.Fatalf("accepted output modes after /voice on wrong result (-want +got) diff = %s", diff)
+	}
+	if got := modes("dm1", "telegram:1"); got != nil {
+		t.Fatalf("accepted output modes of another person = %q, want none", got)
+	}
+	fx.ch.Write("telegram:2", "dm2", "/voice off")
+	fx.ch.WaitFor(t, "dm2", messengertest.HasText("Voice replies are off. /voice on turns them on."))
+	if got := modes("dm2", "telegram:2"); got != nil {
+		t.Fatalf("accepted output modes after /voice off = %q, want none", got)
+	}
+}
+
+func TestChatTurnsVoiceNotSetUpForMember(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.link(t, linkSpec{pairing: "anna", role: auth.RoleMember, messenger: "fake", identity: "telegram:2", conv: "dm2"})
+	fx.ch.Write("telegram:2", "dm2", "/voice on")
+	fx.ch.WaitFor(t, "dm2", messengertest.HasText("Voice replies aren't set up on this agent. Ask its owner to set them up."))
+	fx.sender.wantIdle(t)
 }

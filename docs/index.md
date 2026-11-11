@@ -6,6 +6,7 @@ Turn opencode, Claude Code, or any ACP coding agent into a sandboxed [A2A](https
 > A2A Serve is pre-1.0. Commands, flags, and `config.yaml` keys may change; stored state always migrates forward. Read [Security](advanced/security.md) and [Known Limitations](#known-limitations) before exposing an agent to other people.
 
 - **Use your agent from your phone:** message it on [Telegram, Discord, or email](guide/messengers.md) and approve edits or commands from chat.
+- **Talk to it:** send [voice notes](guide/voice.md) and get voice replies, through OpenAI or a speech server you run.
 - **Share an agent with your team:** expose it on [Tailscale, an Agent Mesh relay, or a public URL](guide/networks.md) with [pairing codes](guide/identities.md) or [Google sign-in](guide/email-sign-in.md).
 - **Let agents call other agents:** delegate tasks to [contacts, peers](guide/agent2agent.md), and [webhook nodes](guide/webhook-nodes.md) while keeping tokens outside the sandbox.
 - **Package repeatable setups:** bundle instructions, skills, [MCP servers](guide/mcp-and-skills.md), and [schedules](guide/schedules.md) into a one-command [recipe](guide/recipes.md).
@@ -49,6 +50,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 3. **[Agent Mesh Relay](../examples/03-agentmesh-relay/README.md):** connect two agents through a local relay without Tailscale.
 4. **[Observability Agent](../examples/04-observability-agent/README.md):** run a read-only production assistant from a Grafana recipe.
 5. **[Relay on Cloud Run](../examples/05-relay-cloud-run/README.md):** deploy a persistent relay with Cloud SQL and Secret Manager.
+6. **[Talk to Your Agent on Telegram](../examples/06-telegram-voice/README.md):** send voice notes to the agent and get voice replies.
 
 ## User Guide
 
@@ -57,9 +59,9 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 | **Setup & sandbox** | [Getting Started](getting-started.md) · [Supported Agents](guide/supported-agents.md) · [Running](guide/running.md) · [Config](guide/config.md) · [Secrets](guide/secrets.md) · [Sandbox](guide/sandbox.md) |
 | **Extend & operate** | [MCP and Skills](guide/mcp-and-skills.md) · [Recipes](guide/recipes.md) · [Schedules](guide/schedules.md) · [Backups](guide/backups.md) · [Shell Completion](guide/shell-completion.md) |
 | **Access & approvals** | [Approvals](guide/approvals.md) · [Inspector](guide/inspector.md) · [Identities](guide/identities.md) · [Email Sign-In](guide/email-sign-in.md) |
-| **Networks & chat** | [Networks](guide/networks.md) · [Relays](guide/relays.md) · [Messengers](guide/messengers.md) |
+| **Networks & chat** | [Networks](guide/networks.md) · [Relays](guide/relays.md) · [Messengers](guide/messengers.md) · [Voice](guide/voice.md) |
 | **Multi-agent** | [Agent2Agent](guide/agent2agent.md) · [Webhook Nodes](guide/webhook-nodes.md) |
-| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Sandboxing](advanced/sandboxing.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
+| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Sandboxing](advanced/sandboxing.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Audio Messages](reference/audio-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
 
 ## Known Limitations
 

@@ -832,6 +832,25 @@ func TestDataPartReplyToApproval(t *testing.T) {
 	}
 }
 
+func TestVoiceNoteReplyToApproval(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+	msg := a2a.NewMessage(a2a.MessageRoleUser, voiceNote())
+	msg.TaskID, msg.ContextID = asked.ID, asked.ContextID
+
+	got := send(t, c, msg)
+
+	if got.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s (%s), want %s", got.Status.State, a2atext.Message(got.Status.Message), a2a.TaskStateInputRequired)
+	}
+	const want = "A voice note can't answer this question, so it still waits for an answer. Reply with one of: once, always, reject."
+	if text := a2atext.Message(got.Status.Message); !strings.Contains(text, want) {
+		t.Fatalf("task text = %q, want it to contain %q", text, want)
+	}
+}
+
 func numberedAnswer(task *a2a.Task, option string, seq int) *a2a.Message {
 	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewDataPart(map[string]any{"option": option, "seq": seq}))
 	msg.TaskID, msg.ContextID = task.ID, task.ContextID

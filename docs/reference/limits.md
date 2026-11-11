@@ -68,6 +68,19 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | Attachment size | 20 MiB. The chat says when an attachment isn't passed to the agent. |
 | Pairing code | Works once, for 15 minutes |
 
+## Voice
+
+| Limit | Value |
+| --- | --- |
+| Size of a recording | 25 MiB, and the attachment size of the messenger |
+| Length of a recording | 5 minutes |
+| Formats of a recording | Ogg Opus, MP3 and WAV. Owners can send other formats, which aren't measured. |
+| Recordings in one message | 10 |
+| Call of the speech service | 60 seconds |
+| Speech calls of one person | 60 an hour, transcriptions and voice replies together. Guests share 60 an hour, for the public URL and for each messenger. Owners have no limit. |
+| Spoken part of a reply | About 1,000 characters of prose, or about 4,000 characters of a `<speak>` block. A longer reply is cut, and the voice note ends with "The rest is in the text." |
+| Voice replies of an email sender without a pairing | Turned off after 90 days without a message |
+
 ## Sign-in
 
 | Limit | Value |

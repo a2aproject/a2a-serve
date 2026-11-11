@@ -86,7 +86,7 @@ func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agent
 	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		old := cfg.Clone()
 		store, err := s.Apply(cfg, d)
-		return store, agentdir.DroppedInjected(old, cfg), err
+		return store, agentdir.DroppedSecrets(old, cfg), err
 	}, dryRun)
 }
 

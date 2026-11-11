@@ -19,6 +19,10 @@ Each chat or thread is one conversation. In the chat:
 - `/new` starts a new conversation.
 - `/stop` cancels the running task.
 - `/allowed` lists the tool calls that run without asking you ([Approvals](approvals.md#allowed-in-all-your-conversations)).
+- `/voice on` and `/voice off` turn voice replies on and off for you ([Voice](voice.md)).
+- `/help` lists the commands.
+
+With [voice](voice.md) set up, the agent gets your voice notes as text.
 
 ## Telegram
 
@@ -26,7 +30,7 @@ Answers stream into one message, and approvals are buttons. In groups, the bot a
 
 ## Discord
 
-The bot needs the Message Content intent. Each conversation gets a thread in server channels. `/join`, `/new` and `/stop` are slash commands.
+The bot needs the Message Content intent. Each conversation gets a thread in server channels. `/join` and the chat commands are slash commands.
 
 ## Email
 

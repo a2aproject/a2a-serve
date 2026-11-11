@@ -18,6 +18,7 @@ package telegram
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -49,6 +50,8 @@ var defaultServerURL string
 // Messenger is a Telegram bot.
 type Messenger struct {
 	token string
+	// commands are the bot's command menu.
+	commands []messenger.Command
 	// ServerURL overrides the Bot API URL, for tests.
 	ServerURL       string
 	downloadTimeout time.Duration
@@ -69,9 +72,10 @@ var (
 	_ messenger.Validator = (*Messenger)(nil)
 )
 
-// New returns a messenger for the bot with token.
-func New(token string) *Messenger {
-	return &Messenger{token: token, ServerURL: defaultServerURL, downloadTimeout: 2 * time.Minute}
+// New returns a messenger for the bot with token, whose command menu lists
+// commands.
+func New(token string, commands []messenger.Command) *Messenger {
+	return &Messenger{token: token, commands: commands, ServerURL: defaultServerURL, downloadTimeout: 2 * time.Minute}
 }
 
 // Name implements [messenger.Messenger].
@@ -159,11 +163,11 @@ func (c *Messenger) Run(ctx context.Context, in chan<- messenger.Inbound, report
 	c.mu.Lock()
 	c.in, c.report, c.runCtx = in, report, ctx
 	c.mu.Unlock()
-	if _, err := c.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
-		{Command: "new", Description: "Start a new conversation"},
-		{Command: "stop", Description: "Stop the current task"},
-		{Command: "allowed", Description: "Show and remove what runs without asking for you"},
-	}}); err != nil {
+	menu := make([]models.BotCommand, len(c.commands))
+	for i, cmd := range c.commands {
+		menu[i] = models.BotCommand{Command: cmd.Name, Description: cmd.Description}
+	}
+	if _, err := c.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: menu}); err != nil {
 		slog.Warn("telegram: setting commands", "error", err)
 	}
 	c.bot.Start(ctx)
@@ -299,6 +303,12 @@ func (c *Messenger) handleMessage(ctx context.Context, b *bot.Bot, msg *models.M
 	}
 	if n := len(msg.Photo); n > 0 {
 		files = append(files, attachment{msg.Photo[n-1].FileID, "photo.jpg", "image/jpeg"})
+	}
+	if v := msg.Voice; v != nil {
+		files = append(files, attachment{v.FileID, "voice.ogg", cmp.Or(v.MimeType, "audio/ogg")})
+	}
+	if a := msg.Audio; a != nil {
+		files = append(files, attachment{a.FileID, cmp.Or(a.FileName, "audio"), cmp.Or(a.MimeType, "audio/mpeg")})
 	}
 	if len(files) > 0 {
 		m.Prepare = func(ctx context.Context, in *messenger.Inbound) error {
@@ -471,12 +481,9 @@ func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.R
 	}
 	var ref messenger.Ref
 	for _, f := range m.Files {
-		msg, err := c.bot.SendDocument(ctx, &bot.SendDocumentParams{
-			ChatID: chat, MessageThreadID: thread,
-			Document: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
-		})
+		msg, err := c.sendFile(ctx, chat, thread, f)
 		if err != nil {
-			return ref, apiError("sendDocument", err)
+			return ref, err
 		}
 		ref = messenger.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID)}
 	}
@@ -506,6 +513,35 @@ func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.R
 		ref = messenger.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID)}
 	}
 	return ref, nil
+}
+
+// sendFile sends f, a spoken reply as a voice note that plays in the chat.
+func (c *Messenger) sendFile(ctx context.Context, chat int64, thread int, f messenger.File) (*models.Message, error) {
+	if f.Voice {
+		msg, err := c.bot.SendVoice(ctx, &bot.SendVoiceParams{
+			ChatID: chat, MessageThreadID: thread,
+			Voice: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
+		})
+		// People can refuse voice notes in their privacy settings; they
+		// still get the reply as a file.
+		if err == nil || !strings.Contains(err.Error(), "VOICE_MESSAGES_FORBIDDEN") {
+			return msg, wrapAPIError("sendVoice", err)
+		}
+		slog.Debug("telegram: the person refuses voice notes; sending the voice reply as a file")
+	}
+	msg, err := c.bot.SendDocument(ctx, &bot.SendDocumentParams{
+		ChatID: chat, MessageThreadID: thread,
+		Document: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
+	})
+	return msg, wrapAPIError("sendDocument", err)
+}
+
+// wrapAPIError is [apiError], or nil for no error.
+func wrapAPIError(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return apiError(op, err)
 }
 
 // Edit implements [messenger.Messenger].

@@ -83,6 +83,40 @@ func TestBuildSkills(t *testing.T) {
 	}
 }
 
+func TestBuildModes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		voice      agentdir.VoiceConfig
+		wantInput  []string
+		wantOutput []string
+	}{
+		{
+			name:       "without voice",
+			wantInput:  []string{"text/plain", "application/octet-stream"},
+			wantOutput: []string{"text/plain", "application/json"},
+		},
+		{
+			name:       "with voice",
+			voice:      agentdir.VoiceConfig{Service: "openai", Key: "secret:VOICE_API_KEY"},
+			wantInput:  []string{"text/plain", "application/octet-stream", "audio/ogg", "audio/mpeg", "audio/wav"},
+			wantOutput: []string{"text/plain", "application/json", "audio/ogg"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			card := Build(&agentdir.Config{Name: "coder", Harness: "opencode", Voice: tc.voice}, Listener{Kind: network.ListenerLocal, URL: "http://127.0.0.1:9000"})
+			if diff := cmp.Diff(tc.wantInput, card.DefaultInputModes); diff != "" {
+				t.Fatalf("Build().DefaultInputModes wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantOutput, card.DefaultOutputModes); diff != "" {
+				t.Fatalf("Build().DefaultOutputModes wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestBuildSkillTagsServeAsArray(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Card: agentdir.CardConfig{Skills: []agentdir.CardSkill{{ID: "review"}}}}

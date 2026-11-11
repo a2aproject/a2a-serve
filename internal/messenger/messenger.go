@@ -183,6 +183,9 @@ type File struct {
 	Name      string
 	MediaType string
 	Data      []byte
+	// Voice marks a spoken reply, which messengers that have voice notes
+	// send as one.
+	Voice bool
 }
 
 // Action is a click on a question's button.
@@ -235,6 +238,14 @@ type Outbound struct {
 	// so that links and formatting can't hide any of it. It is set for
 	// approvals, whose text the owner has to read in full.
 	Literal bool
+}
+
+// Command is a chat command that messengers with a command menu list.
+type Command struct {
+	Name        string
+	Description string
+	// Choices are the values its argument takes, if it takes one.
+	Choices []string
 }
 
 // Question is a decision offered with buttons.

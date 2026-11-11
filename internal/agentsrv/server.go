@@ -193,6 +193,9 @@ type Server struct {
 	budget *guestBudget
 	// notes are the notes on tool calls for the results of tasks.
 	notes *toolNotes
+	// voice transcribes recordings and speaks replies; nil without a
+	// speech service.
+	voice *voiceTurns
 	// decider answers tool permissions without asking.
 	decider *toolDecider
 	// prefs are the tool calls people allowed in all their conversations.
@@ -486,6 +489,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
 		return err
 	}
+	if s.voice, err = s.buildVoice(ctx, opts.Now); err != nil {
+		return err
+	}
 
 	s.chatApprovals = chat.NewChatApprovals(ctx, chat.ChatApprovalsDeps{
 		Store:      s.store,
@@ -552,7 +558,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}},
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice},
 			a2asrv.WithTaskStore(s.tasks.CutLists()),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, dir: s.dir, removeHome: s.forgetHome}),

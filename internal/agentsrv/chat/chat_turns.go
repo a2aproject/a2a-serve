@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -277,16 +278,16 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	if in.Prepare != nil && !c.prepare(ctx, ch, &in, p) {
 		return
 	}
-	// Stops and answers must not wait for the turn they stop or unblock,
-	// which holds the conversation.
-	if isCommand(in.Text, "stop") {
-		c.queue.release(t)
-		c.stop(ctx, ch, in, p)
-		return
-	}
-	if first, _, _ := strings.Cut(strings.TrimSpace(in.Text), " "); isCommand(first, "allowed") && c.prefs != nil {
-		c.queue.release(t)
-		c.handleAllowed(ctx, ch, in, p)
+	// Commands that don't wait for the turn, such as /stop, and answers
+	// must not wait for the turn they stop or unblock, which holds the
+	// conversation.
+	if cmd, arg, ok := parseCommand(in.Text); ok {
+		if cmd.waits {
+			<-t.turn
+		} else {
+			c.queue.release(t)
+		}
+		cmd.handle(c, ctx, ch, in, p, arg)
 		return
 	}
 	switch rec, q, opt, kind := c.typedAnswer(ctx, in, ch.Caps().Buttons); kind {
@@ -301,21 +302,6 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	case unaddressedAnswer:
 		c.queue.release(t)
 		c.reply(ctx, ch, in, "Several questions wait for an answer here. Reply to the message of the question you answer.")
-		return
-	}
-
-	switch {
-	case isCommand(in.Text, "new"):
-		<-t.turn
-		if err := c.store.SetContext(ctx, in.Messenger, string(in.Conv), a2a.NewContextID()); err != nil {
-			slog.Error("starting a new context", "error", err)
-			return
-		}
-		c.reply(ctx, ch, in, "Started a new conversation.")
-		return
-	case isCommand(in.Text, "start"):
-		<-t.turn
-		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.", c.config().Name))
 		return
 	}
 
@@ -487,6 +473,21 @@ func (c *ChatTurns) stop(ctx context.Context, ch messenger.Messenger, in messeng
 	c.reply(ctx, ch, in, "Stopped.")
 }
 
+// voiceReplyModes are the output modes of a turn whose reply is spoken.
+var voiceReplyModes = []string{"text/plain", speech.MediaOgg}
+
+// withVoiceReply returns req asking for the reply as audio too.
+func withVoiceReply(req *a2a.SendMessageRequest) *a2a.SendMessageRequest {
+	out := *req
+	cfg := a2a.SendMessageConfig{}
+	if req.Config != nil {
+		cfg = *req.Config
+	}
+	cfg.AcceptedOutputModes = voiceReplyModes
+	out.Config = &cfg
+	return &out
+}
+
 // stream sends a message to the agent and renders the task in the conversation.
 func (c *ChatTurns) stream(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest) {
 	c.streamThen(ctx, ch, conv, replyTo, p, req, false, func(error) {})
@@ -496,6 +497,9 @@ func (c *ChatTurns) stream(ctx context.Context, ch messenger.Messenger, conv mes
 // message, with its first event, or with the error it was refused with.
 // With quiet, a refusal isn't shown in the chat.
 func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest, quiet bool, accepted func(error)) {
+	if c.voiceReplies(ctx, p) {
+		req = withVoiceReply(req)
+	}
 	rd := newRenderer(c.chat, ch, conv, replyTo, p)
 	rd.onWaitForOwner = func(taskID a2a.TaskID) { c.chat.followOwnerAnswer(ctx, ch, conv, p, taskID) }
 	first := true

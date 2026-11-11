@@ -79,7 +79,7 @@ What the rules don't protect:
 
 ## Tokens for the server
 
-Flags that give the server a token or password, such as `messenger add --token` or `config set --tailscale-authkey`, store the value in `state/secrets` too. The agent never sees these values.
+Flags that give the server a token or password, such as `messenger add --token`, `config set --tailscale-authkey` or `config set --voice-key`, store the value in `state/secrets` too. The agent never sees these values.
 
 ### Value forms
 

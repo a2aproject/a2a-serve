@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
+	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -304,6 +305,27 @@ func toolEntries(values []string) []string {
 		}
 	}
 	return out
+}
+
+// parseVoice checks the speech service of --voice.
+func parseVoice(_ Dir, v string) (string, error) {
+	v = strings.TrimSpace(v)
+	return v, speech.ParseService(v)
+}
+
+// mergeVoice sets the speech service of --voice. A key set for another host
+// is cleared, unless --voice-key comes with it, so that the key doesn't go
+// to a service it wasn't issued for.
+func mergeVoice(s *Settings, cfg *Config, d Dir, _ Secrets) error {
+	v, err := parseVoice(d, s.Voice)
+	if err != nil {
+		return fmt.Errorf("--voice: %w", err)
+	}
+	if s.VoiceKey == "" && speech.Host(v) != speech.Host(cfg.Voice.Service) {
+		cfg.Voice.Key = ""
+	}
+	cfg.Voice.Service = v
+	return nil
 }
 
 // parseNetwork reads "none" as no provider.
@@ -667,6 +689,23 @@ var fields = []field{
 		usage: "How long snapshots are kept, a `duration` in hours or days such as 48h or 7d; the latest is always kept (default 7d)",
 	},
 	{
+		access: str(func(c *Config) *string { return &c.Voice.Service }, func(s *Settings) *string { return &s.Voice }),
+		flag:   "voice", path: "voice.service", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: parseVoice, merge: mergeVoice,
+		usage:  "Speech `service` that transcribes voice notes and speaks replies: openai, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1",
+		values: speech.Services,
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Voice.Key }, func(s *Settings) *string { return &s.VoiceKey }),
+		flag:   "voice-key", path: "voice.key", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		secret: SecretVoiceKey,
+		usage:  "API key of the --voice service, which the agent doesn't get",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Voice.Name }, func(s *Settings) *string { return &s.VoiceName }),
+		flag:   "voice-name", path: "voice.name", place: placeOperational, scope: scopeOwner, section: SectionGeneral, parse: trimSpace,
+		usage: "Voice of the spoken replies, a `name` the --voice service has, such as nova for openai or am_michael for speaches (default: the service's own)",
+	},
+	{
 		access: str(func(c *Config) *string { return &c.TaskTTL }, func(s *Settings) *string { return &s.TaskTTL }),
 		flag:   "task-ttl", path: "taskTTL", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
 		usage: "How long finished tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted",
@@ -960,6 +999,10 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	}
 	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
 		cfg.Messengers.Email = nil
+	}
+	// The key and the voice belong to the service, and are invalid without it.
+	if f.path == "voice.service" {
+		cfg.Voice = VoiceConfig{}
 	}
 	if f.path == "inject" {
 		if err := cfg.dropInjectedSecrets(injected, nil); err != nil {
