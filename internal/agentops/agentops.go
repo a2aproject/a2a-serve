@@ -472,14 +472,14 @@ func (s *Service) DeleteMessenger(ctx context.Context, kind string) (*controlapi
 		return nil, &agenterr.NotFoundError{Kind: "messenger", Name: kind}
 	}
 	before := s.reportedAccess(ctx)
-	if err := s.deps.Store.ForgetMessenger(ctx, kind); err != nil {
-		return nil, err
-	}
 	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(kind, "", nil) }); err != nil {
 		return nil, err
 	}
 	if s.deps.Hooks.MessengerRemoved != nil {
 		s.deps.Hooks.MessengerRemoved(kind)
+	}
+	if err := s.deps.Store.ForgetMessenger(ctx, kind); err != nil {
+		return nil, err
 	}
 	return &controlapi.MessengerRemoval{Removed: kind, Access: ChangedAccess(before, s.reportedAccess(ctx))}, nil
 }

@@ -100,6 +100,52 @@ func TestNewConversationBindsChatAndRecordsIt(t *testing.T) {
 	}
 }
 
+func TestNewConversationKeepsContextFromBeforeHistory(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		history map[string]string
+		want    map[string][]string
+	}{
+		{
+			name: "context without history",
+			want: map[string][]string{"pair:anna": {"c2", "c1"}},
+		},
+		{
+			name:    "context in the history of someone else",
+			history: map[string]string{"pair:bob": "c1"},
+			want:    map[string][]string{"pair:anna": {"c2"}, "pair:bob": {"c1"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			if err := s.SetContext(ctx, "telegram", "dm1", "c1"); err != nil {
+				t.Fatalf("SetContext() error = %v", err)
+			}
+			for user, contextID := range tc.history {
+				if err := s.UseConversation(ctx, "telegram", "dm1", user, contextID); err != nil {
+					t.Fatalf("UseConversation() error = %v", err)
+				}
+			}
+			later := time.Now().Add(time.Minute)
+			s.now = func() time.Time { return later }
+
+			if err := s.NewConversation(ctx, "telegram", "dm1", "pair:anna", "c2"); err != nil {
+				t.Fatalf("NewConversation() error = %v", err)
+			}
+
+			for user, want := range tc.want {
+				if diff := cmp.Diff(want, contextIDs(t, s, "dm1", user)); diff != "" {
+					t.Fatalf("Conversations(%s) wrong result (-want +got) diff = %s", user, diff)
+				}
+			}
+		})
+	}
+}
+
 func TestSwitchConversation(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
