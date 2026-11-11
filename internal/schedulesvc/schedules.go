@@ -85,7 +85,8 @@ func (m Service) changed() {
 }
 
 // Add creates a schedule made by by. A schedule made in a conversation
-// (contextID set) runs as the conversation's user and continues it.
+// (contextID set) runs as the conversation's user and continues it, from a
+// group chat if ctx comes from one.
 func (m Service) Add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	if err := req.Validate(); err != nil {
 		return store.Schedule{}, agenterr.Invalid(err)
@@ -117,6 +118,7 @@ func (m Service) Add(ctx context.Context, req schedule.Request, by auth.Principa
 			return store.Schedule{}, err
 		}
 		s.UserID, s.UserIdentity, s.Conversation = by.ID, string(identity), schedule.ThreadSame
+		s.GroupChat = auth.IsGroupChat(ctx)
 	} else if s.UserID, err = ResolveUser(ctx, m.Store, req.As); err != nil {
 		return store.Schedule{}, err
 	}

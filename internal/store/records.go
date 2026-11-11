@@ -749,7 +749,10 @@ type Watch struct {
 	// its identity as JSON.
 	OnBehalfOf string
 	Identity   string
-	Created    time.Time
+	// GroupChat is whether the call came from a group chat, whose people
+	// share the conversation the result is posted to.
+	GroupChat bool
+	Created   time.Time
 	// FailingSince is when polling the task started failing, or zero.
 	FailingSince time.Time
 	// Generation counts the calls that watched the task again, such as a
@@ -761,15 +764,15 @@ type Watch struct {
 	StateChanged time.Time
 }
 
-const watchColumns = `contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since,
+const watchColumns = `contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, group_chat, created, failing_since,
 	generation, state, state_changed`
 
 // PutWatch stores a watch. Watching a task again starts a new generation
 // of its watch.
 func (s *Store) PutWatch(ctx context.Context, w Watch) error {
-	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created)
-		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id) DO UPDATE SET generation = generation + 1`,
-		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, w.Identity, s.now().UnixNano())
+	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, group_chat, created)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id) DO UPDATE SET generation = generation + 1`,
+		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, w.Identity, w.GroupChat, s.now().UnixNano())
 	return err
 }
 
@@ -778,7 +781,7 @@ func scanWatch(row interface{ Scan(...any) error }) (Watch, error) {
 		w                                   Watch
 		created, failingSince, stateChanged int64
 	)
-	err := row.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &w.Identity, &created, &failingSince,
+	err := row.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &w.Identity, &w.GroupChat, &created, &failingSince,
 		&w.Generation, &w.State, &stateChanged)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Watch{}, ErrNotFound

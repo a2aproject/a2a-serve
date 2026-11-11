@@ -527,7 +527,7 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	turnText, files := resultTurn(text)
-	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, Accepted: accepted, Quiet: again}
+	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, GroupChat: w.GroupChat, Accepted: accepted, Quiet: again}
 	if ws.resultToCaller(t) {
 		return true
 	}
