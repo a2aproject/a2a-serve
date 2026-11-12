@@ -25,6 +25,13 @@ CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@main &&
   a2a-serve doctor --fix
 ```
 
+To join Agent Mesh relays, build the Agent Mesh network provider next to `a2a-serve` from a clone:
+
+```bash
+git clone https://github.com/a2aproject/a2a-serve && cd a2a-serve/providers/agentmesh &&
+  CGO_ENABLED=0 go build -o "$(dirname "$(command -v a2a-serve)")/netprovider-agentmesh" .
+```
+
 </details>
 
 Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.

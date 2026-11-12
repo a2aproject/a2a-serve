@@ -40,7 +40,7 @@ runs:
     # Keep it in the Actions cache so a slow release download doesn't fail them.
     - name: Load agentmesh-one cache
       id: agentmesh-cache
-      if: github.job == 'test' && runner.os == 'Linux' && runner.arch == 'X64'
+      if: (github.job == 'test' || github.job == 'provider-agentmesh') && runner.os == 'Linux' && runner.arch == 'X64'
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.cache/a2a-serve/agentmesh-v*

@@ -91,10 +91,11 @@ a2a-serve recipe --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
+| `--network-token string` |  | Join token of the network, such as an Agent Mesh relay invite, to join without the sign-in link (secret value: env:VAR, -, or the value) |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
-| `--relay-token string` |  | Join token of an Agent Mesh relay, to join without the sign-in link (secret value: env:VAR, -, or the value) |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
 | `--tailscale-authkey string` |  | Tailscale auth key, to join without the login link (secret value: env:VAR, -, or the value) |
 | `--tailscale-control-url string` |  | Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server |
 

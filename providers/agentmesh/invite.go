@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build agentmesh
-
-package network
+package main
 
 import (
 	"context"
@@ -40,6 +38,40 @@ const inviteHashFile = "invite-hash"
 // setAsideCredentialFile keeps the mesh credential the agent had before it
 // got a new invite, until the relay accepts or refuses that invite.
 const setAsideCredentialFile = "set-aside-credential.json"
+
+// inviteError is a join the relay refused because of the agent's invite.
+type inviteError struct {
+	// Problem says what is wrong with the invite.
+	Problem string
+}
+
+func (e *inviteError) Error() string { return e.Problem }
+
+// inviteProblems map the enrollment errors of Agent Mesh to what they mean
+// for an invite. A longer error comes before the errors it contains.
+var inviteProblems = []struct{ mesh, problem string }{
+	{"Bootstrap token expired, revoked or exhausted", "the invite expired, was revoked or was already used"},
+	{"Bootstrap token max usages exceeded", "the invite was already used"},
+	{"Bootstrap token expired", "the invite expired"},
+	{"Bootstrap token revoked", "the invite was revoked"},
+	{"Bootstrap token owner is banned", "the relay removed the member who created the invite"},
+	{"Invalid bootstrap token", "the relay doesn't know this invite; check that it was copied whole"},
+}
+
+// explainJoin returns an [inviteError] for a join refused because of the
+// invite, and err otherwise.
+func explainJoin(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	for _, p := range inviteProblems {
+		if strings.Contains(msg, p.mesh) {
+			return &inviteError{Problem: p.problem}
+		}
+	}
+	return err
+}
 
 // inviteSwitch is a join with an invite other than the one the agent last
 // joined with.
@@ -126,23 +158,23 @@ func restoreMeshCredential(stateDir string) (bool, error) {
 // which it used before it got the invite, such as after a mistyped
 // --relay-token. An agent that never recorded its invite adopts it then:
 // it joined with that invite, which is used up.
-func (a *agentMesh) settleInvite(ctx context.Context, sw *inviteSwitch, srv meshServer, st *meshnet.Status, err error) (meshServer, *meshnet.Status, error) {
+func (j *join) settleInvite(ctx context.Context, sw *inviteSwitch, srv meshServer, st *meshnet.Status, err error) (meshServer, *meshnet.Status, error) {
 	if err == nil {
 		if sw != nil {
 			if rerr := sw.record(); rerr != nil {
 				slog.Warn("recording the relay invite", "error", rerr)
 			}
 		}
-		if rerr := removeFile(filepath.Join(a.cfg.StateDir, setAsideCredentialFile)); rerr != nil {
+		if rerr := removeFile(filepath.Join(j.req.StateDir, setAsideCredentialFile)); rerr != nil {
 			slog.Warn("removing the relay credential of the last invite", "error", rerr)
 		}
 		return srv, st, nil
 	}
-	var invite *InviteError
+	var invite *inviteError
 	if sw == nil || !errors.As(err, &invite) {
 		return srv, st, err
 	}
-	restored, rerr := restoreMeshCredential(a.cfg.StateDir)
+	restored, rerr := restoreMeshCredential(j.req.StateDir)
 	if rerr != nil {
 		return srv, st, errors.Join(err, fmt.Errorf("restoring the relay credential of the last invite: %w", rerr))
 	}
@@ -152,19 +184,19 @@ func (a *agentMesh) settleInvite(ctx context.Context, sw *inviteSwitch, srv mesh
 	if cerr := srv.Close(); cerr != nil {
 		slog.Warn("closing the refused relay join", "error", cerr)
 	}
-	srv = a.newMeshServer()
+	srv = j.newMeshServer()
 	st, rerr = srv.Up(ctx)
 	if rerr != nil {
 		slog.Warn("joining the relay with the credential of the last invite", "error", rerr)
 		return srv, st, err
 	}
 	if !sw.recorded {
-		if rerr := errors.Join(sw.record(), RecordJoin(a.cfg.StateDir, nil)); rerr != nil {
+		if rerr := sw.record(); rerr != nil {
 			slog.Warn("recording the relay invite", "error", rerr)
 		}
 		return srv, st, nil
 	}
 	slog.Warn("the relay refused the new invite; joined with the credential of the last invite", "problem", invite.Problem)
-	a.logf("! relay: %s; the agent joined with the credential of its last invite", invite.Problem)
+	j.logf("! relay: %s; the agent joined with the credential of its last invite", invite.Problem)
 	return srv, st, nil
 }

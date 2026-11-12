@@ -15,6 +15,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 | Component | What it does |
 | --- | --- |
 | Listeners | Accept requests on localhost, the private network, the public URL and the local control socket. |
+| Network providers | Join a network URL, such as an Agent Mesh relay, as separate processes. See [network providers](#network-providers). |
 | Auth | Turns each request into an identity and gives it one role. See the [access model](access-model.md). |
 | A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
 | Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |
@@ -43,8 +44,19 @@ The agent runs `a2a send` against a URL such as `http://a2a/k3/reviewer`. The re
 
 The server also relays the other agent's approval requests to the user, posts results that arrive later into the conversation as a new turn, and stops chains of calls from looping. The [agent-to-agent guide](../guide/agent2agent.md) shows how users set this up.
 
+## Network providers
+
+Tailscale runs inside the server. Other networks run in a network provider: a separate program, in any language, that the server starts for the agent and controls over stdio. Agent Mesh is the first one.
+
+- **The provider proves who calls.** It forwards each connection to the server unchanged, with a header that names the caller as the network proves it. The server terminates HTTP, applies its limits, and decides the caller's role with the same access model as on every network.
+- **The server decides the rest.** It names the provider, decides who the owner is from the email the agent signed in with, and checks everything the provider returns.
+- **Calls go out through the provider.** The server sends requests to other agents on the network through a tunnel the provider serves.
+- **Providers stay out of reach.** The server runs only providers it ships, pins, or that the user installed by fingerprint, from a directory outside `PATH`. Their sockets live in a directory the sandbox can't reach, and each connection carries a token.
+
+Each provider is its own Go module, so the core binary carries none of their dependencies, and a provider that needs cgo doesn't change how a2a-serve builds. The [protocol reference](../reference/network-providers.md) specifies the interface.
+
 ## Design notes
 
 - **Why the `a2a` CLI.** It is already in the sandbox and covers the whole A2A protocol. ACP can pass only MCP servers to a session, and an MCP bridge adds a tool surface for the agent to learn.
-- **Why calls go through the server.** The private network runs inside the server process, contact tokens stay out of the sandbox, and the server can route approvals and late results to people.
+- **Why calls go through the server.** The server reaches the private network, contact tokens stay out of the sandbox, and the server can route approvals and late results to people.
 - **What survives a restart.** Conversations, schedules and the tasks the server watches for other agents are stored in the database. Tasks that were running fail on restart, and their open questions close.

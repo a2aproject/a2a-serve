@@ -114,7 +114,9 @@ mkdir -p "$DEMO_WORK/you" "$DEMO_WORK/bin"
 
 if [[ -n "$BUILD" ]]; then
   echo "[demo] building a2a-serve" >&2
-  (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -tags agentmesh -o "$DEMO_WORK/bin/a2a-serve" .)
+  (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/a2a-serve" .)
+  # Release archives put the Agent Mesh network provider next to a2a-serve.
+  (cd "$REPO_ROOT/providers/agentmesh" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/netprovider-agentmesh" .)
   if [[ -n "$DEMO_FAKE" ]]; then
     (cd "$REPO_ROOT" && go build -o "$DEMO_WORK/bin/fakeacp" ./internal/agentsrv/testdata/fakeacp)
   fi

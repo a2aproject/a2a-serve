@@ -60,6 +60,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -100,8 +101,10 @@ type Options struct {
 	// Private and Public replace the networks of the config, for tests.
 	Private network.Provider
 	Public  network.Provider
-	// NewRelay replaces network.NewRelay, for tests.
-	NewRelay func(network.RelayConfig) (network.Provider, error)
+	// ResolveNetwork and NewNetwork replace how the server finds the
+	// network provider of a network URL and starts it, for tests.
+	ResolveNetwork func(ctx context.Context, spec string) (netinstall.Provider, error)
+	NewNetwork     func(network.ExternalConfig) (network.Provider, error)
 	// Now replaces time.Now for schedules and the backoff of pairing codes,
 	// for tests.
 	Now func() time.Time
@@ -133,9 +136,10 @@ type Server struct {
 	// authenticated members and guests may hold.
 	roleRequests map[string]*httpserver.Shares
 
-	private  network.Provider
-	public   network.Provider
-	newRelay func(network.RelayConfig) (network.Provider, error)
+	private        network.Provider
+	public         network.Provider
+	resolveNetwork func(ctx context.Context, spec string) (netinstall.Provider, error)
+	newNetwork     func(network.ExternalConfig) (network.Provider, error)
 	// harness has the endpoints through which agent processes reach the
 	// server, and mainHarness is the one of the owner's process.
 	harness     *harnessListeners
@@ -299,7 +303,8 @@ func Run(ctx context.Context, opts Options) error {
 		setupProblems:     opts.SetupProblems,
 		private:           opts.Private,
 		public:            opts.Public,
-		newRelay:          opts.NewRelay,
+		resolveNetwork:    opts.ResolveNetwork,
+		newNetwork:        opts.NewNetwork,
 
 		timings:         opts.Timings.withDefaults(),
 		maxAgentMessage: cmp.Or(opts.MaxAgentMessage, maxAgentMessage),
@@ -402,7 +407,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if n > 0 {
 		slog.Info("failed tasks interrupted by the previous run", "count", n)
 	}
-	if err := s.setupNetwork(closers); err != nil {
+	if err := s.setupNetwork(ctx, closers); err != nil {
 		return err
 	}
 	if err := s.joinNetwork(ctx); err != nil {

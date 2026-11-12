@@ -254,7 +254,7 @@ func TestSecretReader(t *testing.T) {
 	}{
 		{name: "tailscale-authkey", flags: settingsFlags{s: agentdir.Settings{TailscaleAuthKey: "-"}}, got: func(s agentdir.Settings) string { return s.TailscaleAuthKey }},
 		{name: "google-client-secret", flags: settingsFlags{s: agentdir.Settings{GoogleClientSecret: "-"}}, got: func(s agentdir.Settings) string { return s.GoogleClientSecret }},
-		{name: "relay-token", flags: settingsFlags{s: agentdir.Settings{RelayToken: "-"}}, got: func(s agentdir.Settings) string { return s.RelayToken }},
+		{name: "network-token", flags: settingsFlags{s: agentdir.Settings{NetworkToken: "-"}}, got: func(s agentdir.Settings) string { return s.NetworkToken }},
 		{name: "backup-key", flags: settingsFlags{s: agentdir.Settings{BackupKey: "-"}}, got: func(s agentdir.Settings) string { return s.BackupKey }},
 	}
 	for _, tc := range tests {

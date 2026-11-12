@@ -33,6 +33,7 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		flags   settingsFlags
 		dryRun  bool
 		restart bool
+		yes     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
@@ -69,6 +70,11 @@ alters who may call the agent, it prints who may call afterwards.
 			if err != nil {
 				return err
 			}
+			if !dryRun {
+				if s.NetworkProvider, err = installNetworkProvider(cmd.Context(), cfg, s.NetworkProvider, yes); err != nil {
+					return err
+				}
+			}
 			res, err := agentctl.Set(cmd.Context(), d, sf.controlClient(d), s, dryRun)
 			if err != nil {
 				return err
@@ -82,6 +88,7 @@ alters who may call the agent, it prints who may call afterwards.
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, restartUsage)
+	addYesFlag(f, &yes)
 	return cmd
 }
 

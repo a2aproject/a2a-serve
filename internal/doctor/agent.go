@@ -27,9 +27,11 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/service"
@@ -68,7 +70,7 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		}
 		results = append(results, checkMounts(d, cfg)...)
 		results = append(results, checkRelay(ctx, env, cfg, online)...)
-		if r, ok := checkRelayInvite(d, cfg); ok {
+		if r, ok := checkRelayInvite(env, d, cfg); ok {
 			results = append(results, r)
 		}
 		if r, ok := checkBackupCLI(env, cfg); ok {
@@ -298,41 +300,75 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 	return []Result{{ID: "mcp", Status: StatusOK, Message: msg}}
 }
 
-// checkRelay checks an Agent Mesh relay the agent joins: that this
-// a2a-serve can join one, and with --online that the relay answers.
+// checkRelay checks the network the agent joins by a network URL: that
+// this a2a-serve finds its network provider, and with --online that an
+// Agent Mesh relay answers.
 func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool) []Result {
-	relay := cfg.Network.Private
-	if !network.IsRelayURL(relay) {
-		relay = cfg.Network.Public
-	}
-	if !network.IsRelayURL(relay) {
+	u := cfg.Network.URL()
+	if u == "" {
 		return nil
 	}
-	if !network.AgentMeshBuilt {
-		return []Result{{ID: "relay", Status: StatusFail, Message: "this a2a-serve was built without Agent Mesh, so it can't join " + relay,
-			Fix: network.InstallAgentMesh}}
+	spec := cfg.Network.ProviderSpec()
+	id := networkCheckID(spec)
+	if env.FindNetworkProvider != nil {
+		_, err := env.FindNetworkProvider(spec)
+		switch {
+		case errors.Is(err, netinstall.ErrDownload):
+			return []Result{{ID: id, Status: StatusOK, Message: fmt.Sprintf("joins %s with the network provider %s, which is downloaded on the next start", u, spec)}}
+		case err != nil:
+			msg, fix, _ := strings.Cut(err.Error(), "; ")
+			return []Result{{ID: id, Status: StatusFail, Message: fmt.Sprintf("can't join %s: %s", u, msg), Fix: fix}}
+		}
 	}
-	version := Result{ID: "relay", Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", relay, network.AgentMeshVersion)}
+	if spec != agentdir.NetworkAgentMesh {
+		return []Result{{ID: id, Status: StatusOK, Message: fmt.Sprintf("joins %s with the network provider %s", u, spec)}}
+	}
+	version := Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", u, agentmesh.Version)}
 	if !online || env.HTTP == nil {
 		return []Result{version}
 	}
-	return relayOnline(ctx, env.HTTP, relay)
+	return relayOnline(ctx, env.HTTP, u)
 }
 
-// checkRelayInvite reports the invite the relay refused at the agent's
+// networkCheckID is the ID of the checks of the network of the provider
+// spec: relay for Agent Mesh, as before network providers.
+func networkCheckID(spec string) string {
+	if spec == agentdir.NetworkAgentMesh {
+		return "relay"
+	}
+	return "network"
+}
+
+// checkRelayInvite reports the token the network refused at the agent's
 // last join, which the server recorded.
-func checkRelayInvite(d agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
-	if !network.IsRelayURL(cfg.Network.Private) && !network.IsRelayURL(cfg.Network.Public) {
+func checkRelayInvite(env Env, d agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
+	spec := cfg.Network.ProviderSpec()
+	if spec == "" {
 		return Result{}, false
 	}
-	problem, err := network.InviteProblem(d.AgentMeshDir())
+	name := spec
+	if netinstall.IsCustom(spec) {
+		if env.FindNetworkProvider == nil {
+			return Result{}, false
+		}
+		p, err := env.FindNetworkProvider(spec)
+		if err != nil {
+			return Result{}, false
+		}
+		name = p.Name
+	}
+	id, who := "network-token", "the network refused the agent's token"
+	if spec == agentdir.NetworkAgentMesh {
+		id, who = "relay-invite", "the relay refused the agent's invite"
+	}
+	problem, fix, err := network.TokenProblem(d.NetworkStateDir(name))
 	if err != nil {
-		return Result{ID: "relay-invite", Status: StatusFail, Message: err.Error()}, true
+		return Result{ID: id, Status: StatusFail, Message: err.Error()}, true
 	}
 	if problem == "" {
 		return Result{}, false
 	}
-	return Result{ID: "relay-invite", Status: StatusFail, Message: "the relay refused the agent's invite at the last start: " + problem, Fix: network.InviteFix}, true
+	return Result{ID: id, Status: StatusFail, Message: who + " at the last start: " + problem, Fix: fix}, true
 }
 
 // checkBackupCLI checks that the CLI the backup destination needs is

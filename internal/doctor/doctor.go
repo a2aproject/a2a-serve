@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/messenger/configured"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
@@ -113,6 +114,9 @@ type Env struct {
 	// Run runs a command and returns its stdout.
 	Run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	HTTP *http.Client
+	// FindNetworkProvider finds the binary of a network provider without
+	// downloading it, as [netinstall.Installer.Find] does. Optional.
+	FindNetworkProvider func(spec string) (netinstall.Provider, error)
 	// Status returns the status of the running agent, or
 	// [agenterr.ErrNotRunning].
 	Status func(context.Context, agentdir.Dir) (*controlapi.Status, error)
@@ -152,6 +156,13 @@ func System() (Env, error) {
 		PortFree:          portFree,
 		ServiceUnit:       serviceUnit,
 		ValidateMessenger: configured.Validate,
+		FindNetworkProvider: func(spec string) (netinstall.Provider, error) {
+			inst, err := netinstall.New(nil)
+			if err != nil {
+				return netinstall.Provider{}, err
+			}
+			return inst.Find(spec)
+		},
 		RelayStatus: func(ctx context.Context, d relaydir.Dir) (*control.Status, error) {
 			return control.NewSocketClient(d.SocketPath(), 5*time.Second).Status(ctx)
 		},

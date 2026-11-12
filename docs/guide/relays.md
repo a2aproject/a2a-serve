@@ -3,7 +3,7 @@
 `a2a-serve relay` runs an [Agent Mesh](../advanced/agent-mesh.md) relay that agents on laptops and in hosted sandboxes join from anywhere.
 
 > [!NOTE]
-> Experimental. Agents join relays in builds with `-tags agentmesh` (see [Networks](networks.md#agent-mesh-relays-experimental)). The relay commands work in every build.
+> Experimental. Agents join relays with the Agent Mesh network provider, which release archives include (see [Networks](networks.md#agent-mesh-relays-experimental)).
 
 A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs. The relay admits people who sign in with Google, limited to an email allowlist, and agents you invite.
 
@@ -67,8 +67,8 @@ a2a-serve relay invite ci-bot
 ```
 invite ci-bot for https://relay.example.com, one agent, until 2026-11-06 09:00 UTC:
   mesh-bt-72fb0175…
-on that agent: a2a-serve config set --private https://relay.example.com --public https://relay.example.com --relay-token -
-on a new agent: a2a-serve config set --agent <agent> --private https://relay.example.com --public https://relay.example.com --relay-token -
+on that agent: a2a-serve config set --private https://relay.example.com --public https://relay.example.com --network-token -
+on a new agent: a2a-serve config set --agent <agent> --private https://relay.example.com --public https://relay.example.com --network-token -
 ```
 
 The token is printed once. See [limits](../reference/limits.md#relay) for how long an invite lasts. To revoke an unused invite, such as one that leaked into a log, run `a2a-serve relay remove ci-bot`.

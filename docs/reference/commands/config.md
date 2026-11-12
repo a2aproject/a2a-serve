@@ -120,10 +120,11 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
+| `--network-token string` |  | Join token of the network, such as an Agent Mesh relay invite, to join without the sign-in link (secret value: env:VAR, -, or the value) |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
-| `--relay-token string` |  | Join token of an Agent Mesh relay, to join without the sign-in link (secret value: env:VAR, -, or the value) |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
 | `--tailscale-authkey string` |  | Tailscale auth key, to join without the login link (secret value: env:VAR, -, or the value) |
 | `--tailscale-control-url string` |  | Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server |
 
@@ -154,6 +155,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 |---|---|---|
 | `--dry-run` |  | Print the diff without saving |
 | `--restart` |  | Restart the running agent if the change, or one saved before, needs it |
+| `--yes` |  | Install the network provider of --network-provider from a release URL or a path without asking |
 
 ## a2a-serve config show
 
@@ -186,7 +188,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve messenger rm`.
 
-Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, egress, egress-allow, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, inject-header, inject-model-key, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, voice, voice-key, voice-name, workspace
+Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, egress, egress-allow, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, inject-header, inject-model-key, memory, model, mount, name, network-provider, network-token, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, voice, voice-key, voice-name, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

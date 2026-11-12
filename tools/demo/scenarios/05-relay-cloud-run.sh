@@ -64,8 +64,8 @@ join() {
   token="$(last_match "$1" 'mesh-bt-[A-Za-z0-9._-]+')"
   run "$1" "mkdir -p ~/$2 && cd ~/$2"
   start "$1" "a2a-serve config set --agent $AGENT --name $2 $AGENT_FLAGS ${3:-}\\
-  --private \"\$URL\" --public \"\$URL\" --relay-token -"
-  wait_text "$1" 'relay-token: '
+  --private \"\$URL\" --public \"\$URL\" --network-token -"
+  wait_text "$1" 'network-token: '
   pause 1
   # Pasted at the prompt, which doesn't echo it.
   t send-keys -t "$(pane_id "$1")" -l -- "$token"

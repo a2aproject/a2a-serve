@@ -128,6 +128,7 @@ nav:
       - Configuration File: reference/configuration.md
       - Output and Exit Codes: reference/output.md
       - HTTP Routes: reference/http-routes.md
+      - Network Provider Protocol: reference/network-providers.md
       - Approval Messages: reference/approval-messages.md
       - Audio Messages: reference/audio-messages.md
       - Limits: reference/limits.md

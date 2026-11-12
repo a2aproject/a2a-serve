@@ -22,9 +22,9 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-func TestVersionMatchesGoMod(t *testing.T) {
+func TestVersionMatchesTheProvider(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../go.mod")
+	data, err := os.ReadFile("../../providers/agentmesh/go.mod")
 	if err != nil {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
@@ -35,12 +35,12 @@ func TestVersionMatchesGoMod(t *testing.T) {
 	for _, r := range f.Require {
 		if r.Mod.Path == "github.com/google/agentmesh" {
 			if r.Mod.Version != Version {
-				t.Fatalf("go.mod requires agentmesh %s, want Version %s", r.Mod.Version, Version)
+				t.Fatalf("the Agent Mesh network provider requires agentmesh %s, want Version %s", r.Mod.Version, Version)
 			}
 			return
 		}
 	}
-	t.Fatal("go.mod doesn't require github.com/google/agentmesh")
+	t.Fatal("the Agent Mesh network provider doesn't require github.com/google/agentmesh")
 }
 
 func TestPinCoversEveryArchiveAndTheImage(t *testing.T) {

@@ -91,7 +91,7 @@ func TestRelayCommandsAtURL(t *testing.T) {
 		{
 			name: "invite",
 			args: []string{"relay", "invite", "coder", "--expires", "48h"},
-			want: "invite coder for {url}, one agent, until 2026-11-07 09:00 UTC:\n  mesh-bt-1\non that agent: a2a-serve config set --private {url} --public {url} --relay-token -\non a new agent: a2a-serve config set --agent <agent> --private {url} --public {url} --relay-token -\n",
+			want: "invite coder for {url}, one agent, until 2026-11-07 09:00 UTC:\n  mesh-bt-1\non that agent: a2a-serve config set --private {url} --public {url} --network-token -\non a new agent: a2a-serve config set --agent <agent> --private {url} --public {url} --network-token -\n",
 		},
 		{
 			name: "remove",
@@ -178,7 +178,7 @@ func TestRelayInviteLetsBackARemovedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("relay invite error = %v", err)
 	}
-	want := strings.ReplaceAll("invite ci-bot for {url}, one agent, until 2026-11-06 09:00 UTC:\n  mesh-bt-1\non that agent: a2a-serve config set --private {url} --public {url} --relay-token -\non a new agent: a2a-serve config set --agent <agent> --private {url} --public {url} --relay-token -\n"+
+	want := strings.ReplaceAll("invite ci-bot for {url}, one agent, until 2026-11-06 09:00 UTC:\n  mesh-bt-1\non that agent: a2a-serve config set --private {url} --public {url} --network-token -\non a new agent: a2a-serve config set --agent <agent> --private {url} --public {url} --network-token -\n"+
 		"✓ let back ci-bot (12D3bot): it joins again with its identity when it restarts\n", "{url}", url)
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("relay invite wrong output (-want +got) diff = %s", diff)

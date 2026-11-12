@@ -3,7 +3,7 @@
 This page explains how a2a-serve uses Agent Mesh, a zero-trust network for agents, and how a relay works.
 
 > [!NOTE]
-> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`, and `a2a-serve relay run` runs a relay. Egress through the relay and the directory of advertised nodes are planned.
+> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today, and `a2a-serve relay run` runs a relay. Egress through the relay and the directory of advertised nodes are planned.
 
 [Agent Mesh](https://google.github.io/agentmesh/) lets nodes enroll with a control plane, get short-lived credentials bound to their own keys, reach each other through routers from behind NAT, and be reached from the internet through ingress.
 
@@ -20,7 +20,7 @@ a2a-serve decides who may do what with an agent. Agent Mesh decides who is on th
 
 ## Joining a relay
 
-[Agent Mesh relays](../guide/networks.md#agent-mesh-relays-experimental) shows the commands. The server runs an Agent Mesh node inside its own process, with no sidecar. The node's key stays in the agent directory, so the agent keeps its URLs across restarts and backups.
+[Agent Mesh relays](../guide/networks.md#agent-mesh-relays-experimental) shows the commands. The server runs the Agent Mesh [network provider](architecture.md#network-providers), which runs an Agent Mesh node. The node's key stays in the agent directory, so the agent keeps its URLs across restarts and backups.
 
 The agent enrolls by signing in to the relay, or with an invite from `a2a-serve relay invite`. It then publishes the A2A service `a2a://<name>`, which other agents on the relay find in the directory. With `--public <relay-url>`, the relay also gives the service a public URL. Ingress forwards the `Authorization` header unchanged, so pairing tokens and Google sign-in work there.
 
@@ -51,7 +51,7 @@ A relay admits like a tailnet: everyone it admits can call every other agent on 
 
 ## Calls between agents
 
-On a relay the server dials contacts through its node, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most the member role, whoever started it.
+On a relay the server dials contacts through the provider's node, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most the member role, whoever started it.
 
 Planned: advertised webhook nodes become directory entries. Ben's agent publishes `a2a://grok@ben`, and Anna's agent finds it with `peers` and adds it with `contact add grok@ben`. Calls still go through Ben's agent, which keeps the webhook's credentials and checks Anna's agent against its own policy. Likewise, the sandbox will reach the network through Agent Mesh egress, so the relay's policy decides which hosts an agent may reach.
 
@@ -68,5 +68,3 @@ Agent Mesh v0.2.0 can't use Google's device flow and admits anyone its identity 
 3. The front issues the ID token that Agent Mesh enrolls the agent with.
 
 Each renewal checks the account again, and the relay bans the agents of people the allowlist no longer admits. `agentmesh-one` trusts no other issuer, and signed-in accounts can't mint join tokens.
-
-Source builds need `-tags agentmesh` to join a relay. It makes the binary much larger, so release binaries leave it out until `meshnet` is its own Go module. The relay commands don't need it.

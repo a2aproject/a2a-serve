@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
@@ -49,6 +51,8 @@ const (
 	SandboxLocal     = "local"
 	NetworkTailscale = "tailscale"
 	NetworkNone      = "none"
+	// NetworkAgentMesh is the network provider of network URLs by default.
+	NetworkAgentMesh = "agentmesh"
 )
 
 var (
@@ -111,8 +115,8 @@ func (c *Config) Validate() error {
 		add("no name: set one with --name")
 	}
 	checkNetwork := func(flag, v string) {
-		if v != "" && v != NetworkTailscale && !isRelayURL(v) {
-			invalid(flag, v, "want %s, a relay URL such as https://relay.example.com, or none", NetworkTailscale)
+		if v != "" && v != NetworkTailscale && !IsNetworkURL(v) {
+			invalid(flag, v, "want %s, a network URL such as https://relay.example.com, or none", NetworkTailscale)
 		}
 	}
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
@@ -132,16 +136,22 @@ func (c *Config) Validate() error {
 		checkNetwork("private", c.Network.Private)
 	}
 	checkNetwork("public", c.Network.Public)
+	if err := netinstall.Check(c.Network.Provider); err != nil {
+		invalid("network-provider", c.Network.Provider, "%v", err)
+	}
+	if c.Network.Provider != "" && c.Network.URL() == "" {
+		add("--network-provider %s needs a network URL in --private or --public", c.Network.Provider)
+	}
 	for flag, v := range map[string]string{"private": c.Network.Private, "public": c.Network.Public} {
-		if !isRelayURL(v) {
+		if !IsNetworkURL(v) {
 			continue
 		}
-		if err := agentmesh.CheckRelayURL(v); err != nil {
+		if err := checkNetworkURL(c.Network.ProviderSpec(), v); err != nil {
 			invalid(flag, v, "%v", err)
 		}
 	}
-	if isRelayURL(c.Network.Private) && isRelayURL(c.Network.Public) && strings.TrimSuffix(c.Network.Private, "/") != strings.TrimSuffix(c.Network.Public, "/") {
-		add("--private and --public name different relays (%s, %s): an agent joins one relay", c.Network.Private, c.Network.Public)
+	if IsNetworkURL(c.Network.Private) && IsNetworkURL(c.Network.Public) && strings.TrimSuffix(c.Network.Private, "/") != strings.TrimSuffix(c.Network.Public, "/") {
+		add("--private and --public name different networks (%s, %s): an agent joins one network", c.Network.Private, c.Network.Public)
 	}
 	if c.Workspace != "" {
 		if _, err := parseMount(c.Workspace, "/"); err != nil {
@@ -288,10 +298,21 @@ func ValidEmailPattern(entry string) bool {
 	return ok && local != "" && domain != "" && !strings.ContainsAny(domain, "@* ") && (!strings.Contains(local, "*") || local == "*")
 }
 
-// isRelayURL reports whether a --private or --public value names an Agent
-// Mesh relay by its URL.
-func isRelayURL(v string) bool {
-	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
+// checkNetworkURL checks the URL of a network the provider spec joins:
+// Agent Mesh takes a relay's bare origin, other providers take their
+// settings in the query.
+func checkNetworkURL(spec, v string) error {
+	if spec == NetworkAgentMesh {
+		if !strings.HasPrefix(v, "https://") && !strings.HasPrefix(v, "http://") {
+			return errors.New("want a relay URL such as https://relay.example.com")
+		}
+		return agentmesh.CheckRelayURL(v)
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("want a URL without credentials or a fragment, such as https://node.example.com")
+	}
+	return nil
 }
 
 func (c CardConfig) validate() []error {

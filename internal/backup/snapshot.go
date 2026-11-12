@@ -35,6 +35,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 )
 
 // Paths in a snapshot, relative to the .a2a directory.
@@ -54,9 +55,16 @@ const (
 // agent may not have.
 var optionalFiles = []string{pathConfig, pathSecrets, pathAds, pathRecipeLock}
 
-// identityPaths hold the agent's network identity on a tailnet or an Agent
-// Mesh relay, restored only when the new host takes over from the old one.
-var identityPaths = []string{"state/tsnet", "state/agentmesh"}
+// identityPaths hold the agent's network identity on a tailnet or the
+// network of a well-known network provider, such as an Agent Mesh relay,
+// restored only when the new host takes over from the old one.
+var identityPaths = func() []string {
+	paths := []string{"state/tsnet"}
+	for _, name := range netinstall.Names() {
+		paths = append(paths, "state/"+name)
+	}
+	return paths
+}()
 
 // skippedHomeDirs are caches in the harness home, which the harness fills
 // again.
