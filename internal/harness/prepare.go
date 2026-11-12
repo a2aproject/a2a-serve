@@ -26,7 +26,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -664,11 +663,10 @@ func checkInstalled(command, dir string) error {
 
 // TCPBridge reports whether a harness in sandbox kind must reach the agent
 // server over TCP rather than a Unix socket, and where the server listens
-// (bind) and the harness connects (dial). Docker Desktop can't mount a
-// socket but forwards host.docker.internal to the host's loopback.
+// (bind) and the harness connects (dial), as [sandbox.DockerTCPBridge] says.
 func TCPBridge(kind string) (bind, dial string, ok bool) {
-	if kind == SandboxLocal || runtime.GOOS == "linux" {
+	if kind == SandboxLocal {
 		return "", "", false
 	}
-	return "127.0.0.1", "host.docker.internal", true
+	return sandbox.DockerTCPBridge()
 }
