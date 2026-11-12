@@ -36,6 +36,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -112,6 +113,8 @@ const (
 	// pipeGrace is how long the output of an exited provider is read
 	// before its pipes are closed, which children it left may hold open.
 	pipeGrace = 2 * time.Second
+	// startBusyRetry is how long a start that fails with ETXTBSY is retried.
+	startBusyRetry = 5 * time.Second
 )
 
 // Start starts the provider at cfg.Path with `serve`.
@@ -123,33 +126,24 @@ func Start(cfg Config) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(path, "serve")
-	cmd.Env = cfg.Env
-	if cmd.Env == nil {
-		cmd.Env = []string{}
-	}
-	cmd.Dir = cfg.RunDir
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	// The pipes are the server's own, so that waiting for the process
-	// doesn't wait for children that hold them.
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-	errR, errW, err := os.Pipe()
-	if err != nil {
-		return nil, errors.Join(err, outR.Close(), outW.Close())
-	}
-	cmd.Stdout, cmd.Stderr = outW, errW
-	err = cmd.Start()
-	if cerr := errors.Join(outW.Close(), errW.Close()); cerr != nil && err == nil {
-		err = cerr
+	// A child that another goroutine forks while the provider's binary is
+	// still open for writing holds that descriptor until it execs, which
+	// fails the start with ETXTBSY (golang.org/issue/22315).
+	deadline := time.Now().Add(startBusyRetry)
+	var (
+		cmd        *exec.Cmd
+		stdin      io.WriteCloser
+		outR, errR *os.File
+	)
+	for {
+		cmd, stdin, outR, errR, err = startProcess(cfg, path)
+		if !errors.Is(err, syscall.ETXTBSY) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("starting the network provider %s: %w", cfg.Path, err), outR.Close(), errR.Close())
+		return nil, fmt.Errorf("starting the network provider %s: %w", cfg.Path, err)
 	}
 	p := &Process{
 		cfg: cfg, cmd: cmd, stdin: stdin, stdout: outR, stderr: errR, tail: &tailWriter{w: cfg.Stderr},
@@ -169,6 +163,40 @@ func Start(cfg Config) (*Process, error) {
 	go p.notifyLoop()
 	go p.wait(readDone, logDone)
 	return p, nil
+}
+
+// startProcess starts the provider at path with `serve`, with stdout and
+// stderr on pipes of the server's own, so that waiting for the process
+// doesn't wait for children that hold them.
+func startProcess(cfg Config, path string) (*exec.Cmd, io.WriteCloser, *os.File, *os.File, error) {
+	cmd := exec.Command(path, "serve")
+	cmd.Env = cfg.Env
+	if cmd.Env == nil {
+		cmd.Env = []string{}
+	}
+	cmd.Dir = cfg.RunDir
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return nil, nil, nil, nil, errors.Join(err, stdin.Close())
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		return nil, nil, nil, nil, errors.Join(err, stdin.Close(), outR.Close(), outW.Close())
+	}
+	cmd.Stdout, cmd.Stderr = outW, errW
+	err = cmd.Start()
+	if cerr := errors.Join(outW.Close(), errW.Close()); cerr != nil && err == nil {
+		err = cerr
+	}
+	if err != nil {
+		// A failed Start closes stdin.
+		return nil, nil, nil, nil, errors.Join(err, outR.Close(), errR.Close())
+	}
+	return cmd, stdin, outR, errR, nil
 }
 
 // wait waits for the process to exit and for its output, closing pipes
