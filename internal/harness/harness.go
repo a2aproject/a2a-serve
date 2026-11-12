@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/tailscale/hujson"
 )
 
@@ -44,14 +45,7 @@ type Workspace struct {
 }
 
 // Command describes a harness process to start.
-type Command struct {
-	Path string
-	Args []string
-	// Dir is the working directory.
-	Dir string
-	// Env holds NAME=value pairs added to the environment of the harness.
-	Env []string
-}
+type Command = sandbox.Command
 
 // Profile describes how to start one harness as an ACP agent.
 type Profile interface {

@@ -14,7 +14,7 @@
 
 //go:build !linux
 
-package harness
+package sandbox
 
 // Kill does nothing: only Linux lists the environment of processes.
 func (m ProcessMark) Kill() error { return nil }

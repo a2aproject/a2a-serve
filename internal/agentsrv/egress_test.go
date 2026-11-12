@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // TestLauncherCopyRunsAsAnotherUser checks the modes that let container
@@ -62,7 +62,7 @@ func TestLauncherCopyRunsAsAnotherUser(t *testing.T) {
 
 func TestEgressProbeOnce(t *testing.T) {
 	t.Parallel()
-	setupErr := &harness.EgressSetupError{Reason: "no tun"}
+	setupErr := &sandbox.EgressSetupError{Reason: "no tun"}
 	tests := []struct {
 		name      string
 		first     error

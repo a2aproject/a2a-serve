@@ -30,6 +30,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // Config is the agent definition in .a2a/config.yaml. It holds no secrets:
@@ -441,7 +442,7 @@ type LimitsConfig struct {
 }
 
 // DefaultLimits are the limits of a container when the config sets none.
-var DefaultLimits = LimitsConfig{Memory: "4g", CPUs: "2", PIDs: 512}
+var DefaultLimits = LimitsConfig(sandbox.DefaultLimits)
 
 // defaultWorkspace is how config.yaml may spell the default workspace.
 const defaultWorkspace = "."

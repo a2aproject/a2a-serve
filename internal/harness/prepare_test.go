@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -219,7 +220,7 @@ esac
 `
 
 func TestPrepareDocker(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 	p, err := Prepare(context.Background(), Spec{
 		Profile: claude{},
@@ -272,7 +273,7 @@ esac
 `
 
 func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
-	log := fakeDocker(t, noRelayImageDocker)
+	log := sandboxtest.FakeDocker(t, noRelayImageDocker)
 	t.Setenv(EnvForceRelay, "1")
 	t.Setenv(EnvRelayImage, "example.com/egress:test")
 	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
@@ -381,7 +382,7 @@ func tmpfsMounts(args []string) []string {
 }
 
 func TestPrepareDockerHidesNestedAgents(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	ws, docs := t.TempDir(), t.TempDir()
 	own := mkdir(t, filepath.Join(ws, agentdir.Name))
 	mkdir(t, filepath.Join(ws, "sub", "deeper", agentdir.Name, "state"))
@@ -419,7 +420,7 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 }
 
 func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	ws := t.TempDir()
 	own := mkdir(t, filepath.Join(ws, agentdir.Name))
 
@@ -462,7 +463,7 @@ func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
 }
 
 func TestPrepareDockerMasksMCP(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name     string
 		existing string
@@ -526,7 +527,7 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 }
 
 func TestPrepareDockerMasksAgentConfig(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		profile Profile
@@ -659,7 +660,7 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 }
 
 func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	repo, state := t.TempDir(), t.TempDir()
 	ws := mkdir(t, filepath.Join(repo, "services", "app"))
 	mask := filepath.Join(state, "config-mask.json")
@@ -698,7 +699,7 @@ func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
 }
 
 func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	repo, dotfiles := t.TempDir(), t.TempDir()
 	ws := mkdir(t, filepath.Join(repo, "app"))
 	mkdir(t, filepath.Join(dotfiles, "claude"))
@@ -746,7 +747,7 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 }
 
 func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		profile Profile
@@ -806,7 +807,7 @@ func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 }
 
 func TestPrepareDockerLocksHomeConfig(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	claudeWant := func(home string) []string {
 		return []string{
 			filepath.Join(home, ".claude") + ":" + filepath.Join(ContainerHome, ".claude"),
@@ -910,7 +911,7 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 }
 
 func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		profile Profile
@@ -992,7 +993,7 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 }
 
 func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	ws, home := t.TempDir(), t.TempDir()
 	mkdir(t, filepath.Join(home, "agents"))
 	mkdir(t, filepath.Join(home, ".claude"))
@@ -1061,12 +1062,12 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 		wantErr     string
 	}{
 		{name: "check passes", check: "exit 0", wantEgress: true},
-		{name: "launcher can't set up the network", check: launcherNoTUN, wantProblem: "egress control is off: the agent's container can't set up its network: no tun"},
-		{name: "daemon error", check: daemonError, wantErr: "failed to create task for container: EOF"},
+		{name: "launcher can't set up the network", check: sandboxtest.LauncherNoTUN, wantProblem: "egress control is off: the agent's container can't set up its network: no tun"},
+		{name: "daemon error", check: sandboxtest.DaemonError, wantErr: "failed to create task for container: EOF"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeDocker(t, relayDocker(tc.check))
+			sandboxtest.FakeDocker(t, relayDocker(tc.check))
 			t.Setenv(EnvForceRelay, "1")
 			t.Setenv(EnvRelayImage, "example.com/egress:test")
 			ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()

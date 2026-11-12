@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 )
 
 func mkdir(t *testing.T, dir string) string {
@@ -68,7 +69,7 @@ func startDocker(t *testing.T, spec Spec) (*Prepared, error) {
 }
 
 func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name string
 		// setup returns the mounts, hidden paths and home, or "" for a
@@ -189,7 +190,7 @@ func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
 }
 
 func TestPrepareDockerNamesResolvedMountSource(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	ws, outside := t.TempDir(), t.TempDir()
 	shared := symlink(t, outside, filepath.Join(ws, "shared"))
 	resolved, err := filepath.EvalSymlinks(outside)
@@ -236,7 +237,7 @@ func (l agentLayout) pins(t *testing.T) *Pins {
 }
 
 func TestPrepareDockerChecksPins(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		replace func(l agentLayout) string
@@ -269,7 +270,7 @@ func TestPrepareDockerChecksPins(t *testing.T) {
 }
 
 func TestPrepareDockerPinsUserHome(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	l := newAgentLayout(t)
 	pins := l.pins(t)
 	home := filepath.Join(l.state, "homes", "anna")
@@ -289,7 +290,7 @@ func TestPrepareDockerPinsUserHome(t *testing.T) {
 }
 
 func TestPreparedCheck(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		change  func(t *testing.T, l agentLayout, data string)

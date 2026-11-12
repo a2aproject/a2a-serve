@@ -45,6 +45,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
@@ -94,8 +95,8 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 	if sb := s.rt.Config().Sandbox; sb != "" && sb != harness.SandboxDocker {
 		return nil
 	}
-	n, err := harness.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
-	if errors.Is(err, harness.ErrDockerNoAnswer) {
+	n, err := sandbox.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
+	if errors.Is(err, sandbox.ErrDockerNoAnswer) {
 		return err
 	}
 	if err != nil {
@@ -112,7 +113,7 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 // left behind. It runs while the server holds the lock of the agent
 // directory and before any container starts.
 func (s *Server) pruneEnvFiles() {
-	n, err := harness.PruneEnvFiles(s.dir.EnvFilesDir())
+	n, err := sandbox.PruneEnvFiles(s.dir.EnvFilesDir())
 	if err != nil {
 		slog.Warn("removing env files left by an earlier run", "error", err)
 	}
@@ -281,7 +282,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 		}
 		return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
 	}
-	mark := harness.NewProcessMark()
+	mark := sandbox.NewProcessMark()
 	proc := p.Process
 	proc.Env = append(slices.Clone(proc.Env), mark.Env())
 	rwc, err := proc.Start(ctx, key)
@@ -318,7 +319,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Model:      cfg.Model,
 		Name:       "a2a-" + cfg.Name + "-" + s.dir.ID(),
 		Image:      cfg.Image,
-		Limits:     harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
+		Limits:     sandbox.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
 		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress:   imageProgress,
 	}

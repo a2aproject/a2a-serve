@@ -9,7 +9,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 ### Security
 
 - **The inspector session cookie works across loopback ports** (`internal/agentsrv/inspector/inspector.go:145-171`). Exploiting it needs a hostile co-tenant on 127.0.0.1 who also lures the owner to a page.
-- **The sandbox on Docker Desktop reaches `localsrv exec` on the host** (`internal/harness/runner.go:547`, `internal/localsrv/serve_exec.go:73-80`). It needs the developer test server running at the same time.
+- **The sandbox on Docker Desktop reaches `localsrv exec` on the host** (`internal/sandbox/docker.go:424`, `internal/localsrv/serve_exec.go:73-80`). It needs the developer test server running at the same time.
 - **Wakes can be replayed within the 5-minute signature skew** (`internal/mailboxapi/signature.go:62-82`). Receivers can dedup on `envelope.id`. At most this needs a note in the docs.
 - **Pairing codes are stored as unsalted SHA-256** (`internal/store/pairings.go`). A code has 40 bits and a 15-minute TTL, so the stored hash can't be brute-forced in practice.
 - **`CloseQuestions` doesn't mark records closed.** This matters only for an agent that reuses tool-call IDs, and no supported agent does.

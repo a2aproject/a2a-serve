@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
@@ -205,7 +206,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 	if err != nil {
 		return err
 	}
-	_, dockerErr := harness.CheckDocker(cmd.Context())
+	_, dockerErr := sandbox.CheckDocker(cmd.Context())
 	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
 		DefaultName: d.DefaultName(),
 		Harnesses:   harness.ProfileNames(),
