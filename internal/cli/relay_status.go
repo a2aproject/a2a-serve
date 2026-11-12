@@ -21,7 +21,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
@@ -52,7 +51,7 @@ func newRelayStatusCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Show the relay's address, versions and members",
 		Long: `Show the relay's address, whether it runs, the versions of a2a-serve and
-Agent Mesh it runs and this a2a-serve pins, who can join, how many agents are
+backend it runs and this a2a-serve pins, who can join, how many agents are
 on it, and its last backup before an upgrade. A stopped local relay shows
 what its relay directory says.
 
@@ -63,12 +62,13 @@ what its relay directory says.
 			if err != nil {
 				return err
 			}
-			st := relayStatus{Pinned: control.Versions{A2AServe: buildVersionInfo().Version, AgentMesh: agentmesh.Version}}
+			st := relayStatus{Pinned: relayBackends[0].pinned()}
 			live, err := c.Status(cmd.Context())
 			switch {
 			case err == nil:
 				st.URL, st.Running, st.PID, st.Started = live.URL, true, live.PID, live.Started
 				st.Versions, st.Join, st.Members = &live.Versions, live.Join, &live.Members
+				st.Pinned = relayBackendNamed(live.Versions).pinned()
 			case !isRelayNotRunning(err):
 				return err
 			}
@@ -97,6 +97,11 @@ func localRelayStatus(d relaydir.Dir, st *relayStatus) error {
 	if err != nil {
 		return err
 	}
+	b := relayBackendOf(conf)
+	st.Pinned = b.pinned()
+	if b.id != relaydir.BackendAgentMesh {
+		return nil
+	}
 	if st.URL == "" {
 		st.URL = conf.URL
 		if conf.Tunnel != "" {
@@ -120,14 +125,18 @@ func printRelayStatus(cfg *globalConfig, st relayStatus) error {
 	if st.Dir != "" {
 		fmt.Fprintf(&b, "  dir       %s\n", st.Dir)
 	}
+	pinnedName, pinnedVersion := st.Pinned.BackendOrDefault()
 	if st.Versions != nil {
-		fmt.Fprintf(&b, "  runs      a2a-serve %s, Agent Mesh %s\n", st.Versions.A2AServe, st.Versions.AgentMesh)
+		name, version := st.Versions.BackendOrDefault()
+		fmt.Fprintf(&b, "  runs      a2a-serve %s, %s %s\n", st.Versions.A2AServe, name, version)
 	}
 	if st.Versions == nil || *st.Versions != st.Pinned {
-		fmt.Fprintf(&b, "  this      a2a-serve %s, Agent Mesh %s\n", st.Pinned.A2AServe, st.Pinned.AgentMesh)
+		fmt.Fprintf(&b, "  this      a2a-serve %s, %s %s\n", st.Pinned.A2AServe, pinnedName, pinnedVersion)
 	}
-	if st.Versions != nil && st.Dir != "" && st.Versions.AgentMesh != st.Pinned.AgentMesh {
-		b.WriteString("  → upgrade the relay to this a2a-serve's Agent Mesh: a2a-serve relay upgrade\n")
+	if st.Versions != nil && st.Dir != "" {
+		if _, version := st.Versions.BackendOrDefault(); version != pinnedVersion {
+			fmt.Fprintf(&b, "  → upgrade the relay to this a2a-serve's %s: a2a-serve relay upgrade\n", pinnedName)
+		}
 	}
 	if !st.Running && st.DataVersion != "" {
 		fmt.Fprintf(&b, "  data      last used by Agent Mesh %s\n", st.DataVersion)

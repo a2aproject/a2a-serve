@@ -84,7 +84,7 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	if up.From != "" {
+	if up.Upgraded() {
 		r.printf("✓ upgraded the relay from %s %s to %s", b.Name(), up.From, up.To)
 	}
 	if up.Backup != "" {
@@ -111,10 +111,14 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	}
 
 	started := r.opts.Now()
+	versions := control.Versions{A2AServe: r.opts.A2AServe, Backend: b.Name(), BackendVersion: b.Version()}
+	if conf.BackendName() == relaydir.BackendAgentMesh {
+		versions.AgentMesh = b.Version()
+	}
 	status := func() control.Status {
 		return control.Status{
 			URL: publicURL, PID: os.Getpid(), Started: started,
-			Versions: control.Versions{A2AServe: r.opts.A2AServe, AgentMesh: b.Version()},
+			Versions: versions,
 			Join:     joinedBy(&conf.Config),
 		}
 	}

@@ -17,23 +17,23 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
 func newRelayUpgradeCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Upgrade the local relay to the Agent Mesh version this a2a-serve pins",
-		Long: `Upgrade the local relay to the Agent Mesh version this a2a-serve pins. Run it
-after you install a newer a2a-serve. It downloads the new agentmesh-one, then
-restarts a running relay, or upgrades the data of a stopped one.
+		Short: "Upgrade the local relay to the backend version this a2a-serve pins",
+		Long: `Upgrade the local relay to the version of its backend this a2a-serve pins.
+Run it after you install a newer a2a-serve. It downloads the new
+agentmesh-one or slimctl, then restarts a running relay, or upgrades the data
+of a stopped one.
 
 A newer Agent Mesh migrates the relay's database, and an older one can't use
 it again, so the upgrade backs up a SQLite database first and keeps the last
@@ -45,18 +45,23 @@ relay elsewhere upgrades when it runs the new a2a-serve.`,
 			if err != nil {
 				return err
 			}
-			if _, err := agentmeshOne(cmd.Context(), cfg); err != nil {
+			conf, err := d.ReadConfig()
+			if err != nil {
+				return err
+			}
+			b := relayBackendOf(conf)
+			if _, err := b.binary(cmd.Context(), cfg); err != nil {
 				return err
 			}
 			c := control.NewSocketClient(d.SocketPath(), f.timeout)
 			st, err := c.Status(cmd.Context())
 			if err == nil {
-				return restartRelay(cmd, cfg, c, st, f.timeout)
+				return restartRelay(cmd, cfg, c, st, b, f.timeout)
 			}
 			if !isRelayNotRunning(err) {
 				return err
 			}
-			return upgradeStoppedRelay(cmd, cfg, d)
+			return upgradeStoppedRelay(cmd, cfg, d, b)
 		},
 	}
 	cmd.Flags().StringVar(&f.dir, "dir", "", relayDirUsage)
@@ -64,9 +69,10 @@ relay elsewhere upgrades when it runs the new a2a-serve.`,
 	return cmd
 }
 
-func restartRelay(cmd *cobra.Command, cfg *globalConfig, c *control.Client, before *control.Status, timeout time.Duration) error {
-	if before.Versions.AgentMesh == agentmesh.Version && before.Versions.A2AServe == buildVersionInfo().Version {
-		_, err := fmt.Fprintf(cfg.Out, "✓ the relay already runs a2a-serve %s with Agent Mesh %s\n", before.Versions.A2AServe, before.Versions.AgentMesh)
+func restartRelay(cmd *cobra.Command, cfg *globalConfig, c *control.Client, before *control.Status, b relayBackend, timeout time.Duration) error {
+	want := b.pinned()
+	if before.Versions == want {
+		_, err := fmt.Fprintf(cfg.Out, "✓ the relay already runs a2a-serve %s with %s %s\n", want.A2AServe, b.name, b.version)
 		return err
 	}
 	if err := c.Restart(cmd.Context()); err != nil {
@@ -95,35 +101,36 @@ func restartRelay(cmd *cobra.Command, cfg *globalConfig, c *control.Client, befo
 		if st.PID == before.PID && st.Started.Equal(before.Started) {
 			continue
 		}
-		if want := (control.Versions{A2AServe: buildVersionInfo().Version, AgentMesh: agentmesh.Version}); st.Versions != want {
-			return fmt.Errorf("the relay restarted with a2a-serve %s and Agent Mesh %s, and this a2a-serve is %s with %s; the relay runs the a2a-serve it was started with, which wasn't replaced", st.Versions.A2AServe, st.Versions.AgentMesh, want.A2AServe, want.AgentMesh)
+		if st.Versions != want {
+			name, version := st.Versions.BackendOrDefault()
+			return fmt.Errorf("the relay restarted with a2a-serve %s and %s %s, and this a2a-serve is %s with %s; the relay runs the a2a-serve it was started with, which wasn't replaced", st.Versions.A2AServe, name, version, want.A2AServe, b.version)
 		}
 		if cfg.IsJSON() {
 			return cfg.PrintJSON(st.Versions)
 		}
-		_, err = fmt.Fprintf(cfg.Out, "✓ the relay runs a2a-serve %s with Agent Mesh %s\n", st.Versions.A2AServe, st.Versions.AgentMesh)
+		_, err = fmt.Fprintf(cfg.Out, "✓ the relay runs a2a-serve %s with %s %s\n", st.Versions.A2AServe, b.name, b.version)
 		return err
 	}
 }
 
-func upgradeStoppedRelay(cmd *cobra.Command, cfg *globalConfig, d relaydir.Dir) (err error) {
+func upgradeStoppedRelay(cmd *cobra.Command, cfg *globalConfig, d relaydir.Dir, b relayBackend) (err error) {
 	release, err := d.Lock()
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	conf, err := d.ReadConfig()
+	conf, err := d.Resolve()
 	if err != nil {
 		return err
 	}
-	res, err := meshbackend.PrepareData(cmd.Context(), d, agentmesh.Version, conf.Database != "", time.Now())
+	res, err := b.newFunc("", io.Discard).Prepare(cmd.Context(), d, conf, time.Now())
 	if err != nil {
 		return err
 	}
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(res)
 	}
-	msg := fmt.Sprintf("✓ the relay's data is ready for Agent Mesh %s; start it with `a2a-serve relay run`\n", res.To)
+	msg := fmt.Sprintf("✓ the relay's data is ready for %s %s; start it with `a2a-serve relay run`\n", b.name, res.To)
 	if res.Backup != "" {
 		msg += fmt.Sprintf("  backup of the relay's database: %s\n", res.Backup)
 	}

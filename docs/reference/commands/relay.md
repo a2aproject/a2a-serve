@@ -129,9 +129,10 @@ Aliases: `rm`
 
 ## a2a-serve relay run
 
-Run a relay: one process that serves HTTP on --listen and runs Agent Mesh's
-agentmesh-one behind it on loopback, at the version this a2a-serve pins. The
-first run creates the relay directory here and downloads agentmesh-one.
+Run a relay: one process that serves HTTP on --listen and runs a network
+behind it on loopback, at the version this a2a-serve pins: Agent Mesh's
+agentmesh-one, or with --backend slim a SLIM node. The first run creates the
+relay directory here and downloads that program.
 
 The relay needs an address that doesn't change, since agents and pairing
 tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
@@ -145,7 +146,8 @@ join with `a2a-serve relay invite`.
 
 The flags are saved in .a2a/relay.yaml, so later runs need none. A newer
 a2a-serve that pins a newer Agent Mesh backs up the relay's database first,
-and an older one refuses to run on it.
+and an older one refuses to run on it. A SLIM relay joins agents with
+invites only, and keeps its members in the relay directory.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -163,6 +165,7 @@ a2a-serve relay run --url https://relay.example.com
 a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
   --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
 a2a-serve relay run --tunnel cloudflare
+a2a-serve relay run --url https://relay.example.com --backend slim
 a2a-serve relay run --service
 ```
 
@@ -172,6 +175,7 @@ a2a-serve relay run --service
 |---|---|---|
 | `--admin-token string` |  | The relay's admin token, at least 32 characters, as a secret value: env:VAR, -, or the value (default: generated on the first run) |
 | `--allow-email email` |  | People who may sign in to the relay with Google: an email, or \*@domain for the accounts of a Google Workspace domain; replaces the saved list, and none turns sign-in off and forgets the Google app (repeatable; commas also separate values) |
+| `--backend string` |  | The network the relay runs: agentmesh, the default, or slim; set on the first run |
 | `--database string` |  | A PostgreSQL DSN, as a secret value: env:VAR, -, or the value (default: SQLite in the relay directory; none goes back to it) |
 | `--dir string` |  | Relay directory (default: the nearest relay directory up from the current one, or else the current directory) |
 | `--google-client-id string` |  | Client ID of the relay's Google app, which people sign in with (none removes the app) |
@@ -184,7 +188,7 @@ a2a-serve relay run --service
 ## a2a-serve relay status
 
 Show the relay's address, whether it runs, the versions of a2a-serve and
-Agent Mesh it runs and this a2a-serve pins, who can join, how many agents are
+backend it runs and this a2a-serve pins, who can join, how many agents are
 on it, and its last backup before an upgrade. A stopped local relay shows
 what its relay directory says.
 
@@ -208,9 +212,10 @@ a2a-serve relay status [flags]
 
 ## a2a-serve relay upgrade
 
-Upgrade the local relay to the Agent Mesh version this a2a-serve pins. Run it
-after you install a newer a2a-serve. It downloads the new agentmesh-one, then
-restarts a running relay, or upgrades the data of a stopped one.
+Upgrade the local relay to the version of its backend this a2a-serve pins.
+Run it after you install a newer a2a-serve. It downloads the new
+agentmesh-one or slimctl, then restarts a running relay, or upgrades the data
+of a stopped one.
 
 A newer Agent Mesh migrates the relay's database, and an older one can't use
 it again, so the upgrade backs up a SQLite database first and keeps the last

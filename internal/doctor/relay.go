@@ -29,7 +29,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
-	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
@@ -100,9 +99,13 @@ func fetch(ctx context.Context, hc *http.Client, url string) (int, []byte, error
 // RelayOptions select the checks of [RunRelay].
 type RelayOptions struct {
 	Dir relaydir.Dir
-	// Binary is where the pinned agentmesh-one is, or would be downloaded to.
-	Binary string
-	Online bool
+	// Binary is where the pinned program of the relay's backend is, or
+	// would be downloaded to; Program and Version name it, and CheckBinary
+	// checks it.
+	Binary           string
+	Program, Version string
+	CheckBinary      func(ctx context.Context, path string) error
+	Online           bool
 }
 
 // RunRelay runs the checks of the relay in opts.Dir. A relay doesn't use
@@ -125,7 +128,10 @@ func relayChecks(ctx context.Context, env Env, opts RelayOptions) []Result {
 	if state, open := checkState(d.StateDir(), d.SecretsPath()); open {
 		results = append(results, state)
 	}
-	results = append(results, checkRelayBinary(ctx, opts.Binary), checkDataVersion(d))
+	results = append(results, checkRelayBinary(ctx, opts))
+	if conf.BackendName() == relaydir.BackendAgentMesh {
+		results = append(results, checkDataVersion(d))
+	}
 	if env.RelayStatus != nil {
 		results = append(results, checkRelayRunning(ctx, env, d))
 	}
@@ -175,11 +181,14 @@ func checkRelayConfig(d relaydir.Dir, conf *relaydir.Config) Result {
 	if conf.Tunnel != "" {
 		where = "a " + conf.Tunnel + " quick tunnel"
 	}
-	db := "SQLite"
-	if conf.Database != "" {
-		db = "PostgreSQL"
+	data := "data in SQLite"
+	switch {
+	case conf.BackendName() == relaydir.BackendSLIM:
+		data = "SLIM, members in the relay directory"
+	case conf.Database != "":
+		data = "data in PostgreSQL"
 	}
-	r := Result{ID: "relay-config", Status: StatusOK, Message: fmt.Sprintf("relay at %s, serving HTTP on %s, data in %s", where, conf.ListenAddr(), db)}
+	r := Result{ID: "relay-config", Status: StatusOK, Message: fmt.Sprintf("relay at %s, serving HTTP on %s, %s", where, conf.ListenAddr(), data)}
 	if conf.SignIn() {
 		r.Message += "; " + strings.Join(conf.AllowEmails, ", ") + " sign in with Google"
 		r.Detail = "the Google app's redirect URI is " + signin.CallbackURL(conf.URL)
@@ -187,17 +196,20 @@ func checkRelayConfig(d relaydir.Dir, conf *relaydir.Config) Result {
 	return r
 }
 
-func checkRelayBinary(ctx context.Context, path string) Result {
+// checkRelayBinary checks the program of the relay's backend. Its check ID
+// is the program's name, such as agentmesh-one.
+func checkRelayBinary(ctx context.Context, opts RelayOptions) Result {
+	id, path := opts.Program, opts.Binary
 	if path == "" {
-		return Result{ID: "agentmesh-one", Status: StatusSkip, Message: "no agentmesh-one to check"}
+		return Result{ID: id, Status: StatusSkip, Message: "no " + id + " to check"}
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return Result{ID: "agentmesh-one", Status: StatusOK, Message: fmt.Sprintf("agentmesh-one %s is downloaded on the next relay run", agentmesh.Version)}
+		return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("%s %s is downloaded on the next relay run", id, opts.Version)}
 	}
-	if err := meshbackend.CheckBinary(ctx, path); err != nil {
-		return Result{ID: "agentmesh-one", Status: StatusFail, Message: err.Error(), Fix: "rm " + path + "; `a2a-serve relay run` downloads it again"}
+	if err := opts.CheckBinary(ctx, path); err != nil {
+		return Result{ID: id, Status: StatusFail, Message: err.Error(), Fix: "rm " + path + "; `a2a-serve relay run` downloads it again"}
 	}
-	return Result{ID: "agentmesh-one", Status: StatusOK, Message: fmt.Sprintf("agentmesh-one %s at %s", agentmesh.Version, path)}
+	return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("%s %s at %s", id, opts.Version, path)}
 }
 
 func checkDataVersion(d relaydir.Dir) Result {
