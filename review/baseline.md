@@ -16,7 +16,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **The control socket fallback in `$XDG_RUNTIME_DIR` or `/tmp` can be covered by a broad `--mount`** (`internal/agentdir/agentdir.go:152-162`). It needs a very long agent directory path plus an unusual mount.
 - **A node can read another node's idempotent result before the ownership check** (`internal/agentsrv/nodes/nodes.go:377-389`). It needs the other node's task ID and idempotency key.
 - **A private-network member can take over a gossip entry by copying another agent's card name** (at `5bd409f`: `internal/agentsrv/ads.go:128`, `internal/gossip/gossip.go:480-500`). Private-network members get this much trust in the access model.
-- **`relay invite <name>` lets a removed node back in through a name it once published** (at `5bd409f`: `internal/relay/control/control.go:216-247`). Inviting is an explicit action of the relay admin.
+- **`relay invite <name>` lets a removed node back in through a name it once published** (at `5bd409f`: `internal/relay/control/control.go:216-247`, now `letBack` in `internal/relay/meshbackend/service.go`). Inviting is an explicit action of the relay admin.
 - **Backup extraction has no size or entry limits, and restores symlinks at any path** (at `5bd409f`: `internal/backup/snapshot.go:417-485`). Writing a snapshot needs the backup key.
 - **`/n/{node}` answers 404 before authentication** (at `5bd409f`: `internal/agentsrv/nodes/nodes.go:274-285`). Node names have little value to an attacker.
 - **Pairing-code failure limits apply per client, with no global cap** (at `5bd409f`: `internal/pairings/limiter.go:56-74`). A code has 40 bits and a 15-minute TTL.

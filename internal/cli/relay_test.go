@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -51,10 +52,10 @@ func remoteRelay(t *testing.T) (string, *meshtest.Mesh) {
 	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)}, time.Time{}, "ci-bot")
 	var relayURL string
 	dir := t.TempDir()
-	svc := control.NewService(control.Options{
+	svc := meshbackend.NewService(meshbackend.ServiceOptions{
 		Mesh:        meshadmin.New(m.URL, relayAdminToken, testHTTP),
-		Removed:     control.NewRemovedAgents(filepath.Join(dir, "removed-agents.json")),
-		InviteNames: control.NewInviteNames(filepath.Join(dir, "invite-names.json")),
+		Removed:     meshbackend.NewRemovedAgents(filepath.Join(dir, "removed-agents.json")),
+		InviteNames: meshbackend.NewInviteNames(filepath.Join(dir, "invite-names.json")),
 		Status: func() control.Status {
 			return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
 		},

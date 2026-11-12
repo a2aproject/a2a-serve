@@ -38,6 +38,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 )
 
 // testHTTP has a transport of its own: httptest.Server.Close closes the idle
@@ -102,7 +103,7 @@ func newFront(t *testing.T) (*front.Front, *httptest.Server) {
 
 func newFrontWith(t *testing.T, signIn http.Handler) (*front.Front, *httptest.Server) {
 	t.Helper()
-	f := front.New(info, echo(t, "control"), signIn)
+	f := front.New(info, meshbackend.Routes{}, echo(t, "control"), signIn)
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	return f, srv
@@ -188,17 +189,17 @@ func TestFrontReportsVersions(t *testing.T) {
 	t.Parallel()
 	_, srv := newFront(t)
 
-	status, body := do(t, http.MethodGet, srv.URL+agentmesh.InfoPath)
+	status, body := do(t, http.MethodGet, srv.URL+front.InfoPath)
 
 	if status != http.StatusOK {
-		t.Fatalf("GET %s status = %d, want %d", agentmesh.InfoPath, status, http.StatusOK)
+		t.Fatalf("GET %s status = %d, want %d", front.InfoPath, status, http.StatusOK)
 	}
 	var got agentmesh.Info
 	if err := json.Unmarshal([]byte(body), &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 	if diff := cmp.Diff(info, got); diff != "" {
-		t.Fatalf("GET %s wrong result (-want +got) diff = %s", agentmesh.InfoPath, diff)
+		t.Fatalf("GET %s wrong result (-want +got) diff = %s", front.InfoPath, diff)
 	}
 }
 
@@ -346,7 +347,7 @@ func TestFrontLimitsEachClient(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			h := newHolder()
-			f := front.New(info, h, h)
+			f := front.New(info, meshbackend.Routes{}, h, h)
 			if tt.proxied {
 				mesh := httptest.NewServer(h)
 				t.Cleanup(mesh.Close)
@@ -631,7 +632,7 @@ func TestFrontTellsClientsApart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			h := newHolder()
-			tr := newTryer(t, front.New(info, h, h), h, "/a2a-serve/signin/token")
+			tr := newTryer(t, front.New(info, meshbackend.Routes{}, h, h), h, "/a2a-serve/signin/token")
 			for i := range 32 {
 				if got := tr.try(t, tt.held); got != 0 {
 					t.Fatalf("request %d of the first client status = %d, want it held", i+1, got)
@@ -685,7 +686,7 @@ func TestFrontReusesUpstreamConnectionsAfterABurst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := front.New(info, echo(t, "control"), nil)
+	f := front.New(info, meshbackend.Routes{}, echo(t, "control"), nil)
 	f.Open(u)
 	t.Cleanup(f.Close)
 	sendBurst := func() {

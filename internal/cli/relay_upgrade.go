@@ -22,8 +22,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
-	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -116,7 +116,7 @@ func upgradeStoppedRelay(cmd *cobra.Command, cfg *globalConfig, d relaydir.Dir) 
 	if err != nil {
 		return err
 	}
-	res, err := relay.PrepareData(cmd.Context(), d, agentmesh.Version, conf.Database != "", time.Now())
+	res, err := meshbackend.PrepareData(cmd.Context(), d, agentmesh.Version, conf.Database != "", time.Now())
 	if err != nil {
 		return err
 	}

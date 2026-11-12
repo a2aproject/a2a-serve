@@ -42,6 +42,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/netprovider"
@@ -99,7 +100,7 @@ func agentmeshOne(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := relay.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(relay.BinaryEnv), http.DefaultClient, runtime.GOOS, runtime.GOARCH, t.Logf)
+	f := meshbackend.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(meshbackend.BinaryEnv), http.DefaultClient, runtime.GOOS, runtime.GOARCH, t.Logf)
 	bin, err := f.Get(t.Context())
 	if err != nil {
 		t.Fatalf("Fetcher.Get() error = %v", err)
@@ -162,7 +163,8 @@ func startRelayWith(t *testing.T, d relaydir.Dir, bin string, google googleauth.
 	done := make(chan error, 1)
 	go func() {
 		err := relay.New(relay.Options{
-			Dir: d, Binary: bin, A2AServe: "test", Google: google, Out: logWriter{t}, MeshLog: io.Discard, Now: time.Now,
+			Dir: d, Backend: meshbackend.New(meshbackend.Options{Binary: bin, Log: io.Discard, Now: time.Now}),
+			A2AServe: "test", Google: google, Out: logWriter{t}, TunnelLog: io.Discard, Now: time.Now,
 		}).Run(ctx)
 		done <- errors.Join(err, release())
 	}()

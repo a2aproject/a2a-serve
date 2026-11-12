@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package control_test
+package meshbackend_test
 
 import (
 	"errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -65,24 +66,24 @@ func newMesh(t *testing.T) *meshtest.Mesh {
 	return m
 }
 
-func newService(t *testing.T, m *meshtest.Mesh) *control.Service {
+func newService(t *testing.T, m *meshtest.Mesh) *meshbackend.Service {
 	t.Helper()
 	return newServiceAllowing(t, m, "*@example.com")
 }
 
 // newServiceAllowing returns the service of a relay whose allowlist is allow.
-func newServiceAllowing(t *testing.T, m *meshtest.Mesh, allow ...string) *control.Service {
+func newServiceAllowing(t *testing.T, m *meshtest.Mesh, allow ...string) *meshbackend.Service {
 	t.Helper()
 	return newServiceIn(m, filepath.Join(t.TempDir(), "removed.json"), allow...)
 }
 
 // newServiceIn returns the service of a relay that remembers removed agents
 // in the file removed, and invite names next to it.
-func newServiceIn(m *meshtest.Mesh, removed string, allow ...string) *control.Service {
-	return control.NewService(control.Options{
+func newServiceIn(m *meshtest.Mesh, removed string, allow ...string) *meshbackend.Service {
+	return meshbackend.NewService(meshbackend.ServiceOptions{
 		Mesh:        meshadmin.New(m.URL, adminToken, testHTTP),
-		Removed:     control.NewRemovedAgents(removed),
-		InviteNames: control.NewInviteNames(filepath.Join(filepath.Dir(removed), "invite-names.json")),
+		Removed:     meshbackend.NewRemovedAgents(removed),
+		InviteNames: meshbackend.NewInviteNames(filepath.Join(filepath.Dir(removed), "invite-names.json")),
 		Policy:      policy,
 		Status: func() control.Status {
 			return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
@@ -103,7 +104,7 @@ func privateDir(t *testing.T) string {
 }
 
 // socketClient serves svc on a control socket and returns its client.
-func socketClient(t *testing.T, svc *control.Service, restart func()) *control.Client {
+func socketClient(t *testing.T, svc *meshbackend.Service, restart func()) *control.Client {
 	t.Helper()
 	path := filepath.Join(privateDir(t), "relay.sock")
 	ln, err := net.Listen("unix", path)
@@ -126,7 +127,7 @@ func socketClient(t *testing.T, svc *control.Service, restart func()) *control.C
 
 // remoteClient serves svc behind the admin token and returns a client
 // with token.
-func remoteClient(t *testing.T, svc *control.Service, token string) *control.Client {
+func remoteClient(t *testing.T, svc *meshbackend.Service, token string) *control.Client {
 	t.Helper()
 	failures := backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now)
 	srv := httptest.NewServer(http.StripPrefix(control.RemotePath, control.RequireToken(adminToken, failures, control.Handler(svc, nil))))
@@ -136,9 +137,9 @@ func remoteClient(t *testing.T, svc *control.Service, token string) *control.Cli
 
 func TestOperationsOverEachTransport(t *testing.T) {
 	t.Parallel()
-	transports := map[string]func(*testing.T, *control.Service) *control.Client{
-		"socket": func(t *testing.T, svc *control.Service) *control.Client { return socketClient(t, svc, nil) },
-		"remote": func(t *testing.T, svc *control.Service) *control.Client { return remoteClient(t, svc, adminToken) },
+	transports := map[string]func(*testing.T, *meshbackend.Service) *control.Client{
+		"socket": func(t *testing.T, svc *meshbackend.Service) *control.Client { return socketClient(t, svc, nil) },
+		"remote": func(t *testing.T, svc *meshbackend.Service) *control.Client { return remoteClient(t, svc, adminToken) },
 	}
 	for name, newClient := range transports {
 		t.Run(name, func(t *testing.T) {

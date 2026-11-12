@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/front"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
@@ -50,7 +51,7 @@ func fakeRelay(t *testing.T, ready bool, info *agentmesh.Info) string {
 			if err := json.NewEncoder(w).Encode(map[string]string{"issuer": "http://" + r.Host + signin.Path}); err != nil {
 				t.Errorf("writing: %v", err)
 			}
-		case agentmesh.InfoPath:
+		case front.InfoPath:
 			if info == nil {
 				http.NotFound(w, r)
 				return
