@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -122,65 +123,52 @@ func (r *DockerRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile, false)...)...)
-	cmd.Env = os.Environ()
-	cmd.Dir = os.TempDir()
-	return cmd, nil
+	return r.startCommand(ctx, r.runArgs(c, envFile, false)), nil
 }
 
-// fallbackScript starts a container as startScript does, after a check
-// of its launcher's setup. $2, $3 and $4 are the quoted arguments of
-// docker run for the check, for the container with the egress boundary,
-// and for the fallback, which has Docker's own network. A check that
-// finds the setup can't work on this host writes its output to marker $1,
-// and that and every later start get the fallback. Any other failure of
-// the check fails the start. The check reads no stdin, which the
-// container gets.
-var fallbackScript = `name=$0 marker=$1
-docker rm -f "$name" "$name-check" >/dev/null 2>&1
-if [ ! -e "$marker" ]; then
-  out=$(eval "docker run --name \"\$name-check\" $2" </dev/null 2>&1)
-  code=$?
-  case $code:$out in
-  0:*) ;;
-  ` + setupFailedPattern() + `)
-    printf '%s\n' "$out" >"$marker"
-    printf 'a2a-serve: egress control is off, as the container can'"'"'t set up its network: %s\n' "$out" >&2 ;;
-  *)
-    printf 'a2a-serve: checking the network setup of the container failed with status %s: %s\n' "$code" "$out" >&2
-    exit "$code" ;;
-  esac
-fi
-if [ -e "$marker" ]; then eval "exec docker run --name \"\$name\" $4"; fi
-eval "exec docker run --name \"\$name\" $3"`
+func (r *DockerRunner) startCommand(ctx context.Context, runArgs []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, runArgs...)...)
+	cmd.Env = os.Environ()
+	cmd.Dir = os.TempDir()
+	return cmd
+}
 
-// CommandWithFallback returns the process which runs c in the container of
-// r once a check of its launcher's setup passes, or else in the container
-// of fallback, from then on. The failed check leaves its output in marker.
-func (r *DockerRunner) CommandWithFallback(ctx context.Context, c Command, fallback *DockerRunner, marker string) (*exec.Cmd, error) {
+// Sandbox returns the [Sandbox] that runs c in the container of r. With
+// checkBoundary, every start first runs the check of the launcher's setup,
+// and fails with an [*EgressSetupError] when the setup can't work on this
+// host. Close calls [DockerRunner.Stop].
+func (r *DockerRunner) Sandbox(c Command, checkBoundary bool, opts Options) (Sandbox, error) {
 	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
 	if err != nil {
 		return nil, err
 	}
-	fbEnvFile, err := fallback.writeEnvFile(append(slices.Clone(fallback.Env), c.Env...))
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", fallbackScript, r.Name, marker,
-		shellQuote(r.runArgs(c, envFile, true)), shellQuote(r.runArgs(c, envFile, false)), shellQuote(fallback.runArgs(c, fbEnvFile, false)))
-	cmd.Env = os.Environ()
-	cmd.Dir = os.TempDir()
-	return cmd, nil
+	return &dockerSandbox{r: r, runArgs: r.runArgs(c, envFile, false), envFile: envFile, checkBoundary: checkBoundary && r.Egress != nil, opts: opts}, nil
 }
 
-// shellQuote joins args, each in single quotes, for sh to eval.
-func shellQuote(args []string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-	}
-	return strings.Join(quoted, " ")
+type dockerSandbox struct {
+	r             *DockerRunner
+	runArgs       []string
+	envFile       string
+	checkBoundary bool
+	opts          Options
 }
+
+func (s *dockerSandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
+	if err := s.opts.check(); err != nil {
+		return nil, err
+	}
+	if s.checkBoundary {
+		if err := s.r.probe(ctx, s.envFile); err != nil {
+			if errors.Is(err, ErrNoBoundary) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("checking the network setup of the container: %w", err)
+		}
+	}
+	return startProcess(s.r.startCommand(context.WithoutCancel(ctx), s.runArgs), s.opts.Stderr)
+}
+
+func (s *dockerSandbox) Close(ctx context.Context) error { return s.r.Stop(ctx) }
 
 // EgressSetupError is the failure of a container to set up its network on
 // this host, which the server answers by giving the container Docker's
@@ -188,6 +176,9 @@ func shellQuote(args []string) string {
 type EgressSetupError struct{ Reason string }
 
 func (e *EgressSetupError) Error() string { return e.Reason }
+
+// Unwrap returns [ErrNoBoundary].
+func (e *EgressSetupError) Unwrap() error { return ErrNoBoundary }
 
 // runtimeFailedExits are the exit codes of docker run when the container's
 // command didn't run, and setupRefusals what its output names when the
@@ -208,28 +199,6 @@ func setupFailed(code int, out string) bool {
 		return false
 	}
 	return slices.ContainsFunc(setupRefusals, func(s string) bool { return strings.Contains(out, s) })
-}
-
-// setupFailedPattern is the sh case pattern of "code:output" for which
-// setupFailed reports true.
-func setupFailedPattern() string {
-	patterns := []string{strconv.Itoa(sandboxnet.SetupFailedExit) + ":*"}
-	for _, code := range runtimeFailedExits {
-		for _, s := range setupRefusals {
-			patterns = append(patterns, strconv.Itoa(code)+":*"+s+"*")
-		}
-	}
-	return strings.Join(patterns, "|")
-}
-
-// FallbackReason returns why the check whose output
-// [DockerRunner.CommandWithFallback] left in marker failed.
-func FallbackReason(marker string) string {
-	out, err := os.ReadFile(marker)
-	if err != nil {
-		return err.Error()
-	}
-	return reasonOf(string(out))
 }
 
 // reasonOf returns the launcher's setup error in the output of a check, or
@@ -269,7 +238,7 @@ func (r *DockerRunner) Probe(ctx context.Context) error {
 	}
 	for attempt := 1; ; attempt++ {
 		err := r.probe(ctx, envFile)
-		if _, setup := errors.AsType[*EgressSetupError](err); err == nil || setup {
+		if err == nil || errors.Is(err, ErrNoBoundary) {
 			return err
 		}
 		if attempt == probeAttempts || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {

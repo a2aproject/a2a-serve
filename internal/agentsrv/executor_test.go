@@ -627,7 +627,7 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 				t.Fatal(err)
 			}
 
-			_, err = s.prepareHarness(context.Background(), io.Discard, tc.key)
+			_, err = s.prepareHarness(context.Background(), io.Discard, io.Discard, tc.key)
 
 			if err == nil || !strings.Contains(err.Error(), "was replaced") {
 				t.Fatalf("Server.prepareHarness() error = %v, want the agent directory replaced", err)

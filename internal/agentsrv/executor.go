@@ -61,7 +61,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		return nil, nil, err
 	}
 	s.pruneEnvFiles()
-	h, err := s.prepareHarness(ctx, imageProgress, "")
+	h, err := s.prepareHarness(ctx, imageProgress, harnessLog, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,12 +74,12 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	for _, w := range h.prepared.Warnings {
 		s.logf("! %s", w)
 	}
-	if p := h.prepared.EgressProblem; p != "" {
+	if p := h.prepared.NoBoundary(); p != "" {
 		slog.Warn(p)
 	}
 	s.noticeEgress(h.prepared)
 
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
+	acp, err := a2aacp.NewExecutor(ctx, h.process(), s.acpConfig())
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
 	}
@@ -216,11 +216,11 @@ func (s *Server) startPoolAgent(ctx context.Context, agents *userAgents, key str
 		return nil, err
 	}
 	defer release()
-	h, err := s.prepareHarness(ctx, harnessLog, key)
+	h, err := s.prepareHarness(ctx, harnessLog, harnessLog, key)
 	if err != nil {
 		return nil, err
 	}
-	rwc, err := h.process(harnessLog).Start(ctx, key)
+	rwc, err := h.process().Start(ctx, key)
 	if err != nil {
 		return nil, errors.Join(err, h.stop(context.WithoutCancel(ctx)))
 	}
@@ -247,23 +247,14 @@ type preparedHarness struct {
 	sandbox access.Sandbox
 }
 
-func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
-	return checkedProcess{
-		Process:    a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr},
-		check:      h.prepared.Check,
-		onHost:     h.prepared.OnHost,
-		maxMessage: h.maxMessage,
-	}
+func (h *preparedHarness) process() agentProcess {
+	return agentProcess{sandbox: h.prepared, maxMessage: h.maxMessage}
 }
 
-// checkedProcess checks the sandbox before every start of the process, since
-// a pool starts it again after it stops.
-type checkedProcess struct {
-	a2aacp.Process
-	check func() error
-	// onHost marks each process, so that the processes it starts are killed
-	// once it stops.
-	onHost bool
+// agentProcess starts the agent process in its sandbox, which checks the
+// sandbox before every start, since a pool starts it again after it stops.
+type agentProcess struct {
+	sandbox sandbox.Sandbox
 	// maxMessage bounds a message from the agent.
 	maxMessage int
 }
@@ -271,30 +262,18 @@ type checkedProcess struct {
 // Start implements [a2aacp.Agent]. A message from the agent over
 // maxMessage fails the connection, and Close returns once the reader saw
 // the output end.
-func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteCloser, error) {
-	if err := p.check(); err != nil {
-		return nil, err
-	}
-	if !p.onHost {
-		rwc, err := p.Process.Start(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
-	}
-	mark := sandbox.NewProcessMark()
-	proc := p.Process
-	proc.Env = append(slices.Clone(proc.Env), mark.Env())
-	rwc, err := proc.Start(ctx, key)
+func (p agentProcess) Start(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
+	rwc, err := p.sandbox.Start(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return newAwaitedClose(newBoundedMessages(mark.Watch(rwc), p.maxMessage), agentReadEndGrace), nil
+	return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
-// key: the owner's for no key, guests' or a user's.
-func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
+// key: the owner's for no key, guests' or a user's. The process writes its
+// stderr to stderr.
+func (s *Server) prepareHarness(ctx context.Context, imageProgress, stderr io.Writer, key string) (*preparedHarness, error) {
 	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
@@ -322,6 +301,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Limits:     sandbox.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
 		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress:   imageProgress,
+		Stderr:     stderr,
 	}
 	_, isUser := agentkey.UserOf(key)
 	switch {
@@ -389,11 +369,11 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
-	s.egress.started(spec.EgressMode, prepared.EgressProblem)
-	forget := s.egress.watch(prepared.FellBack)
+	s.egress.started(spec.EgressMode, prepared.NoBoundary())
+	forget := s.egress.watch(prepared.NoBoundary)
 	stop := func(ctx context.Context) error {
 		forget()
-		return errors.Join(prepared.Stop(ctx), closeEndpoint())
+		return errors.Join(prepared.Close(ctx), closeEndpoint())
 	}
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage, sandbox: sb}, nil
 }

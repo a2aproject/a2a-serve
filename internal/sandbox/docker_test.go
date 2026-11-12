@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -514,52 +515,58 @@ func TestDockerRunnerCommandWithRelay(t *testing.T) {
 	}
 }
 
-func TestCommandWithFallback(t *testing.T) {
-	t.Parallel()
+func TestDockerSandboxChecksBoundary(t *testing.T) {
 	tests := []struct {
 		name string
 		// checks are what the successive checks do.
-		checks     []string
-		wantFailed []bool
-		want       []string
-		wantReason string
+		checks []string
+		// wantErr are the errors of the successive starts; "setup: " marks
+		// an error that wraps ErrNoBoundary.
+		wantErr []string
+		want    []string
 	}{
-		{name: "check passes", checks: []string{"exit 0", "exit 0"}, wantFailed: []bool{false, false}, want: []string{"check", "egress", "check", "egress"}},
-		{name: "launcher can't set up the network", checks: []string{sandboxtest.LauncherNoTUN}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: "no tun"},
-		{name: "runtime refuses the TUN device", checks: []string{sandboxtest.TUNMissing}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: `docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory`},
-		{name: "daemon error", checks: []string{sandboxtest.DaemonError, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
-		{name: "launcher crash naming the device", checks: []string{sandboxtest.LauncherCrashTUN, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
+		{name: "check passes", checks: []string{"exit 0", "exit 0"}, wantErr: []string{"", ""}, want: []string{"check", "run", "check", "run"}},
+		{name: "launcher can't set up the network", checks: []string{sandboxtest.LauncherNoTUN}, wantErr: []string{"setup: no tun"}, want: []string{"check"}},
+		{name: "runtime refuses the TUN device", checks: []string{sandboxtest.TUNMissing}, wantErr: []string{`setup: docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory`}, want: []string{"check"}},
+		{name: "daemon error", checks: []string{sandboxtest.DaemonError, "exit 0"}, wantErr: []string{"failed to create task for container: EOF", ""}, want: []string{"check", "check", "run"}},
+		{name: "launcher crash naming the device", checks: []string{sandboxtest.LauncherCrashTUN, "exit 0"}, wantErr: []string{"panic: opening /dev/net/tun", ""}, want: []string{"check", "check", "run"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			calls := filepath.Join(dir, "calls")
+			calls := filepath.Join(t.TempDir(), "calls")
 			var checks strings.Builder
 			for i, c := range tc.checks {
 				fmt.Fprintf(&checks, "%d) %s;;\n", i+1, c)
 			}
-			fakeDocker := "#!/bin/sh\n" +
-				"[ \"$1\" = run ] || exit 0\n" +
-				"case \"$*\" in *--check*) echo check >>" + calls + "\n" +
-				"case $(grep -c check " + calls + ") in\n" + checks.String() + "esac;;\n" +
-				"*sandbox-init*) echo egress >>" + calls + ";;\n" +
-				"*) echo fallback >>" + calls + ";; esac\n"
-			if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fakeDocker), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0
+case "$*" in *--check*) echo check >>`+calls+`
+case $(grep -c check `+calls+`) in
+`+checks.String()+`esac;;
+*) echo run >>`+calls+`;; esac
+`)
 			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
-			fallback := &DockerRunner{Name: "a2a-coder-1", Image: "img:1"}
-			marker := filepath.Join(dir, "fallback")
-			for i, wantFailed := range tc.wantFailed {
-				cmd, err := r.CommandWithFallback(context.Background(), Command{Path: "agent", Args: []string{"it's"}}, fallback, marker)
-				if err != nil {
-					t.Fatalf("CommandWithFallback() error = %v", err)
+			sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{})
+			if err != nil {
+				t.Fatalf("DockerRunner.Sandbox() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := sb.Close(context.Background()); err != nil {
+					t.Errorf("Sandbox.Close() error = %v", err)
 				}
-				cmd.Env = append(cmd.Env, "PATH="+dir+":/usr/bin:/bin")
-				out, err := cmd.CombinedOutput()
-				if failed := err != nil; failed != wantFailed {
-					t.Fatalf("start %d of the container error = %v: %s, want failed %v", i+1, err, out, wantFailed)
+			})
+			for i, wantErr := range tc.wantErr {
+				rwc, err := sb.Start(context.Background())
+				if err == nil {
+					drain(t, rwc)
+				}
+				wantSetup, setup := strings.CutPrefix(wantErr, "setup: ")
+				switch {
+				case wantErr == "" && err != nil:
+					t.Fatalf("start %d Sandbox.Start() error = %v, want nil", i+1, err)
+				case setup && (!errors.Is(err, ErrNoBoundary) || err.Error() != wantSetup):
+					t.Fatalf("start %d Sandbox.Start() error = %v, want %q wrapping %v", i+1, err, wantSetup, ErrNoBoundary)
+				case wantErr != "" && !setup && (err == nil || errors.Is(err, ErrNoBoundary) || !strings.Contains(err.Error(), wantErr)):
+					t.Fatalf("start %d Sandbox.Start() error = %v, want an error containing %q", i+1, err, wantErr)
 				}
 			}
 			data, err := os.ReadFile(calls)
@@ -569,18 +576,89 @@ func TestCommandWithFallback(t *testing.T) {
 			if diff := cmp.Diff(tc.want, strings.Fields(string(data))); diff != "" {
 				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
 			}
-			_, statErr := os.Stat(marker)
-			if tc.wantReason == "" {
-				if statErr == nil {
-					t.Fatalf("fallback marker exists after %q, want none: %s", tc.name, FallbackReason(marker))
-				}
-				return
-			}
-			if got := FallbackReason(marker); got != tc.wantReason {
-				t.Fatalf("FallbackReason() = %q, want %q", got, tc.wantReason)
-			}
 		})
 	}
+}
+
+func TestDockerSandboxRunsCommand(t *testing.T) {
+	sandboxtest.FakeDocker(t, `case "$1" in run) shift; printf '%s\n' "$@" ;; esac`)
+	checks := 0
+	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", EnvDir: t.TempDir(), Env: []string{"KEY=secret"}}
+	sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"acp"}, Dir: "/w"}, true, Options{Check: func() error {
+		checks++
+		if checks > 1 {
+			return errors.New("refused")
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatalf("DockerRunner.Sandbox() error = %v", err)
+	}
+	rwc, err := sb.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Sandbox.Start() error = %v", err)
+	}
+	got := strings.Fields(drain(t, rwc))
+	if !slices.Equal(got[len(got)-3:], []string{"img:1", "agent", "acp"}) || !slices.Contains(got, "--env-file") {
+		t.Fatalf("Sandbox.Start() ran docker run %q, want the command with an env file", got)
+	}
+	if _, err := sb.Start(context.Background()); err == nil || err.Error() != "refused" {
+		t.Fatalf("Sandbox.Start() error = %v, want the error of the check", err)
+	}
+	envFile := argAfter(got, "--env-file")
+	if err := sb.Close(context.Background()); err != nil {
+		t.Fatalf("Sandbox.Close() error = %v", err)
+	}
+	if _, err := os.Stat(envFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("env file after Sandbox.Close() error = %v, want %v", err, os.ErrNotExist)
+	}
+}
+
+func TestLocalSandbox(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	refuse := errors.New("refused")
+	var checkErr error
+	sb := NewLocal(Command{Path: "sh", Args: []string{"-c", `pwd; echo "$X"; cat`}, Dir: dir, Env: []string{"X=1"}}, Options{Check: func() error { return checkErr }})
+	rwc, err := sb.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Sandbox.Start() error = %v", err)
+	}
+	if _, err := io.WriteString(rwc, "in\n"); err != nil {
+		t.Fatalf("writing to the process error = %v", err)
+	}
+	buf := make([]byte, 64)
+	var out strings.Builder
+	for !strings.HasSuffix(out.String(), "in\n") {
+		n, err := rwc.Read(buf)
+		if err != nil {
+			t.Fatalf("reading the process error = %v, read %q", err, out.String())
+		}
+		out.Write(buf[:n])
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the process error = %v", err)
+	}
+	if want := dir + "\n1\nin\n"; out.String() != want {
+		t.Fatalf("Sandbox.Start() output = %q, want %q", out.String(), want)
+	}
+	checkErr = refuse
+	if _, err := sb.Start(context.Background()); !errors.Is(err, refuse) {
+		t.Fatalf("Sandbox.Start() error = %v, want %v", err, refuse)
+	}
+}
+
+// drain reads rwc until the process exits, closes it and returns what it read.
+func drain(t *testing.T, rwc io.ReadWriteCloser) string {
+	t.Helper()
+	data, err := io.ReadAll(rwc)
+	if err != nil {
+		t.Fatalf("reading the process error = %v", err)
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the process error = %v", err)
+	}
+	return string(data)
 }
 
 func TestCheckDockerHostUnreachable(t *testing.T) {
