@@ -64,7 +64,7 @@ func TestDecideEgress(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := DecideEgress(&tc.cfg, tc.env.Probe())
+			got := DecideEgress(&tc.cfg, tc.env.Probe)
 			if got.Boundary != tc.boundary {
 				t.Fatalf("DecideEgress().Boundary = %v, want %v", got.Boundary, tc.boundary)
 			}
@@ -98,5 +98,32 @@ func TestProbeFailed(t *testing.T) {
 		if got.Boundary || got.Problem == "" || !strings.HasPrefix(got.Warning, tc.want) {
 			t.Fatalf("probeFailed(%s) = %+v, want no boundary and a warning starting with %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestDecideEgressProbesOnlyForTheBoundary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		cfg       agentdir.Config
+		wantProbe bool
+	}{
+		{name: "docker", wantProbe: true},
+		{name: "allowlist", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, wantProbe: true},
+		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}},
+		{name: "local", cfg: agentdir.Config{Sandbox: SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			probed := false
+			DecideEgress(&tc.cfg, func() sandbox.Capabilities {
+				probed = true
+				return sandbox.Capabilities{}
+			})
+			if probed != tc.wantProbe {
+				t.Fatalf("DecideEgress() probed the machine = %v, want %v", probed, tc.wantProbe)
+			}
+		})
 	}
 }

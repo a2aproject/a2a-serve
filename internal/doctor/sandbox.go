@@ -43,7 +43,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
-		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe()).Warning; w != "" {
+		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe).Warning; w != "" {
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
 	} else {
@@ -163,7 +163,7 @@ func firstLine(s string) string {
 // server.
 func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config) Result {
 	r := Result{ID: "egress", Status: StatusOK}
-	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe())
+	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe)
 	if dir != nil && env.Status != nil {
 		if st, err := env.Status(ctx, *dir); err == nil && st.Egress != nil && st.Egress.Problem != "" {
 			d.Warning = st.Egress.Problem
@@ -185,7 +185,7 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	return r
 }
 
-// egressEnv is how [harness.DecideEgress] checks the machine of env:
+// egressEnv is how [harness.DecideEgress] probes the machine of env:
 // its a2a-serve, its TUN device, and the architecture of the agent's
 // image when docker has it.
 func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandbox.EgressEnv {

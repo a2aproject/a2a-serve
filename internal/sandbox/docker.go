@@ -109,6 +109,15 @@ func CheckEnvValue(name, value string) error {
 	return nil
 }
 
+// containerUser is the uid:gid that a container runs its process as: the
+// user's, or root with rootless Docker, where container root is the user.
+func containerUser(rootless bool) string {
+	if rootless {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+}
+
 // ContainerHome is where a container mounts its home directory.
 const ContainerHome = "/home/agent"
 

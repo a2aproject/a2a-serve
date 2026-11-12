@@ -240,25 +240,12 @@ func (l LogLines) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// relaySpec configures a relay container.
-type relaySpec struct {
-	name, image string
-	labels      map[string]string
-	uid, gid    int
-	// egress is the endpoint of the container's boundary.
-	egress EgressEndpoint
-	// serverSocket is the host path of the socket through which the agent
-	// reaches the server on Linux, and serverAddr the host:port of the
-	// server's TCP listener with Docker Desktop. Both are empty for a
-	// container that doesn't reach the server.
-	serverSocket, serverAddr string
-}
-
 // RelaySpec configures a relay container.
 type RelaySpec struct {
 	Name, Image string
 	Labels      map[string]string
-	UID, GID    int
+	// Rootless is set for rootless Docker, as in [DockerRunner].
+	Rootless bool
 	// Egress is the endpoint of the container's boundary.
 	Egress EgressEndpoint
 	// ServerSocket is the host path of the socket through which the agent
@@ -271,23 +258,22 @@ type RelaySpec struct {
 // StartRelay starts the relay container of spec, and returns the egress of
 // the containers that use it and a function that removes it.
 func StartRelay(ctx context.Context, spec RelaySpec, entrypoint []string) (*DockerEgress, func(context.Context) error, error) {
-	rs := relaySpec{name: spec.Name, image: spec.Image, labels: spec.Labels, uid: spec.UID, gid: spec.GID, egress: spec.Egress, serverSocket: spec.ServerSocket, serverAddr: spec.ServerAddr}
-	stop, err := startRelay(ctx, rs)
+	stop, err := startRelay(ctx, spec)
 	if err != nil {
 		return nil, nil, err
 	}
 	ensure := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+DockerTimeout)
 		defer cancel()
-		return ensureRelay(ctx, rs)
+		return ensureRelay(ctx, spec)
 	}
-	return &DockerEgress{Relay: rs.name, Entrypoint: entrypoint, Ensure: ensure}, stop, nil
+	return &DockerEgress{Relay: spec.Name, Entrypoint: entrypoint, Ensure: ensure}, stop, nil
 }
 
 // startRelay starts the relay container of spec and waits until it
 // listens. stop removes it with its volumes.
-func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context) error, err error) {
-	stop = func(ctx context.Context) error { return RemoveContainer(ctx, spec.name) }
+func startRelay(ctx context.Context, spec RelaySpec) (stop func(context.Context) error, err error) {
+	stop = func(ctx context.Context) error { return RemoveContainer(ctx, spec.Name) }
 	if err := stop(ctx); err != nil {
 		return nil, err
 	}
@@ -300,7 +286,7 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 			err = errors.Join(err, rerr)
 		}
 	}()
-	if _, err := keyFile.WriteString("A2A_SERVE_RELAY_KEY=" + spec.egress.RelayKey + "\n"); err != nil {
+	if _, err := keyFile.WriteString("A2A_SERVE_RELAY_KEY=" + spec.Egress.RelayKey + "\n"); err != nil {
 		return nil, errors.Join(err, keyFile.Close())
 	}
 	if err := keyFile.Close(); err != nil {
@@ -308,19 +294,19 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 	}
 	// A relay that crashes or outlives a restart of Docker restarts with
 	// its volumes, where the agent's container keeps its sockets.
-	args := []string{"run", "-d", "--restart", "unless-stopped", "--name", spec.name,
-		"--user", fmt.Sprintf("%d:%d", spec.uid, spec.gid),
+	args := []string{"run", "-d", "--restart", "unless-stopped", "--name", spec.Name,
+		"--user", containerUser(spec.Rootless),
 		"--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--add-host", "host.docker.internal:host-gateway",
 		"-v", sandboxnet.ContainerSocketDir, "-v", "/opt/a2a",
 		"--env-file", keyFile.Name(),
 	}
-	for _, k := range slices.Sorted(maps.Keys(spec.labels)) {
-		args = append(args, "--label", k+"="+spec.labels[k])
+	for _, k := range slices.Sorted(maps.Keys(spec.Labels)) {
+		args = append(args, "--label", k+"="+spec.Labels[k])
 	}
-	egressTo := spec.egress.RelayAddr
-	if spec.egress.RelayMount != "" {
-		args = append(args, "-v", spec.egress.RelayMount+":"+RelayEgressDir+":ro")
+	egressTo := spec.Egress.RelayAddr
+	if spec.Egress.RelayMount != "" {
+		args = append(args, "-v", spec.Egress.RelayMount+":"+RelayEgressDir+":ro")
 	}
 	relayArgs := []string{"sandbox-relay",
 		"--egress-listen", sandboxnet.ContainerSocketDir + "/" + sandboxnet.SocketName,
@@ -328,18 +314,18 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 	}
 	serverListen := sandboxnet.ContainerSocketDir + "/" + sandboxnet.ServerSocketName
 	switch {
-	case spec.serverSocket != "":
-		dir, base := splitSocket(spec.serverSocket)
+	case spec.ServerSocket != "":
+		dir, base := splitSocket(spec.ServerSocket)
 		args = append(args, "-v", dir+":"+relayServerDir+":ro")
 		relayArgs = append(relayArgs, "--server-listen", serverListen, "--server-to", "unix://"+relayServerDir+"/"+base)
-	case spec.serverAddr != "":
-		relayArgs = append(relayArgs, "--server-listen", serverListen, "--server-to", "tcp://"+spec.serverAddr)
+	case spec.ServerAddr != "":
+		relayArgs = append(relayArgs, "--server-listen", serverListen, "--server-to", "tcp://"+spec.ServerAddr)
 	}
-	args = append(append(args, spec.image), relayArgs...)
+	args = append(append(args, spec.Image), relayArgs...)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("starting the egress container: %w: %s", err, firstLine(string(bytes.TrimSpace(out))))
 	}
-	if err := waitForRelay(ctx, spec.name); err != nil {
+	if err := waitForRelay(ctx, spec.Name); err != nil {
 		return nil, errors.Join(err, stop(ctx))
 	}
 	return stop, nil
@@ -374,12 +360,12 @@ func waitForRelay(ctx context.Context, name string) error {
 
 // ensureRelay starts the relay container of spec again when it doesn't
 // run, such as after it was removed.
-func ensureRelay(ctx context.Context, spec relaySpec) error {
-	state, err := DockerQuery(ctx, "inspect", "--format", "{{.State.Running}}", spec.name)
+func ensureRelay(ctx context.Context, spec RelaySpec) error {
+	state, err := DockerQuery(ctx, "inspect", "--format", "{{.State.Running}}", spec.Name)
 	if err == nil && strings.TrimSpace(string(state)) == "true" {
 		return nil
 	}
-	slog.Warn("starting the egress container again", "container", spec.name)
+	slog.Warn("starting the egress container again", "container", spec.Name)
 	_, err = startRelay(ctx, spec)
 	return err
 }

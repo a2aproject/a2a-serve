@@ -515,7 +515,7 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 	if spec.Launcher != "" {
 		env.Launcher = func() (string, error) { return sandbox.CheckLauncher(spec.Launcher) }
 	}
-	decision = DecideEgress(spec.egressConfig(), env.Probe())
+	decision = DecideEgress(spec.egressConfig(), env.Probe)
 	if !decision.Boundary {
 		return nil, nil, decision, nil
 	}
@@ -545,16 +545,12 @@ func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless b
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress boundary: %w", err)
 	}
-	uid, gid := os.Getuid(), os.Getgid()
-	if rootless {
-		uid, gid = 0, 0
-	}
 	labels := maps.Clone(spec.Labels)
 	if labels == nil {
 		labels = map[string]string{}
 	}
 	labels["a2a.relay"] = spec.Name
-	rs := sandbox.RelaySpec{Name: spec.Name + "-egress", Image: image, Labels: labels, UID: uid, GID: gid, Egress: ep, ServerSocket: spec.Socket, ServerAddr: spec.BridgeAddr}
+	rs := sandbox.RelaySpec{Name: spec.Name + "-egress", Image: image, Labels: labels, Rootless: rootless, Egress: ep, ServerSocket: spec.Socket, ServerAddr: spec.BridgeAddr}
 	eg, stop, err := sandbox.StartRelay(ctx, rs, entrypoint)
 	if err != nil {
 		return nil, nil, EgressDecision{}, errors.Join(err, ep.Close())

@@ -40,16 +40,17 @@ type EgressDecision struct {
 }
 
 // DecideEgress decides whether the containers of cfg get the egress
-// boundary on a machine with caps. It is the one place that decides it,
-// for starting the containers, doctor, status and the agent's
-// instructions.
-func DecideEgress(cfg *agentdir.Config, caps sandbox.Capabilities) EgressDecision {
+// boundary on a machine that probe checks, which it calls only when cfg
+// asks for the boundary. It is the one place that decides it, for starting
+// the containers, doctor, status and the agent's instructions.
+func DecideEgress(cfg *agentdir.Config, probe func() sandbox.Capabilities) EgressDecision {
 	if cfg.Sandbox == SandboxLocal {
 		return EgressDecision{Warning: localEgressWarning(cfg)}
 	}
 	if cfg.Egress.Mode == egress.ModeUnrestricted {
 		return EgressDecision{}
 	}
+	caps := probe()
 	if caps.EgressRelay {
 		var warnings []string
 		if _, missing := errors.AsType[*sandbox.MissingRelayImage](caps.RelayImage); missing {
@@ -73,7 +74,7 @@ func DecideEgress(cfg *agentdir.Config, caps sandbox.Capabilities) EgressDecisio
 
 // HostEgress decides about the egress boundary of cfg on this machine.
 func HostEgress(cfg *agentdir.Config) EgressDecision {
-	return DecideEgress(cfg, sandbox.HostEgressEnv().Probe())
+	return DecideEgress(cfg, sandbox.HostEgressEnv().Probe)
 }
 
 // localEgressWarning says which egress settings of cfg have no effect with
