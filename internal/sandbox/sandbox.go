@@ -74,6 +74,13 @@ type Mount struct {
 	ReadOnly bool
 }
 
+// Mask lays the host file Src over Dst in the sandbox, read-only, or an
+// empty read-only directory when Src is empty.
+type Mask struct {
+	Src string
+	Dst string
+}
+
 // Limits are container resource limits. An empty field gets the value of
 // [DefaultLimits].
 type Limits struct {

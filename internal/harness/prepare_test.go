@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -684,7 +685,8 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 					mounts = append(mounts, m)
 				}
 			}
-			if diff := cmp.Diff(wantMounts, mounts); diff != "" {
+			// Docker mounts deeper destinations last, whatever their order.
+			if diff := cmp.Diff(wantMounts, mounts, cmpopts.SortSlices(strings.Compare)); diff != "" {
 				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
 			}
 			wantTmpfs = append([]string{"type=tmpfs,dst=" + hidden + ",readonly"}, wantTmpfs...)

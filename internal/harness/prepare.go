@@ -297,24 +297,26 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		return nil, err
 	}
 	dr := &sandbox.DockerRunner{
-		Name:         spec.Name,
-		Image:        image,
-		Mounts:       sandboxMounts(spec.Mounts),
-		WorkspaceSrc: spec.WorkspaceSrc,
-		Hidden:       spec.Hidden,
-		Home:         spec.Home,
-		EnvDir:       spec.EnvDir,
-		Env:          withoutEgressCA(cliEnv(spec.Env)),
-		Limits:       spec.Limits,
-		Labels:       spec.Labels,
-		Rootless:     rootless,
+		Name:     spec.Name,
+		Image:    image,
+		Mounts:   sandboxMounts(spec.Mounts),
+		Masks:    hiddenMasks(spec),
+		Home:     spec.Home,
+		EnvDir:   spec.EnvDir,
+		Env:      withoutEgressCA(cliEnv(spec.Env)),
+		Limits:   spec.Limits,
+		Labels:   spec.Labels,
+		Rootless: rootless,
+	}
+	if spec.WorkspaceSrc != "" {
+		dr.Mounts[0].Src = spec.WorkspaceSrc
 	}
 	if spec.MCPMask != "" {
 		masks, err := maskMCP(spec.MCPMask, spec.Mounts)
 		if err != nil {
 			return nil, err
 		}
-		dr.Mounts = append(dr.Mounts, masks...)
+		dr.Masks = append(dr.Masks, masks...)
 	}
 	cm := configMasks{check: func() error { return nil }}
 	if spec.ConfigMask != "" {
@@ -322,6 +324,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			return nil, err
 		}
 		dr.Mounts = append(dr.Mounts, cm.mounts...)
+		dr.Masks = append(dr.Masks, cm.masks...)
 		dr.Scratch = cm.scratch
 	}
 	if spec.PolicyDir != "" {
@@ -472,6 +475,16 @@ const SandboxDir = "/run/a2a"
 // ContainerHome is the home directory of the harness in the container.
 const ContainerHome = sandbox.ContainerHome
 
+// hiddenMasks returns the masks that lay an empty directory over the
+// hidden paths of spec wherever its mounts expose them.
+func hiddenMasks(spec Spec) []sandbox.Mask {
+	var out []sandbox.Mask
+	for _, dst := range sandbox.ContainerPaths(sandboxMounts(spec.Mounts), spec.Hidden) {
+		out = append(out, sandbox.Mask{Dst: dst})
+	}
+	return out
+}
+
 // sandboxMounts converts the mounts of an agent to those of a sandbox.
 func sandboxMounts(mounts []agentdir.Mount) []sandbox.Mount {
 	out := make([]sandbox.Mount, len(mounts))
@@ -565,7 +578,7 @@ const emptyMCP = "{\"mcpServers\": {}}\n"
 // which put it over the workspace's .mcp.json wherever mounts expose it. A
 // workspace without .mcp.json gets one with no servers, since docker
 // would otherwise create an empty file to mount over.
-func maskMCP(mask string, mounts []agentdir.Mount) ([]sandbox.Mount, error) {
+func maskMCP(mask string, mounts []agentdir.Mount) ([]sandbox.Mask, error) {
 	if err := fsutil.WriteAtomic(mask, []byte(emptyMCP), 0o644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", mask, err)
 	}
@@ -573,9 +586,9 @@ func maskMCP(mask string, mounts []agentdir.Mount) ([]sandbox.Mount, error) {
 	if err := writeIfMissing(file, []byte(emptyMCP)); err != nil {
 		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the agent: %w", file, err)
 	}
-	var out []sandbox.Mount
+	var out []sandbox.Mask
 	for _, dst := range sandbox.ContainerPaths(sandboxMounts(mounts), []string{file}) {
-		out = append(out, sandbox.Mount{Src: mask, Dst: dst, ReadOnly: true})
+		out = append(out, sandbox.Mask{Src: mask, Dst: dst})
 	}
 	return out, nil
 }
