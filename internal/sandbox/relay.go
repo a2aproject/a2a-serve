@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package harness
+package sandbox
 
 import (
 	"bytes"
@@ -34,7 +34,6 @@ import (
 
 	"golang.org/x/mod/module"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -111,7 +110,7 @@ func thisRelayImage() (image, ref string, err error) {
 
 // CheckRelayImage checks that the relay image of this a2a-serve is on
 // this machine, or with pull that it can be pulled. An image that the next
-// start of a container can pull or build is a [missingRelayImage].
+// start of a container can pull or build is a [MissingRelayImage].
 func CheckRelayImage(ctx context.Context, run func(ctx context.Context, name string, args ...string) ([]byte, error), pull bool) error {
 	image, ref, err := thisRelayImage()
 	if err != nil {
@@ -120,7 +119,7 @@ func CheckRelayImage(ctx context.Context, run func(ctx context.Context, name str
 	if _, err := run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image); err == nil {
 		return nil
 	}
-	missing := &missingRelayImage{image: image, pull: !pull, build: ref != ""}
+	missing := &MissingRelayImage{Image: image, Pull: !pull, Build: ref != ""}
 	if pull {
 		if _, err := run(ctx, "docker", "manifest", "inspect", image); err == nil {
 			return nil
@@ -132,23 +131,22 @@ func CheckRelayImage(ctx context.Context, run func(ctx context.Context, name str
 	return missing
 }
 
-// missingRelayImage is a relay image that isn't on this machine, which the
-// next start of a container pulls, when pull is set, or builds, when build
-// is set.
-type missingRelayImage struct {
-	image       string
-	pull, build bool
+// MissingRelayImage is a relay image that isn't on this machine, which the
+// next start of a container pulls or builds.
+type MissingRelayImage struct {
+	Image       string
+	Pull, Build bool
 }
 
-func (e *missingRelayImage) Error() string {
+func (e *MissingRelayImage) Error() string {
 	const next = "the next start of the agent's container"
 	switch {
-	case e.pull && e.build:
-		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it, or builds it from the a2a-serve repository", e.image, next)
-	case e.pull:
-		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it", e.image, next)
+	case e.Pull && e.Build:
+		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it, or builds it from the a2a-serve repository", e.Image, next)
+	case e.Pull:
+		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it", e.Image, next)
 	}
-	return fmt.Sprintf("the egress container's image %s is neither on this machine nor in the registry; %s builds it from the a2a-serve repository, which takes a few minutes", e.image, next)
+	return fmt.Sprintf("the egress container's image %s is neither on this machine nor in the registry; %s builds it from the a2a-serve repository, which takes a few minutes", e.Image, next)
 }
 
 // EnsureRelayImage makes the relay image of this a2a-serve available: it
@@ -168,10 +166,10 @@ func EnsureRelayImage(ctx context.Context, log io.Writer) (string, error) {
 // ensureRelayImage makes image available, building it from the git ref
 // when it can't be pulled. resolve returns the full commit of a short one.
 func ensureRelayImage(ctx context.Context, log io.Writer, image, ref string, resolve func(ctx context.Context, short string) (string, error)) (string, error) {
-	if sandbox.ImageExists(ctx, image) {
+	if ImageExists(ctx, image) {
 		return image, nil
 	}
-	pullErr := sandbox.PullImage(ctx, image, log)
+	pullErr := PullImage(ctx, image, log)
 	if pullErr == nil {
 		return image, nil
 	}
@@ -200,7 +198,7 @@ var fullCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // resolveCommit returns the full ID of the commit short in the GitHub
 // repository whose commits API is api.
 func resolveCommit(ctx context.Context, client *http.Client, api, short string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, sandbox.DockerTimeout)
+	ctx, cancel := context.WithTimeout(ctx, DockerTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+url.PathEscape(short), nil)
 	if err != nil {
@@ -230,18 +228,13 @@ func resolveCommit(ctx context.Context, client *http.Client, api, short string) 
 	return full, nil
 }
 
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
-}
+// LogLines writes each line of Docker's output to the server log.
+type LogLines struct{ Msg string }
 
-// logLines writes each line of Docker's output to the server log.
-type logLines struct{ msg string }
-
-func (l logLines) Write(p []byte) (int, error) {
+func (l LogLines) Write(p []byte) (int, error) {
 	for line := range strings.Lines(string(p)) {
 		if line = strings.TrimSpace(line); line != "" {
-			slog.Info(l.msg, "output", line)
+			slog.Info(l.Msg, "output", line)
 		}
 	}
 	return len(p), nil
@@ -261,10 +254,40 @@ type relaySpec struct {
 	serverSocket, serverAddr string
 }
 
+// RelaySpec configures a relay container.
+type RelaySpec struct {
+	Name, Image string
+	Labels      map[string]string
+	UID, GID    int
+	// Egress is the endpoint of the container's boundary.
+	Egress EgressEndpoint
+	// ServerSocket is the host path of the socket through which the agent
+	// reaches the server on Linux, and ServerAddr the host:port of the
+	// server's TCP listener with Docker Desktop. Both are empty for a
+	// container that doesn't reach the server.
+	ServerSocket, ServerAddr string
+}
+
+// StartRelay starts the relay container of spec, and returns the egress of
+// the containers that use it and a function that removes it.
+func StartRelay(ctx context.Context, spec RelaySpec, entrypoint []string) (*DockerEgress, func(context.Context) error, error) {
+	rs := relaySpec{name: spec.Name, image: spec.Image, labels: spec.Labels, uid: spec.UID, gid: spec.GID, egress: spec.Egress, serverSocket: spec.ServerSocket, serverAddr: spec.ServerAddr}
+	stop, err := startRelay(ctx, rs)
+	if err != nil {
+		return nil, nil, err
+	}
+	ensure := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+DockerTimeout)
+		defer cancel()
+		return ensureRelay(ctx, rs)
+	}
+	return &DockerEgress{Relay: rs.name, Entrypoint: entrypoint, Ensure: ensure}, stop, nil
+}
+
 // startRelay starts the relay container of spec and waits until it
 // listens. stop removes it with its volumes.
 func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context) error, err error) {
-	stop = func(ctx context.Context) error { return sandbox.RemoveContainer(ctx, spec.name) }
+	stop = func(ctx context.Context) error { return RemoveContainer(ctx, spec.name) }
 	if err := stop(ctx); err != nil {
 		return nil, err
 	}
@@ -331,7 +354,7 @@ func waitForRelay(ctx context.Context, name string) error {
 		if err == nil && bytes.Contains(out, []byte(sandboxnet.RelayReady)) {
 			return nil
 		}
-		state, err := sandbox.DockerQuery(ctx, "inspect", "--format", "{{.State.Running}} {{.RestartCount}} {{.State.ExitCode}}", name)
+		state, err := DockerQuery(ctx, "inspect", "--format", "{{.State.Running}} {{.RestartCount}} {{.State.ExitCode}}", name)
 		if err != nil {
 			return fmt.Errorf("the egress container %s is gone: %w", name, err)
 		}
@@ -352,7 +375,7 @@ func waitForRelay(ctx context.Context, name string) error {
 // ensureRelay starts the relay container of spec again when it doesn't
 // run, such as after it was removed.
 func ensureRelay(ctx context.Context, spec relaySpec) error {
-	state, err := sandbox.DockerQuery(ctx, "inspect", "--format", "{{.State.Running}}", spec.name)
+	state, err := DockerQuery(ctx, "inspect", "--format", "{{.State.Running}}", spec.name)
 	if err == nil && strings.TrimSpace(string(state)) == "true" {
 		return nil
 	}

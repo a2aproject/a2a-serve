@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	sbx "github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -92,7 +93,7 @@ func run(m *testing.M) int {
 			return 1
 		}
 	}
-	if os.Getenv(harness.EnvForceRelay) == "1" {
+	if os.Getenv(sbx.EnvForceRelay) == "1" {
 		if err := buildRelayImage(); err != nil {
 			fmt.Fprintln(os.Stderr, "e2e:", err)
 			return 1

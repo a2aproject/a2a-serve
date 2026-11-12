@@ -24,6 +24,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // useLocalSandbox is the fix of a missing Docker in an agent, and
@@ -42,7 +43,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
-		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg)).Warning; w != "" {
+		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe()).Warning; w != "" {
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
 	} else {
@@ -162,7 +163,7 @@ func firstLine(s string) string {
 // server.
 func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config) Result {
 	r := Result{ID: "egress", Status: StatusOK}
-	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg))
+	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe())
 	if dir != nil && env.Status != nil {
 		if st, err := env.Status(ctx, *dir); err == nil && st.Egress != nil && st.Egress.Problem != "" {
 			d.Warning = st.Egress.Problem
@@ -184,11 +185,11 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	return r
 }
 
-// egressEnv is the environment [harness.DecideEgress] decides in for env:
+// egressEnv is how [harness.DecideEgress] checks the machine of env:
 // its a2a-serve, its TUN device, and the architecture of the agent's
 // image when docker has it.
-func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) harness.EgressEnv {
-	return harness.EgressEnv{
+func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandbox.EgressEnv {
+	return sandbox.EgressEnv{
 		GOOS: runtime.GOOS,
 		Launcher: func() (string, error) {
 			exe, err := env.Executable()
@@ -199,8 +200,8 @@ func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) harness.Egres
 		},
 		TUN:        env.CheckTUN,
 		ImageArch:  imageArch(ctx, env, cfg),
-		ForceRelay: lookupEnv(env, harness.EnvForceRelay) == "1",
-		RelayImage: func() error { return harness.CheckRelayImage(ctx, env.Run, true) },
+		ForceRelay: lookupEnv(env, sandbox.EnvForceRelay) == "1",
+		RelayImage: func() error { return sandbox.CheckRelayImage(ctx, env.Run, true) },
 	}
 }
 

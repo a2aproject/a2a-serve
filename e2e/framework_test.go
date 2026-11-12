@@ -32,7 +32,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/harness"
+	sbx "github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -66,7 +66,7 @@ func newUser(t *testing.T) *user {
 		u.env = append(u.env, "DOCKER_HOST="+dockerHost)
 	}
 	if relayImage != "" {
-		u.env = append(u.env, harness.EnvForceRelay+"=1", harness.EnvRelayImage+"="+relayImage)
+		u.env = append(u.env, sbx.EnvForceRelay+"=1", sbx.EnvRelayImage+"="+relayImage)
 	}
 	u.setUp()
 	return u
