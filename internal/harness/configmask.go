@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // emptyConfig is an agent configuration file that changes nothing.
@@ -65,7 +66,7 @@ var opencodeOwnFiles = []string{".gitignore", "package.json", "bun.lock", "node_
 
 // configMasks are the mounts that hide the agent's own configuration files.
 type configMasks struct {
-	mounts []agentdir.Mount
+	mounts []sandbox.Mount
 	// scratch are the container paths of the configuration folders, which
 	// appear empty.
 	scratch []string
@@ -110,7 +111,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 			files = append(files, path)
 		}
 	}
-	ws := resolvePath(mounts[0].Src)
+	ws := fsutil.ResolvePath(mounts[0].Src)
 	for _, entry := range entries {
 		name, isDir := strings.CutSuffix(entry, "/")
 		path := filepath.Join(ws, name)
@@ -150,12 +151,12 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 	}
 	for _, file := range files {
 		for _, m := range exposures(mounts, file) {
-			cm.mounts = append(cm.mounts, agentdir.Mount{Src: spec.ConfigMask, Dst: m.Dst, ReadOnly: true})
+			cm.mounts = append(cm.mounts, sandbox.Mount{Src: spec.ConfigMask, Dst: m.Dst, ReadOnly: true})
 		}
 	}
 	var parents []string
 	for _, file := range files {
-		if parent := filepath.Dir(file); !slices.Contains(parents, parent) && !slices.ContainsFunc(mounts, func(m agentdir.Mount) bool { return resolvePath(m.Src) == parent }) {
+		if parent := filepath.Dir(file); !slices.Contains(parents, parent) && !slices.ContainsFunc(mounts, func(m agentdir.Mount) bool { return fsutil.ResolvePath(m.Src) == parent }) {
 			parents = append(parents, parent)
 			cm.mounts = append(cm.mounts, exposures(mounts, parent)...)
 		}
@@ -170,7 +171,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 			}
 			cm.scratch = append(cm.scratch, m.Dst)
 			if keep {
-				cm.mounts = append(cm.mounts, agentdir.Mount{Src: skills, Dst: filepath.Join(m.Dst, "skills"), ReadOnly: m.ReadOnly})
+				cm.mounts = append(cm.mounts, sandbox.Mount{Src: skills, Dst: filepath.Join(m.Dst, "skills"), ReadOnly: m.ReadOnly})
 			}
 		}
 	}
@@ -190,10 +191,10 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 // folders of mounts between a mount that holds the workspace and the
 // workspace, which opencode reads.
 func configDirs(mounts []agentdir.Mount) (roots, above []string) {
-	ws := resolvePath(mounts[0].Src)
+	ws := fsutil.ResolvePath(mounts[0].Src)
 	for _, m := range mounts[1:] {
 		if m.Dst == mounts[0].Dst || !within(m.Dst, mounts[0].Dst) {
-			if src := resolvePath(m.Src); src != ws && !slices.Contains(roots, src) {
+			if src := fsutil.ResolvePath(m.Src); src != ws && !slices.Contains(roots, src) {
 				roots = append(roots, src)
 			}
 			continue
@@ -202,7 +203,7 @@ func configDirs(mounts []agentdir.Mount) (roots, above []string) {
 		if err != nil {
 			continue
 		}
-		dir := resolvePath(m.Src)
+		dir := fsutil.ResolvePath(m.Src)
 		for _, part := range append([]string{"."}, strings.Split(rel, string(filepath.Separator))...) {
 			if dir = filepath.Join(dir, part); !slices.Contains(above, dir) {
 				above = append(above, dir)
@@ -285,10 +286,10 @@ func hasSettings(path string, isDir bool) bool {
 }
 
 // exposures returns the mounts of the host path wherever mounts expose it.
-func exposures(mounts []agentdir.Mount, path string) []agentdir.Mount {
-	var out []agentdir.Mount
+func exposures(mounts []agentdir.Mount, path string) []sandbox.Mount {
+	var out []sandbox.Mount
 	for _, m := range mounts {
-		src := resolvePath(m.Src)
+		src := fsutil.ResolvePath(m.Src)
 		if !within(src, path) {
 			continue
 		}
@@ -297,8 +298,8 @@ func exposures(mounts []agentdir.Mount, path string) []agentdir.Mount {
 			continue
 		}
 		dst := filepath.Join(m.Dst, rel)
-		if !slices.ContainsFunc(out, func(o agentdir.Mount) bool { return o.Dst == dst }) {
-			out = append(out, agentdir.Mount{Src: path, Dst: dst, ReadOnly: m.ReadOnly})
+		if !slices.ContainsFunc(out, func(o sandbox.Mount) bool { return o.Dst == dst }) {
+			out = append(out, sandbox.Mount{Src: path, Dst: dst, ReadOnly: m.ReadOnly})
 		}
 	}
 	return out

@@ -134,12 +134,12 @@ func checkPaths(spec Spec) error {
 	for _, m := range spec.Mounts {
 		paths = append(paths, m.Src)
 		if !m.ReadOnly {
-			roots = append(roots, writableRoot{src: m.Src, resolved: resolvePath(m.Src)})
+			roots = append(roots, writableRoot{src: m.Src, resolved: fsutil.ResolvePath(m.Src)})
 		}
 	}
 	if spec.Home != "" {
 		paths = append(paths, spec.Home)
-		roots = append(roots, writableRoot{src: spec.Home, resolved: resolvePath(spec.Home)})
+		roots = append(roots, writableRoot{src: spec.Home, resolved: fsutil.ResolvePath(spec.Home)})
 	}
 	for _, path := range paths {
 		abs, err := filepath.Abs(path)
@@ -150,7 +150,7 @@ func checkPaths(spec Spec) error {
 		_, err = w.walk(abs)
 		var se *symlinkError
 		if errors.As(err, &se) {
-			return fmt.Errorf("%s goes through the symlink %s in the writable mount %s, which the agent can repoint; use the resolved path %s instead", path, se.link, se.mount, resolvePath(path))
+			return fmt.Errorf("%s goes through the symlink %s in the writable mount %s, which the agent can repoint; use the resolved path %s instead", path, se.link, se.mount, fsutil.ResolvePath(path))
 		}
 		if err != nil {
 			return err
@@ -208,7 +208,7 @@ func (w *pathWalk) walk(p string) (string, error) {
 		if mount, ok := w.writable(cur); ok {
 			return "", &symlinkError{link: next, mount: mount}
 		}
-		if w.hops++; w.hops > maxSymlinks {
+		if w.hops++; w.hops > fsutil.MaxSymlinks {
 			return "", fmt.Errorf("%s: too many levels of symlinks", p)
 		}
 		target, err := os.Readlink(next)

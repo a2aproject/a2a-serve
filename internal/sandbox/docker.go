@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package harness
+package sandbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,49 +30,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
-// Runner decides where a harness process runs.
-type Runner interface {
-	// Command returns the process which runs c.
-	Command(ctx context.Context, c Command) (*exec.Cmd, error)
-}
-
-// LocalRunner runs the harness directly on the host, for trusted setups or
-// when Docker isn't available.
-type LocalRunner struct{}
-
-var _ Runner = LocalRunner{}
-
-// Command implements [Runner].
-func (LocalRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
-	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), c.Env...)
-	return cmd, nil
-}
-
-// Limits are container resource limits.
-type Limits struct {
-	Memory string
-	CPUs   string
-	PIDs   int
-}
-
-// DockerRunner runs the harness in a container with the workspace mounted.
+// DockerRunner runs a process in a container.
 type DockerRunner struct {
 	// Name is the container name.
 	Name   string
 	Image  string
-	Mounts []agentdir.Mount
+	Mounts []Mount
 	// WorkspaceSrc is the host directory mounted at the destination of the
 	// first mount in its place. Empty mounts the first mount's source.
 	WorkspaceSrc string
 	// Hidden are host paths which appear as empty read-only directories
-	// wherever a mount exposes them, such as the agent's .a2a directory.
+	// wherever a mount exposes them.
 	Hidden []string
 	// Scratch are container paths which appear as empty directories, whose
 	// changes stay in the container.
@@ -90,7 +63,7 @@ type DockerRunner struct {
 	Limits Limits
 	Labels map[string]string
 	// Rootless is set for rootless Docker, where container root is the host
-	// user, so files the agent writes stay owned by you.
+	// user, so files the process writes stay owned by the user.
 	Rootless bool
 	// Egress is set when the container's only network path is the egress
 	// socket. The launcher starts the command after the image's entrypoint.
@@ -111,16 +84,32 @@ type DockerEgress struct {
 	Relay string
 	// Entrypoint is the image's entrypoint, which the launcher replaces.
 	Entrypoint []string
-	// ensure starts the relay container again when it doesn't run.
-	ensure func() error
+	// Ensure starts the relay container again when it doesn't run.
+	Ensure func() error
 }
 
-// ContainerHome is the home directory of the harness in the container.
-const ContainerHome = "/home/agent"
+// DefaultLimits are the limits of a container that sets none.
+var DefaultLimits = Limits{Memory: "4g", CPUs: "2", PIDs: 512}
 
-// SandboxDir is where the directory of the socket the harness reaches the
-// server through is mounted in the container.
-const SandboxDir = "/run/a2a"
+// LineBreakError reports an environment variable whose value has a line
+// break.
+type LineBreakError struct{ Name string }
+
+func (e *LineBreakError) Error() string {
+	return fmt.Sprintf("the value of %s has a line break, which docker can't pass to the container", e.Name)
+}
+
+// CheckEnvValue returns a [*LineBreakError] if docker can't pass value as
+// the environment variable name, since its env file holds one per line.
+func CheckEnvValue(name, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return &LineBreakError{Name: name}
+	}
+	return nil
+}
+
+// ContainerHome is where a container mounts its home directory.
+const ContainerHome = "/home/agent"
 
 // startScript removes a container left behind by a crash, which would keep
 // the name taken, and replaces itself with docker run. Signals sent to the
@@ -233,6 +222,32 @@ func setupFailedPattern() string {
 	return strings.Join(patterns, "|")
 }
 
+// FallbackReason returns why the check whose output
+// [DockerRunner.CommandWithFallback] left in marker failed.
+func FallbackReason(marker string) string {
+	out, err := os.ReadFile(marker)
+	if err != nil {
+		return err.Error()
+	}
+	return reasonOf(string(out))
+}
+
+// reasonOf returns the launcher's setup error in the output of a check, or
+// its first line.
+func reasonOf(out string) string {
+	for line := range strings.Lines(out) {
+		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), "a2a-init: setting up the sandbox's network: "); ok {
+			return reason
+		}
+	}
+	return cmp.Or(firstLine(strings.TrimSpace(out)), "it failed without output")
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
 // probeTimeout bounds each check of a container's egress setup, and
 // probeAttempts the checks that fail for another reason, such as an error
 // of the Docker daemon, probeRetryDelay apart.
@@ -273,7 +288,7 @@ func (r *DockerRunner) probe(ctx context.Context, envFile string) error {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	name := r.Name + "-check"
-	if err := removeContainer(ctx, name); err != nil {
+	if err := RemoveContainer(ctx, name); err != nil {
 		return err
 	}
 	out, err := exec.CommandContext(ctx, "docker", append([]string{"run", "--name", name}, r.runArgs(Command{}, envFile, true)...)...).CombinedOutput()
@@ -297,7 +312,7 @@ const envFilePrefix = "a2a-env-"
 
 // PruneEnvFiles removes the env files that an earlier server left in dir,
 // such as after a crash or a kill, and returns how many it removed. Call it
-// only while no container of the agent starts.
+// only while no container that writes to dir starts.
 func PruneEnvFiles(dir string) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -330,7 +345,7 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 		if !ok || name == "" {
 			continue
 		}
-		if err := agentdir.CheckEnvValue(name, value); err != nil {
+		if err := CheckEnvValue(name, value); err != nil {
 			return "", err
 		}
 		buf.WriteString(name + "=" + value + "\n")
@@ -363,13 +378,13 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	limits := r.Limits
 	if limits.Memory == "" {
-		limits.Memory = agentdir.DefaultLimits.Memory
+		limits.Memory = DefaultLimits.Memory
 	}
 	if limits.CPUs == "" {
-		limits.CPUs = agentdir.DefaultLimits.CPUs
+		limits.CPUs = DefaultLimits.CPUs
 	}
 	if limits.PIDs == 0 {
-		limits.PIDs = agentdir.DefaultLimits.PIDs
+		limits.PIDs = DefaultLimits.PIDs
 	}
 	uid, gid := os.Getuid(), os.Getgid()
 	if r.Rootless {
@@ -384,7 +399,7 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 		)
 	} else {
 		// The launcher starts as root with what building the network and
-		// switching to uid:gid take, and drops it all before the agent starts.
+		// switching to uid:gid take, and drops it all before the command starts.
 		args = append(args,
 			"--user", "0:0",
 			"--cap-drop", "ALL",
@@ -421,7 +436,7 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 		}
 		args = append(args, "-v", spec)
 	}
-	for _, dst := range hiddenDsts(r.Mounts, r.Hidden) {
+	for _, dst := range ContainerPaths(r.Mounts, r.Hidden) {
 		args = append(args, "--mount", "type=tmpfs,dst="+dst+",readonly")
 	}
 	for _, dst := range r.Scratch {
@@ -430,7 +445,7 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	if r.Home != "" {
 		args = append(args, "-v", r.Home+":"+ContainerHome)
 	}
-	// -e takes precedence over --env-file, so the harness keeps its home.
+	// -e takes precedence over --env-file, so the process keeps its home.
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
@@ -450,15 +465,15 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	return append(args, c.Args...)
 }
 
-// hiddenDsts returns the container paths at which mounts expose the hidden
+// ContainerPaths returns the container paths at which mounts expose the
 // host paths. Paths are compared with symlinks resolved, as docker resolves
 // them in bind sources.
-func hiddenDsts(mounts []agentdir.Mount, hidden []string) []string {
+func ContainerPaths(mounts []Mount, paths []string) []string {
 	var out []string
-	for _, h := range hidden {
-		h = resolvePath(h)
+	for _, h := range paths {
+		h = fsutil.ResolvePath(h)
 		for _, m := range mounts {
-			rel, err := filepath.Rel(resolvePath(m.Src), h)
+			rel, err := filepath.Rel(fsutil.ResolvePath(m.Src), h)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				continue
 			}
@@ -471,30 +486,15 @@ func hiddenDsts(mounts []agentdir.Mount, hidden []string) []string {
 	return out
 }
 
-// resolvePath returns p with symlinks resolved. Of a path that doesn't
-// exist, it resolves the part that does, dangling symlinks included.
-func resolvePath(p string) string {
-	return resolveFrom(filepath.Clean(p), 0)
-}
-
-// maxSymlinks bounds the symlinks resolvePath follows by hand.
-const maxSymlinks = 40
-
-func resolveFrom(p string, hops int) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
+// RemoveContainer removes the container name, if any, with its volumes.
+func RemoveContainer(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerStopTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "-v", name).CombinedOutput()
+	if err != nil && !bytes.Contains(out, []byte("No such container")) {
+		return fmt.Errorf("docker rm -f %s: %w: %s", name, err, bytes.TrimSpace(out))
 	}
-	if target, err := os.Readlink(p); err == nil && hops < maxSymlinks {
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(p), target)
-		}
-		return resolveFrom(filepath.Clean(target), hops+1)
-	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
-	}
-	return filepath.Join(resolveFrom(parent, hops), filepath.Base(p))
+	return nil
 }
 
 // containerStopTimeout bounds removing a container, which gets its own
@@ -523,7 +523,7 @@ func (r *DockerRunner) Stop(ctx context.Context) error {
 // of labels, and returns how many it found. It cleans up after a server
 // that crashed before it could remove its containers.
 func PruneContainers(ctx context.Context, labels map[string]string) (int, error) {
-	return pruneContainers(ctx, labels, dockerTimeout)
+	return pruneContainers(ctx, labels, DockerTimeout)
 }
 
 func pruneContainers(ctx context.Context, labels map[string]string, timeout time.Duration) (int, error) {
@@ -550,7 +550,7 @@ func pruneContainers(ctx context.Context, labels map[string]string, timeout time
 // CheckDocker reports whether the docker daemon is reachable and whether it
 // runs rootless.
 func CheckDocker(ctx context.Context) (rootless bool, err error) {
-	return checkDocker(ctx, dockerTimeout)
+	return checkDocker(ctx, DockerTimeout)
 }
 
 func checkDocker(ctx context.Context, timeout time.Duration) (rootless bool, err error) {
@@ -570,15 +570,20 @@ func checkDocker(ctx context.Context, timeout time.Duration) (rootless bool, err
 	return bytes.Contains(out, []byte("rootless")), nil
 }
 
-// dockerTimeout bounds the docker calls that a daemon answers at once.
-const dockerTimeout = 10 * time.Second
+// DockerTimeout bounds the docker calls that a daemon answers at once.
+const DockerTimeout = 10 * time.Second
 
 // ErrDockerNoAnswer is returned when the docker daemon takes a call and
 // doesn't answer it, as an endpoint that accepts connections and hangs does.
 var ErrDockerNoAnswer = errors.New("docker does not answer")
 
-// dockerQuery runs a docker command that the daemon answers at once, and
-// fails with [ErrDockerNoAnswer] after timeout.
+// DockerQuery runs a docker command that the daemon answers at once, and
+// fails with [ErrDockerNoAnswer] after [DockerTimeout].
+func DockerQuery(ctx context.Context, args ...string) ([]byte, error) {
+	return dockerQuery(ctx, DockerTimeout, args...)
+}
+
+// dockerQuery is [DockerQuery] with its own timeout.
 func dockerQuery(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
 	qctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

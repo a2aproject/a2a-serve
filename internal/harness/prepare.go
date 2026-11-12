@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -109,7 +110,7 @@ type Spec struct {
 	// defaults to the profile's.
 	Name   string
 	Image  string
-	Limits Limits
+	Limits sandbox.Limits
 	Labels map[string]string
 
 	// Socket is the host path of the Unix socket through which the harness
@@ -172,7 +173,7 @@ type Prepared struct {
 	// a check of its launcher's setup failed at one of its starts, or "".
 	FellBack func() string
 	// OnHost is set when the harness runs on the host, where the processes
-	// it starts outlive it unless they are killed; see [ProcessMark].
+	// it starts outlive it unless they are killed; see [sandbox.ProcessMark].
 	OnHost bool
 }
 
@@ -235,7 +236,7 @@ const maxNestedScan = 500_000
 func nestedAgents(spec Spec) ([]string, error) {
 	hidden := make([]string, len(spec.Hidden))
 	for i, h := range spec.Hidden {
-		hidden[i] = resolvePath(h)
+		hidden[i] = fsutil.ResolvePath(h)
 	}
 	var out []string
 	for _, m := range spec.Mounts {
@@ -246,7 +247,7 @@ func nestedAgents(spec Spec) ([]string, error) {
 		if broad {
 			continue
 		}
-		found, err := agentdir.FindBelow(resolvePath(m.Src), maxNestedScan)
+		found, err := agentdir.FindBelow(fsutil.ResolvePath(m.Src), maxNestedScan)
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +283,7 @@ func agentRoots(a2a []string) string {
 }
 
 func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
-	rootless, err := CheckDocker(ctx)
+	rootless, err := sandbox.CheckDocker(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -294,10 +295,10 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
-	dr := &DockerRunner{
+	dr := &sandbox.DockerRunner{
 		Name:         spec.Name,
 		Image:        image,
-		Mounts:       slices.Clone(spec.Mounts),
+		Mounts:       sandboxMounts(spec.Mounts),
 		WorkspaceSrc: spec.WorkspaceSrc,
 		Hidden:       spec.Hidden,
 		Home:         spec.Home,
@@ -328,7 +329,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			return nil, err
 		}
 		if dst != "" {
-			dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: spec.PolicyDir, Dst: dst, ReadOnly: true})
+			dr.Mounts = append(dr.Mounts, sandbox.Mount{Src: spec.PolicyDir, Dst: dst, ReadOnly: true})
 		}
 	}
 	if spec.LockHome {
@@ -341,7 +342,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	closeEgress := func() error { return nil }
 	warnings := slices.Clone(cm.warnings)
 	var egressProblem string
-	var fallback *DockerRunner
+	var fallback *sandbox.DockerRunner
 	relay := false
 	if spec.OpenEgress != nil {
 		eg, closeFn, decision, err := dockerEgress(ctx, spec, image, rootless)
@@ -364,7 +365,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			if failSetup == "agent" {
 				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
 			}
-			if _, setup := errors.AsType[*EgressSetupError](perr); perr != nil && !setup {
+			if _, setup := errors.AsType[*sandbox.EgressSetupError](perr); perr != nil && !setup {
 				return nil, errors.Join(fmt.Errorf("checking the egress setup of the agent's container: %w", perr), closeFn(), dr.Stop(ctx))
 			}
 			if perr != nil {
@@ -434,7 +435,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		if _, err := os.Stat(marker); err != nil {
 			return ""
 		}
-		return noBoundary("the agent's container can't set up its network: " + setupReason(marker))
+		return noBoundary("the agent's container can't set up its network: " + sandbox.FallbackReason(marker))
 	}
 	return &Prepared{FellBack: fellBack, Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Egress: dr.Egress != nil, Check: func() error {
 		if err := checkPaths(spec); err != nil {
@@ -451,8 +452,8 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 				return nil
 			}
 		}
-		if dr.Egress != nil && dr.Egress.ensure != nil {
-			return dr.Egress.ensure()
+		if dr.Egress != nil && dr.Egress.Ensure != nil {
+			return dr.Egress.Ensure()
 		}
 		return nil
 	}}, nil
@@ -479,19 +480,35 @@ func probeEgress(spec Spec, probe func() error) error {
 	return spec.ProbeEgress(probe)
 }
 
+// SandboxDir is where the directory of the socket the harness reaches the
+// server through is mounted in the container.
+const SandboxDir = "/run/a2a"
+
+// ContainerHome is the home directory of the harness in the container.
+const ContainerHome = sandbox.ContainerHome
+
+// sandboxMounts converts the mounts of an agent to those of a sandbox.
+func sandboxMounts(mounts []agentdir.Mount) []sandbox.Mount {
+	out := make([]sandbox.Mount, len(mounts))
+	for i, m := range mounts {
+		out[i] = sandbox.Mount{Src: m.Src, Dst: m.Dst, ReadOnly: m.ReadOnly}
+	}
+	return out
+}
+
 // connectServer gives the container of dr the way to the server in spec:
 // the socket of its relay, or a mount of the server's socket.
-func connectServer(dr *DockerRunner, spec Spec, relay bool) {
+func connectServer(dr *sandbox.DockerRunner, spec Spec, relay bool) {
 	switch {
 	case relay && (spec.Socket != "" || spec.BridgeAddr != ""):
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+sandboxnet.ContainerSocketDir+"/"+sandboxnet.ServerSocketName)
 	case spec.Socket != "":
-		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
+		dr.Mounts = append(dr.Mounts, sandbox.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
 }
 
-func clone(dr *DockerRunner) *DockerRunner {
+func clone(dr *sandbox.DockerRunner) *sandbox.DockerRunner {
 	c := *dr
 	c.Mounts, c.Env = slices.Clone(dr.Mounts), slices.Clone(dr.Env)
 	return &c
@@ -507,26 +524,6 @@ func fallbackMarker() (string, error) {
 	return filepath.Join(dir, "fallback"), nil
 }
 
-// setupReason returns why the check in marker failed.
-func setupReason(marker string) string {
-	out, err := os.ReadFile(marker)
-	if err != nil {
-		return err.Error()
-	}
-	return reasonOf(string(out))
-}
-
-// reasonOf returns the launcher's setup error in the output of a check, or
-// its first line.
-func reasonOf(out string) string {
-	for line := range strings.Lines(out) {
-		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), "a2a-init: setting up the sandbox's network: "); ok {
-			return reason
-		}
-	}
-	return cmp.Or(firstLine(strings.TrimSpace(out)), "it failed without output")
-}
-
 func removeMarker(marker string) error {
 	if marker == "" {
 		return nil
@@ -537,7 +534,7 @@ func removeMarker(marker string) error {
 // dockerEgress opens the boundary of a container of image when
 // [DecideEgress] gives it one, and with Docker Desktop starts its relay
 // container.
-func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (eg *DockerEgress, close func() error, decision EgressDecision, err error) {
+func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (eg *sandbox.DockerEgress, close func() error, decision EgressDecision, err error) {
 	arch, entrypoint, err := imageConfig(ctx, image)
 	if err != nil {
 		return nil, nil, EgressDecision{}, err
@@ -564,13 +561,13 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress socket: %w", err)
 	}
-	return &DockerEgress{Socket: ep.Socket, Launcher: launcher, Entrypoint: entrypoint}, ep.Close, decision, nil
+	return &sandbox.DockerEgress{Socket: ep.Socket, Launcher: launcher, Entrypoint: entrypoint}, ep.Close, decision, nil
 }
 
 // relayEgress opens the boundary of a container that reaches it through a
 // relay container, the egress container to users, and starts it. When the relay image isn't
 // available, the container gets Docker's own network.
-func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision, gateway HostGatewayFunc) (*DockerEgress, func() error, EgressDecision, error) {
+func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision, gateway HostGatewayFunc) (*sandbox.DockerEgress, func() error, EgressDecision, error) {
 	image, err := EnsureRelayImage(ctx, logLines{msg: "egress container image"})
 	if err != nil {
 		return nil, nil, problemDecision(spec.egressConfig(), "the egress container's image isn't available: "+err.Error()), nil
@@ -595,11 +592,11 @@ func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless b
 	}
 	closeAll := func() error { return errors.Join(stop(context.Background()), ep.Close()) }
 	ensure := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+dockerTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+sandbox.DockerTimeout)
 		defer cancel()
 		return ensureRelay(ctx, rs)
 	}
-	return &DockerEgress{Relay: rs.name, Entrypoint: entrypoint, ensure: ensure}, closeAll, decision, nil
+	return &sandbox.DockerEgress{Relay: rs.name, Entrypoint: entrypoint, Ensure: ensure}, closeAll, decision, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.
@@ -609,7 +606,7 @@ const emptyMCP = "{\"mcpServers\": {}}\n"
 // which put it over the workspace's .mcp.json wherever mounts expose it. A
 // workspace without .mcp.json gets one with no servers, since docker
 // would otherwise create an empty file to mount over.
-func maskMCP(mask string, mounts []agentdir.Mount) ([]agentdir.Mount, error) {
+func maskMCP(mask string, mounts []agentdir.Mount) ([]sandbox.Mount, error) {
 	if err := fsutil.WriteAtomic(mask, []byte(emptyMCP), 0o644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", mask, err)
 	}
@@ -617,9 +614,9 @@ func maskMCP(mask string, mounts []agentdir.Mount) ([]agentdir.Mount, error) {
 	if err := writeIfMissing(file, []byte(emptyMCP)); err != nil {
 		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the agent: %w", file, err)
 	}
-	var out []agentdir.Mount
-	for _, dst := range hiddenDsts(mounts, []string{file}) {
-		out = append(out, agentdir.Mount{Src: mask, Dst: dst, ReadOnly: true})
+	var out []sandbox.Mount
+	for _, dst := range sandbox.ContainerPaths(sandboxMounts(mounts), []string{file}) {
+		out = append(out, sandbox.Mount{Src: mask, Dst: dst, ReadOnly: true})
 	}
 	return out, nil
 }
@@ -681,7 +678,7 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 	if spec.Socket != "" {
 		c.Env = append(c.Env, EnvUnixSocket+"="+spec.Socket)
 	}
-	cmd, err := LocalRunner{}.Command(ctx, c)
+	cmd, err := sandbox.LocalRunner{}.Command(ctx, c)
 	if err != nil {
 		return nil, err
 	}
@@ -708,12 +705,12 @@ func checkInstalled(command, dir string) error {
 	return nil
 }
 
-// TCPBridge reports whether a harness in sandbox must reach the agent
+// TCPBridge reports whether a harness in sandbox kind must reach the agent
 // server over TCP rather than a Unix socket, and where the server listens
 // (bind) and the harness connects (dial). Docker Desktop can't mount a
 // socket but forwards host.docker.internal to the host's loopback.
-func TCPBridge(sandbox string) (bind, dial string, ok bool) {
-	if sandbox == SandboxLocal || runtime.GOOS == "linux" {
+func TCPBridge(kind string) (bind, dial string, ok bool) {
+	if kind == SandboxLocal || runtime.GOOS == "linux" {
 		return "", "", false
 	}
 	return "127.0.0.1", "host.docker.internal", true

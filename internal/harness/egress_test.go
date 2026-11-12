@@ -23,99 +23,15 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 )
-
-func TestDockerRunnerCommandWithEgress(t *testing.T) {
-	t.Parallel()
-	for _, rootless := range []bool{false, true} {
-		t.Run(fmt.Sprintf("rootless=%v", rootless), func(t *testing.T) {
-			t.Parallel()
-			r := &DockerRunner{
-				Name:     "a2a-coder-123",
-				Image:    "img:1",
-				Mounts:   []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}},
-				Rootless: rootless,
-				Egress: &DockerEgress{
-					Socket:     "/state/harness/abc/egress.sock",
-					Launcher:   "/usr/bin/a2a-serve",
-					Entrypoint: []string{"docker-entrypoint.sh"},
-				},
-			}
-			cmd, err := r.Command(context.Background(), Command{Path: "opencode", Args: []string{"acp"}, Dir: "/src/app"})
-			if err != nil {
-				t.Fatalf("Command() error = %v", err)
-			}
-			uid, gid := fmt.Sprint(os.Getuid()), fmt.Sprint(os.Getgid())
-			if rootless {
-				uid, gid = "0", "0"
-			}
-			want := []string{
-				"sh", "-c", startScript, "a2a-coder-123",
-				"--rm", "-i",
-				"--user", "0:0",
-				"--cap-drop", "ALL",
-				"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
-				"--network", "none", "--device", "/dev/net/tun",
-				"--entrypoint", "/run/a2a-init",
-				"-v", "/usr/bin/a2a-serve:/run/a2a-init:ro",
-				"-v", "/state/harness/abc:/run/a2a-egress:ro",
-				"--security-opt", "no-new-privileges",
-				"--memory", "4g", "--cpus", "2", "--pids-limit", "512",
-				"-v", "/src/app:/src/app",
-				"-e", "HOME=/home/agent",
-				"-w", "/src/app",
-				"img:1", "sandbox-init", "/run/a2a-egress/egress.sock", uid, gid,
-				"docker-entrypoint.sh", "opencode", "acp",
-			}
-			if diff := cmp.Diff(want, cmd.Args); diff != "" {
-				t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
-			}
-		})
-	}
-}
-
-func TestDockerRunnerCommandWithRelay(t *testing.T) {
-	t.Parallel()
-	r := &DockerRunner{
-		Name:   "a2a-coder-123",
-		Image:  "img:1",
-		Mounts: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}},
-		Egress: &DockerEgress{Relay: "a2a-coder-123-relay"},
-	}
-	cmd, err := r.Command(context.Background(), Command{Path: "opencode", Args: []string{"acp"}, Dir: "/src/app"})
-	if err != nil {
-		t.Fatalf("Command() error = %v", err)
-	}
-	want := []string{
-		"sh", "-c", startScript, "a2a-coder-123",
-		"--rm", "-i",
-		"--user", "0:0",
-		"--cap-drop", "ALL",
-		"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
-		"--network", "none", "--device", "/dev/net/tun",
-		"--entrypoint", "/opt/a2a/a2a-serve", "--volumes-from", "a2a-coder-123-relay:ro",
-		"--security-opt", "no-new-privileges",
-		"--memory", "4g", "--cpus", "2", "--pids-limit", "512",
-		"-v", "/src/app:/src/app",
-		"-e", "HOME=/home/agent",
-		"-w", "/src/app",
-		"img:1", "sandbox-init", "/run/a2a-egress/egress.sock", fmt.Sprint(os.Getuid()), fmt.Sprint(os.Getgid()),
-		"opencode", "acp",
-	}
-	if diff := cmp.Diff(want, cmd.Args); diff != "" {
-		t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
-	}
-}
 
 func TestPublishes(t *testing.T) {
 	t.Parallel()
@@ -149,7 +65,7 @@ func TestPublishes(t *testing.T) {
 }
 
 func TestHostGateway(t *testing.T) {
-	fakeDocker(t, `echo "0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp"; echo "127.0.0.1:6379->6379/tcp"`)
+	sandboxtest.FakeDocker(t, `echo "0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp"; echo "127.0.0.1:6379->6379/tcp"`)
 	tests := []struct {
 		goos string
 		port uint16
@@ -336,7 +252,7 @@ func TestEnsureRelayImageBuilds(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			log := fakeDocker(t, noRelayPullDocker)
+			log := sandboxtest.FakeDocker(t, noRelayPullDocker)
 			if _, err := ensureRelayImage(context.Background(), io.Discard, "example.com/egress:test", tc.ref, resolve); err != nil {
 				t.Fatalf("ensureRelayImage() error = %v", err)
 			}
@@ -418,74 +334,5 @@ func TestProbeFailed(t *testing.T) {
 		if got.Boundary || got.Problem == "" || !strings.HasPrefix(got.Warning, tc.want) {
 			t.Fatalf("probeFailed(%s) = %+v, want no boundary and a warning starting with %q", tc.name, got, tc.want)
 		}
-	}
-}
-
-func TestCommandWithFallback(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		// checks are what the successive checks do.
-		checks     []string
-		wantFailed []bool
-		want       []string
-		wantReason string
-	}{
-		{name: "check passes", checks: []string{"exit 0", "exit 0"}, wantFailed: []bool{false, false}, want: []string{"check", "egress", "check", "egress"}},
-		{name: "launcher can't set up the network", checks: []string{launcherNoTUN}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: "no tun"},
-		{name: "runtime refuses the TUN device", checks: []string{tunMissing}, wantFailed: []bool{false, false}, want: []string{"check", "fallback", "fallback"}, wantReason: `docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory`},
-		{name: "daemon error", checks: []string{daemonError, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
-		{name: "launcher crash naming the device", checks: []string{launcherCrashTUN, "exit 0"}, wantFailed: []bool{true, false}, want: []string{"check", "check", "egress"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			calls := filepath.Join(dir, "calls")
-			var checks strings.Builder
-			for i, c := range tc.checks {
-				fmt.Fprintf(&checks, "%d) %s;;\n", i+1, c)
-			}
-			fakeDocker := "#!/bin/sh\n" +
-				"[ \"$1\" = run ] || exit 0\n" +
-				"case \"$*\" in *--check*) echo check >>" + calls + "\n" +
-				"case $(grep -c check " + calls + ") in\n" + checks.String() + "esac;;\n" +
-				"*sandbox-init*) echo egress >>" + calls + ";;\n" +
-				"*) echo fallback >>" + calls + ";; esac\n"
-			if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fakeDocker), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
-			fallback := &DockerRunner{Name: "a2a-coder-1", Image: "img:1"}
-			marker := filepath.Join(dir, "fallback")
-			for i, wantFailed := range tc.wantFailed {
-				cmd, err := r.CommandWithFallback(context.Background(), Command{Path: "agent", Args: []string{"it's"}}, fallback, marker)
-				if err != nil {
-					t.Fatalf("CommandWithFallback() error = %v", err)
-				}
-				cmd.Env = append(cmd.Env, "PATH="+dir+":/usr/bin:/bin")
-				out, err := cmd.CombinedOutput()
-				if failed := err != nil; failed != wantFailed {
-					t.Fatalf("start %d of the container error = %v: %s, want failed %v", i+1, err, out, wantFailed)
-				}
-			}
-			data, err := os.ReadFile(calls)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(tc.want, strings.Fields(string(data))); diff != "" {
-				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
-			}
-			_, statErr := os.Stat(marker)
-			if tc.wantReason == "" {
-				if statErr == nil {
-					t.Fatalf("fallback marker exists after %q, want none: %s", tc.name, setupReason(marker))
-				}
-				return
-			}
-			if got := setupReason(marker); got != tc.wantReason {
-				t.Fatalf("setupReason() = %q, want %q", got, tc.wantReason)
-			}
-		})
 	}
 }

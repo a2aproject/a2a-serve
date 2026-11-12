@@ -27,6 +27,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 )
 
 func TestWritePolicy(t *testing.T) {
@@ -110,7 +111,7 @@ func TestWritePolicy(t *testing.T) {
 }
 
 func TestPrepareDockerMountsPolicy(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	tests := []struct {
 		name    string
 		profile Profile
@@ -153,7 +154,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 }
 
 func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
-	fakeDocker(t, runningDocker)
+	sandboxtest.FakeDocker(t, runningDocker)
 	policy := filepath.Join(t.TempDir(), "policy")
 	ws := t.TempDir()
 

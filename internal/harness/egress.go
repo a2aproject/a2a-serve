@@ -36,6 +36,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // OpenEgress opens the boundary of a container, which decides its
@@ -140,7 +141,7 @@ type EgressEnv struct {
 // of unknown architecture.
 func HostEgressEnv() EgressEnv {
 	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN, ForceRelay: os.Getenv(EnvForceRelay) == "1", RelayImage: func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), sandbox.DockerTimeout)
 		defer cancel()
 		return CheckRelayImage(ctx, func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).Output()
@@ -294,7 +295,7 @@ func capitalize(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
 
 // imageConfig returns the architecture and the entrypoint of image.
 func imageConfig(ctx context.Context, image string) (arch string, entrypoint []string, err error) {
-	out, err := dockerQuery(ctx, dockerTimeout, "image", "inspect", "--format", "{{.Architecture}} {{json .Config.Entrypoint}}", image)
+	out, err := sandbox.DockerQuery(ctx, "image", "inspect", "--format", "{{.Architecture}} {{json .Config.Entrypoint}}", image)
 	if err != nil {
 		return "", nil, fmt.Errorf("docker image inspect %s: %w", image, err)
 	}
@@ -355,9 +356,9 @@ func (p *publishedPorts) ports(ctx context.Context) (string, error) {
 	}
 	p.mu.Unlock()
 	ch := p.calls.DoChan("ps", func() (any, error) {
-		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerTimeout)
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandbox.DockerTimeout)
 		defer cancel()
-		out, err := dockerQuery(qctx, dockerTimeout, "ps", "--format", "{{.Ports}}")
+		out, err := sandbox.DockerQuery(qctx, "ps", "--format", "{{.Ports}}")
 		if err != nil {
 			slog.Warn("listing the ports containers publish", "error", err)
 		}

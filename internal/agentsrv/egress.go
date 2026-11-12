@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -85,7 +86,7 @@ func (e *egressSockets) probeOnce(probe func() error) error {
 		return e.probeErr
 	}
 	err := probe()
-	if _, setup := errors.AsType[*harness.EgressSetupError](err); err == nil || setup {
+	if _, setup := errors.AsType[*sandbox.EgressSetupError](err); err == nil || setup {
 		e.probeErr, e.probed = err, true
 	}
 	return err
@@ -127,12 +128,12 @@ func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets
 }
 
 // opener returns the function that opens the boundary of the container
-// named sandbox, which keeps mode and the headers of inject until it
+// named name, which keeps mode and the headers of inject until it
 // restarts. Changes of the allow rules apply to its next connection.
-func (e *egressSockets) opener(sandbox, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) harness.OpenEgress {
+func (e *egressSockets) opener(name, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) harness.OpenEgress {
 	return func(gateway harness.HostGatewayFunc, relay bool) (harness.EgressEndpoint, error) {
 		allow := injectAllow(inject)
-		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode, allow...) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
+		cfg := sandboxnet.BoundaryConfig{Sandbox: name, Policy: func() egress.Policy { return e.policy(mode, allow...) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
 		if relay {
 			return e.openRelayed(cfg)
 		}

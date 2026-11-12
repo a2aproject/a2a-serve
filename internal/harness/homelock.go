@@ -22,7 +22,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // The configuration of the agents in their homes which can change what they
@@ -61,7 +61,7 @@ func (claude) homeConfig() []string   { return claudeHomeConfig }
 // their place for the next container or the processes the running one
 // starts. The configuration folders of opencode get the .gitignore it
 // would write. An agent of unknown kind gets the locks of every kind.
-func lockHomeConfig(spec Spec) ([]agentdir.Mount, error) {
+func lockHomeConfig(spec Spec) ([]sandbox.Mount, error) {
 	p := spec.Profile
 	if c, ok := p.(custom); ok && c.base != nil {
 		p = c.base
@@ -70,11 +70,11 @@ func lockHomeConfig(spec Spec) ([]agentdir.Mount, error) {
 	if r, ok := p.(homeConfigReader); ok {
 		readers = []homeConfigReader{r}
 	}
-	var mounts []agentdir.Mount
+	var mounts []sandbox.Mount
 	add := func(rel string, readOnly bool) {
 		dst := filepath.Join(ContainerHome, rel)
-		if !slices.ContainsFunc(mounts, func(m agentdir.Mount) bool { return m.Dst == dst }) {
-			mounts = append(mounts, agentdir.Mount{Src: filepath.Join(spec.Home, rel), Dst: dst, ReadOnly: readOnly})
+		if !slices.ContainsFunc(mounts, func(m sandbox.Mount) bool { return m.Dst == dst }) {
+			mounts = append(mounts, sandbox.Mount{Src: filepath.Join(spec.Home, rel), Dst: dst, ReadOnly: readOnly})
 		}
 	}
 	for _, r := range readers {

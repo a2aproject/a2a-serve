@@ -15,13 +15,13 @@
 package harness
 
 import (
-	"bytes"
 	"context"
 	"embed"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 //go:embed images/*/Dockerfile
@@ -50,50 +50,9 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 	if image == "" {
 		return "", "", fmt.Errorf("agent %q has no container image; pass --image or --sandbox local", harness)
 	}
-	if imageExists(ctx, image) {
-		return image, "using " + image, nil
+	var local *sandbox.LocalBuild
+	if df, ok := Dockerfile(harness); ok && image == profile.Image() {
+		local = &sandbox.LocalBuild{Tag: LocalImage(harness), Dockerfile: df, Reason: strings.TrimPrefix(image, ImageRepo) + " is not published"}
 	}
-	pullErr := pullImage(ctx, image, progress)
-	if pullErr == nil {
-		return image, "pulled " + image, nil
-	}
-	if image != profile.Image() {
-		return "", "", fmt.Errorf("docker pull %s: %w", image, pullErr)
-	}
-	df, ok := Dockerfile(harness)
-	if !ok {
-		return "", "", fmt.Errorf("docker pull %s: %w", image, pullErr)
-	}
-	local := LocalImage(harness)
-	if imageExists(ctx, local) {
-		return local, "using " + local, nil
-	}
-	build := exec.CommandContext(ctx, "docker", "build", "-t", local, "-")
-	build.Stdin = bytes.NewReader(df)
-	build.Stdout, build.Stderr = progress, progress
-	if err := build.Run(); err != nil {
-		return "", "", fmt.Errorf("docker pull %s failed (%v), and building it locally failed: %w", image, pullErr, err)
-	}
-	return local, "built " + local + " (" + strings.TrimPrefix(image, ImageRepo) + " is not published)", nil
-}
-
-// pullImage pulls image, streaming docker's progress. It keeps docker's
-// error output for the returned error, since an unpublished profile image
-// fails the pull as expected before it is built.
-func pullImage(ctx context.Context, image string, progress io.Writer) error {
-	var stderr bytes.Buffer
-	pull := exec.CommandContext(ctx, "docker", "pull", image)
-	pull.Stdout, pull.Stderr = progress, &stderr
-	err := pull.Run()
-	if err == nil {
-		return nil
-	}
-	if msg := strings.TrimSpace(stderr.String()); msg != "" {
-		return fmt.Errorf("%s (%w)", msg, err)
-	}
-	return err
-}
-
-func imageExists(ctx context.Context, image string) bool {
-	return exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil
+	return sandbox.EnsureImage(ctx, image, local, progress)
 }

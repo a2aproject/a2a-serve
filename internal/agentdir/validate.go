@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
@@ -417,20 +418,11 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 
 // LineBreakError reports an environment variable of the agent whose value
 // has a line break.
-type LineBreakError struct{ Name string }
-
-func (e *LineBreakError) Error() string {
-	return fmt.Sprintf("the value of %s has a line break, which docker can't pass to the container", e.Name)
-}
+type LineBreakError = sandbox.LineBreakError
 
 // CheckEnvValue returns a [*LineBreakError] if docker can't pass value as
 // the environment variable name, since its env file holds one per line.
-func CheckEnvValue(name, value string) error {
-	if strings.ContainsAny(value, "\r\n") {
-		return &LineBreakError{Name: name}
-	}
-	return nil
-}
+func CheckEnvValue(name, value string) error { return sandbox.CheckEnvValue(name, value) }
 
 // ContainerEnvErrors returns an error for each --env and --secret value
 // which the docker sandbox can't pass to the container. Other sandboxes

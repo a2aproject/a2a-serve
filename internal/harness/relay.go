@@ -34,6 +34,7 @@ import (
 
 	"golang.org/x/mod/module"
 
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -167,10 +168,10 @@ func EnsureRelayImage(ctx context.Context, log io.Writer) (string, error) {
 // ensureRelayImage makes image available, building it from the git ref
 // when it can't be pulled. resolve returns the full commit of a short one.
 func ensureRelayImage(ctx context.Context, log io.Writer, image, ref string, resolve func(ctx context.Context, short string) (string, error)) (string, error) {
-	if imageExists(ctx, image) {
+	if sandbox.ImageExists(ctx, image) {
 		return image, nil
 	}
-	pullErr := pullImage(ctx, image, log)
+	pullErr := sandbox.PullImage(ctx, image, log)
 	if pullErr == nil {
 		return image, nil
 	}
@@ -199,7 +200,7 @@ var fullCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // resolveCommit returns the full ID of the commit short in the GitHub
 // repository whose commits API is api.
 func resolveCommit(ctx context.Context, client *http.Client, api, short string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
+	ctx, cancel := context.WithTimeout(ctx, sandbox.DockerTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+url.PathEscape(short), nil)
 	if err != nil {
@@ -263,7 +264,7 @@ type relaySpec struct {
 // startRelay starts the relay container of spec and waits until it
 // listens. stop removes it with its volumes.
 func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context) error, err error) {
-	stop = func(ctx context.Context) error { return removeContainer(ctx, spec.name) }
+	stop = func(ctx context.Context) error { return sandbox.RemoveContainer(ctx, spec.name) }
 	if err := stop(ctx); err != nil {
 		return nil, err
 	}
@@ -330,7 +331,7 @@ func waitForRelay(ctx context.Context, name string) error {
 		if err == nil && bytes.Contains(out, []byte(sandboxnet.RelayReady)) {
 			return nil
 		}
-		state, err := dockerQuery(ctx, dockerTimeout, "inspect", "--format", "{{.State.Running}} {{.RestartCount}} {{.State.ExitCode}}", name)
+		state, err := sandbox.DockerQuery(ctx, "inspect", "--format", "{{.State.Running}} {{.RestartCount}} {{.State.ExitCode}}", name)
 		if err != nil {
 			return fmt.Errorf("the egress container %s is gone: %w", name, err)
 		}
@@ -351,24 +352,13 @@ func waitForRelay(ctx context.Context, name string) error {
 // ensureRelay starts the relay container of spec again when it doesn't
 // run, such as after it was removed.
 func ensureRelay(ctx context.Context, spec relaySpec) error {
-	state, err := dockerQuery(ctx, dockerTimeout, "inspect", "--format", "{{.State.Running}}", spec.name)
+	state, err := sandbox.DockerQuery(ctx, "inspect", "--format", "{{.State.Running}}", spec.name)
 	if err == nil && strings.TrimSpace(string(state)) == "true" {
 		return nil
 	}
 	slog.Warn("starting the egress container again", "container", spec.name)
 	_, err = startRelay(ctx, spec)
 	return err
-}
-
-// removeContainer removes the container name, if any, with its volumes.
-func removeContainer(ctx context.Context, name string) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerStopTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "-v", name).CombinedOutput()
-	if err != nil && !bytes.Contains(out, []byte("No such container")) {
-		return fmt.Errorf("docker rm -f %s: %w: %s", name, err, bytes.TrimSpace(out))
-	}
-	return nil
 }
 
 func splitSocket(path string) (dir, base string) {
