@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build agentmesh
-
-package network
+package main
 
 import (
 	"context"
@@ -22,24 +20,19 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/a2aproject/a2a-serve/netprovider"
 )
 
 const (
-	// healthCheckEvery is how often the server checks that it is attached
+	// healthCheckEvery is how often the provider checks that it is attached
 	// to a router of the relay.
 	healthCheckEvery = 10 * time.Second
-	// healthProbeEvery is how often the server asks the relay why it is
+	// healthProbeEvery is how often the provider asks the relay why it is
 	// detached, which costs the relay a credential refresh.
 	healthProbeEvery   = time.Minute
 	healthProbeTimeout = 10 * time.Second
 )
-
-// Health implements [HealthReporter].
-func (a *agentMesh) Health() Health {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.health
-}
 
 // watchHealth checks the connection to the relay until ctx is done.
 func (a *agentMesh) watchHealth(ctx context.Context, done chan<- struct{}) {
@@ -57,23 +50,23 @@ func (a *agentMesh) watchHealth(ctx context.Context, done chan<- struct{}) {
 }
 
 // checkHealth updates the health from the routers the session is attached
-// to. A detached session asks the relay why, at most every
-// healthProbeEvery: a relay that removed the agent refuses its credential.
+// to, and tells the server when it changes. A detached session asks the
+// relay why, at most every healthProbeEvery: a relay that removed the agent
+// refuses its credential.
 func (a *agentMesh) checkHealth(ctx context.Context, now time.Time) {
-	srv := a.session()
+	a.mu.Lock()
+	srv, relayURL, prev, probedAt := a.srv, a.req.URL, a.health, a.probedAt
+	a.mu.Unlock()
 	if srv == nil {
 		return
 	}
-	var h Health
+	var h netprovider.Health
 	probed := false
 	if len(srv.Status().AttachedRouters) == 0 {
-		a.mu.Lock()
-		prev, probedAt := a.health, a.probedAt
-		a.mu.Unlock()
 		h = prev
-		if prev.OK() || now.Sub(probedAt) >= healthProbeEvery {
+		if prev.State == netprovider.HealthOK || now.Sub(probedAt) >= healthProbeEvery {
 			pctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
-			h = a.relayHealth(srv.Refresh(pctx))
+			h = relayHealth(relayURL, srv.Refresh(pctx))
 			cancel()
 			probed = true
 		}
@@ -82,34 +75,36 @@ func (a *agentMesh) checkHealth(ctx context.Context, now time.Time) {
 		return
 	}
 	a.mu.Lock()
-	prev := a.health
+	prev = a.health
 	a.health = h
 	if probed {
 		a.probedAt = now
 	}
 	a.mu.Unlock()
-	if prev != h {
-		a.logHealth(h)
+	if prev == h {
+		return
 	}
+	logHealth(relayURL, h)
+	a.host.Health(h)
 }
 
 // relayHealth is the health of a session detached from the relay, whose
 // credential refresh returned err.
-func (a *agentMesh) relayHealth(err error) Health {
+func relayHealth(relayURL string, err error) netprovider.Health {
 	if relayRefused(err) {
-		return Health{
-			State:   HealthRemoved,
-			Problem: fmt.Sprintf("the relay %s removed this agent", a.cfg.URL),
+		return netprovider.Health{
+			State:   netprovider.HealthRemoved,
+			Problem: fmt.Sprintf("the relay %s removed this agent", relayURL),
 			Fix:     "ask the relay's operator to let it back, then `a2a-serve restart`",
 		}
 	}
-	h := Health{
-		State:   HealthDisconnected,
-		Problem: fmt.Sprintf("not connected to the relay %s; reconnecting", a.cfg.URL),
+	h := netprovider.Health{
+		State:   netprovider.HealthDisconnected,
+		Problem: fmt.Sprintf("not connected to the relay %s; reconnecting", relayURL),
 		Fix:     "check that the relay runs and that this machine reaches it",
 	}
 	if err != nil {
-		h.Problem = fmt.Sprintf("not connected to the relay %s (%v); reconnecting", a.cfg.URL, err)
+		h.Problem = fmt.Sprintf("not connected to the relay %s (%v); reconnecting", relayURL, err)
 	}
 	return h
 }
@@ -121,16 +116,13 @@ func relayRefused(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "403 Forbidden")
 }
 
-func (a *agentMesh) logHealth(h Health) {
+func logHealth(relayURL string, h netprovider.Health) {
 	switch h.State {
-	case HealthOK:
-		slog.Info("reconnected to the relay", "relay", a.cfg.URL)
-		a.logf("✓ relay: reconnected to %s", a.cfg.URL)
-	case HealthRemoved:
-		slog.Error("the relay removed this agent", "relay", a.cfg.URL)
-		a.logf("✗ relay: %v", h.Err())
+	case netprovider.HealthOK:
+		slog.Info("reconnected to the relay", "relay", relayURL)
+	case netprovider.HealthRemoved:
+		slog.Error("the relay removed this agent", "relay", relayURL)
 	default:
-		slog.Warn("not connected to the relay", "relay", a.cfg.URL, "problem", h.Problem)
-		a.logf("! relay: %s", h.Problem)
+		slog.Warn("not connected to the relay", "relay", relayURL, "problem", h.Problem)
 	}
 }

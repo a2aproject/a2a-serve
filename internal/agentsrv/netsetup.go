@@ -20,12 +20,13 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 // setupNetwork creates the private and public providers from the config.
 // They start listening in listenNetwork.
-func (s *Server) setupNetwork(closers *stack) error {
+func (s *Server) setupNetwork(ctx context.Context, closers *stack) error {
 	cfg := s.rt.Config()
 	var ts *network.Tailscale
 	tailscale := func() *network.Tailscale {
@@ -40,43 +41,49 @@ func (s *Server) setupNetwork(closers *stack) error {
 		}
 		return ts
 	}
-	// One relay serves both URLs when --private and --public name it.
-	var relay network.Provider
-	relayAt := func(u string) (network.Provider, error) {
-		if relay != nil {
-			return relay, nil
+	// One provider serves both URLs when --private and --public name the
+	// network.
+	var joined network.Provider
+	networkAt := func(u string) (network.Provider, error) {
+		if joined != nil {
+			return joined, nil
 		}
-		newRelay := s.newRelay
-		if newRelay == nil {
-			newRelay = network.NewRelay
+		spec := cfg.Network.ProviderSpec()
+		p, err := s.resolveNetworkProvider(ctx, spec)
+		if err != nil {
+			return nil, err
 		}
-		var err error
-		relay, err = newRelay(network.RelayConfig{
+		newNetwork := s.newNetwork
+		if newNetwork == nil {
+			newNetwork = func(c network.ExternalConfig) (network.Provider, error) { return network.NewExternal(c), nil }
+		}
+		joined, err = newNetwork(network.ExternalConfig{
+			Name: p.Name, Binary: p.Path,
 			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
-			StateDir: s.dir.AgentMeshDir(), Token: s.rt.Secrets()[agentdir.SecretRelayToken],
-			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),
+			StateDir: s.dir.NetworkStateDir(p.Name), Token: networkToken(s.rt.Secrets()),
+			Private: agentdir.IsNetworkURL(cfg.Network.Private), Public: agentdir.IsNetworkURL(cfg.Network.Public),
 			Logf: s.logf,
 		})
-		return relay, err
+		return joined, err
 	}
 	var err error
 	switch {
 	case s.private != nil:
 	case cfg.Network.Private == "":
-	case network.IsRelayURL(cfg.Network.Private):
-		if s.private, err = relayAt(cfg.Network.Private); err != nil {
+	case agentdir.IsNetworkURL(cfg.Network.Private):
+		if s.private, err = networkAt(cfg.Network.Private); err != nil {
 			return err
 		}
 	case cfg.Network.Private == network.ProviderTailscale:
 		s.private = tailscale()
 	default:
-		return fmt.Errorf("unknown private network %q: want tailscale or a relay URL", cfg.Network.Private)
+		return fmt.Errorf("unknown private network %q: want tailscale or a network URL", cfg.Network.Private)
 	}
 	switch {
 	case s.public != nil:
 	case cfg.Network.Public == "":
-	case network.IsRelayURL(cfg.Network.Public):
-		if s.public, err = relayAt(cfg.Network.Public); err != nil {
+	case agentdir.IsNetworkURL(cfg.Network.Public):
+		if s.public, err = networkAt(cfg.Network.Public); err != nil {
 			return err
 		}
 	case cfg.Network.Public == network.ProviderTailscale:
@@ -84,7 +91,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		t.Funnel = true
 		s.public = t
 	default:
-		return fmt.Errorf("unknown public network %q: want tailscale or a relay URL", cfg.Network.Public)
+		return fmt.Errorf("unknown public network %q: want tailscale or a network URL", cfg.Network.Public)
 	}
 	if s.private != nil {
 		closers.push(func(context.Context) error { return s.private.Close() })
@@ -93,6 +100,32 @@ func (s *Server) setupNetwork(closers *stack) error {
 		closers.push(func(context.Context) error { return s.public.Close() })
 	}
 	return nil
+}
+
+// networkToken is the --network-token, or the --relay-token stored before
+// network providers.
+func networkToken(secrets agentdir.Secrets) string {
+	if t := secrets[agentdir.SecretNetworkToken]; t != "" {
+		return t
+	}
+	return secrets[agentdir.SecretRelayToken]
+}
+
+// resolveNetworkProvider finds the binary of the provider spec. A test
+// that replaces how providers start without replacing how they are found
+// gets the spec as the name.
+func (s *Server) resolveNetworkProvider(ctx context.Context, spec string) (netinstall.Provider, error) {
+	switch {
+	case s.resolveNetwork != nil:
+		return s.resolveNetwork(ctx, spec)
+	case s.newNetwork != nil:
+		return netinstall.Provider{Name: spec}, nil
+	}
+	inst, err := netinstall.New(s.logf)
+	if err != nil {
+		return netinstall.Provider{}, err
+	}
+	return inst.Resolve(ctx, spec)
 }
 
 // joinNetwork joins the networks of the providers which join before they

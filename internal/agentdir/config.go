@@ -311,12 +311,42 @@ func (b BackupConfig) BackupRetention() time.Duration {
 // NetworkConfig selects the providers which make the agent reachable beyond
 // localhost.
 type NetworkConfig struct {
-	// Private is tailscale, a relay URL or empty.
+	// Private is tailscale, a network URL or empty.
 	Private string `yaml:"private,omitempty" json:"private,omitempty"`
-	// Public is tailscale, a relay URL or empty.
+	// Public is tailscale, a network URL or empty.
 	Public string `yaml:"public,omitempty" json:"public,omitempty"`
+	// Provider is the network provider of the network URLs: a well-known
+	// name, a release URL or a path. Empty is Agent Mesh.
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 
 	TailscaleControlURL string `yaml:"tailscaleControlURL,omitempty" json:"tailscaleControlURL,omitempty"`
+}
+
+// IsNetworkURL reports whether a --private or --public value names a
+// network that a network provider joins, by its URL.
+func IsNetworkURL(v string) bool { return strings.Contains(v, "://") }
+
+// URL returns the network URL of --private or --public, or "".
+func (n NetworkConfig) URL() string {
+	if IsNetworkURL(n.Private) {
+		return n.Private
+	}
+	if IsNetworkURL(n.Public) {
+		return n.Public
+	}
+	return ""
+}
+
+// ProviderSpec returns the --network-provider of the network URLs: the
+// setting, or Agent Mesh by default. It is empty without a network URL.
+func (n NetworkConfig) ProviderSpec() string {
+	if n.URL() == "" {
+		return ""
+	}
+	if n.Provider == "" {
+		return NetworkAgentMesh
+	}
+	return n.Provider
 }
 
 // MessengersConfig configures the messengers the agent is reachable from.

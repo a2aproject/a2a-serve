@@ -98,9 +98,10 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
 
 **Access flags**
 
@@ -129,6 +130,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--dir string` |  | Agent directory (default: the current directory) |
 | `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
+| `--yes` |  | Install the network provider of --network-provider from a release URL or a path without asking |
 
 ## a2a-serve start claude
 
@@ -190,9 +192,10 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
 
 **Access flags**
 
@@ -221,6 +224,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--dir string` |  | Agent directory (default: the current directory) |
 | `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
+| `--yes` |  | Install the network provider of --network-provider from a release URL or a path without asking |
 
 ## a2a-serve start echo
 
@@ -354,9 +358,10 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
 
 **Access flags**
 
@@ -385,6 +390,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--dir string` |  | Agent directory (default: the current directory) |
 | `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
+| `--yes` |  | Install the network provider of --network-provider from a release URL or a path without asking |
 
 ## a2a-serve start proxy
 

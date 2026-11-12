@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package network
+package main
 
 import (
 	"context"
@@ -29,8 +29,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/agentmesh/api"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/a2aproject/a2a-serve/netprovider"
 )
 
 func fakeIDToken(t *testing.T, claims map[string]any) string {
@@ -171,21 +175,21 @@ func TestRelayLogin(t *testing.T) {
 	relay := fakeRelay(t, token, 2, true, true)
 	dir := t.TempDir()
 	var logs []string
-	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
+	l := &relayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
 		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
 
 	got, err := l.Token(context.Background())
 	if err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 	if got != token {
-		t.Fatalf("RelayLogin.Token() = %q, want the ID token", got)
+		t.Fatalf("relayLogin.Token() = %q, want the ID token", got)
 	}
 	if len(logs) == 0 || !strings.Contains(logs[0], relay.URL+"/idp/activate?code=ABCD") {
-		t.Fatalf("RelayLogin printed %q, want the sign-in link", logs)
+		t.Fatalf("relayLogin printed %q, want the sign-in link", logs)
 	}
-	if owner := SavedOwner(dir); owner != "ben@example.com" {
-		t.Fatalf("SavedOwner() = %q, want the email signed in with", owner)
+	if owner := savedOwner(dir); owner != "ben@example.com" {
+		t.Fatalf("savedOwner() = %q, want the email signed in with", owner)
 	}
 }
 
@@ -219,12 +223,12 @@ func TestRelayLoginErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			l := &RelayLogin{RelayURL: tc.relay.URL, StateDir: dir, HTTP: tc.relay.Client(), Poll: time.Millisecond}
+			l := &relayLogin{RelayURL: tc.relay.URL, StateDir: dir, HTTP: tc.relay.Client(), Poll: time.Millisecond}
 			if _, err := l.Token(context.Background()); (err != nil) != tc.wantErr {
-				t.Fatalf("RelayLogin.Token() error = %v, want error %v", err, tc.wantErr)
+				t.Fatalf("relayLogin.Token() error = %v, want error %v", err, tc.wantErr)
 			}
-			if owner := SavedOwner(dir); owner != tc.wantOwner {
-				t.Fatalf("SavedOwner() = %q, want %q", owner, tc.wantOwner)
+			if owner := savedOwner(dir); owner != tc.wantOwner {
+				t.Fatalf("savedOwner() = %q, want %q", owner, tc.wantOwner)
 			}
 		})
 	}
@@ -236,26 +240,26 @@ func TestRelayLoginRenewsWithTheRefreshToken(t *testing.T) {
 	relay := fakeRelay(t, token, 0, true, true)
 	dir := t.TempDir()
 	var logs []string
-	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
+	l := &relayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
 		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
 	if _, err := l.Token(context.Background()); err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 	logs = nil
 
 	got, err := l.Token(context.Background())
 
 	if err != nil {
-		t.Fatalf("RelayLogin.Token() renewal error = %v", err)
+		t.Fatalf("relayLogin.Token() renewal error = %v", err)
 	}
 	if got != token {
-		t.Fatalf("RelayLogin.Token() renewal = %q, want the ID token", got)
+		t.Fatalf("relayLogin.Token() renewal = %q, want the ID token", got)
 	}
 	if relay.refreshes.Load() != 1 || relay.polls.Load() != 1 {
 		t.Fatalf("renewal used %d refresh grants and %d device polls in all, want 1 and 1", relay.refreshes.Load(), relay.polls.Load())
 	}
 	if len(logs) != 0 {
-		t.Fatalf("RelayLogin printed %q on renewal, want nothing", logs)
+		t.Fatalf("relayLogin printed %q on renewal, want nothing", logs)
 	}
 }
 
@@ -265,16 +269,16 @@ func TestRelayLoginSignsInAgainWhenTheRelayRefusesTheRefreshToken(t *testing.T) 
 	relay := fakeRelay(t, token, 0, true, true)
 	dir := t.TempDir()
 	var logs []string
-	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
+	l := &relayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
 		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
 	if _, err := l.Token(context.Background()); err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 	relay.refused.Store(true)
 	logs = nil
 
 	if _, err := l.Token(context.Background()); err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 
 	want := []string{
@@ -283,7 +287,7 @@ func TestRelayLoginSignsInAgainWhenTheRelayRefusesTheRefreshToken(t *testing.T) 
 		"✓ signed in to the relay as ben@example.com",
 	}
 	if diff := cmp.Diff(want, logs); diff != "" {
-		t.Fatalf("RelayLogin printed wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("relayLogin printed wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -292,9 +296,9 @@ func TestRelayLoginSignsInAgainAtANewRelay(t *testing.T) {
 	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
 	signIn := func(t *testing.T, relay *fakeIdP, dir string) {
 		t.Helper()
-		l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
+		l := &relayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
 		if _, err := l.Token(context.Background()); err != nil {
-			t.Fatalf("RelayLogin.Token() error = %v", err)
+			t.Fatalf("relayLogin.Token() error = %v", err)
 		}
 	}
 	tests := []struct {
@@ -361,18 +365,18 @@ func TestRelayLoginKeepsTheRefreshTokenWhileTheRelayIsDown(t *testing.T) {
 	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
 	relay := fakeRelay(t, token, 0, true, true)
 	dir := t.TempDir()
-	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
+	l := &relayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
 	if _, err := l.Token(context.Background()); err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 	relay.down.Store(true)
 
 	if _, err := l.Token(context.Background()); err == nil {
-		t.Fatalf("RelayLogin.Token() while the relay is down error = nil, want error")
+		t.Fatalf("relayLogin.Token() while the relay is down error = nil, want error")
 	}
 	relay.down.Store(false)
 	if _, err := l.Token(context.Background()); err != nil {
-		t.Fatalf("RelayLogin.Token() after the relay is back error = %v", err)
+		t.Fatalf("relayLogin.Token() after the relay is back error = %v", err)
 	}
 
 	if got := relay.polls.Load(); got != 1 {
@@ -385,24 +389,15 @@ func TestRelayLoginWaitsThroughAFailedPoll(t *testing.T) {
 	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
 	relay := fakeRelay(t, token, 0, true, true)
 	relay.badGateways.Store(2)
-	l := &RelayLogin{RelayURL: relay.URL, StateDir: t.TempDir(), HTTP: relay.Client(), Poll: time.Millisecond}
+	l := &relayLogin{RelayURL: relay.URL, StateDir: t.TempDir(), HTTP: relay.Client(), Poll: time.Millisecond}
 
 	got, err := l.Token(context.Background())
 
 	if err != nil {
-		t.Fatalf("RelayLogin.Token() error = %v", err)
+		t.Fatalf("relayLogin.Token() error = %v", err)
 	}
 	if got != token {
-		t.Fatalf("RelayLogin.Token() = %q, want the ID token", got)
-	}
-}
-
-func TestIsRelayURL(t *testing.T) {
-	t.Parallel()
-	for v, want := range map[string]bool{"https://relay.example.com": true, "http://localhost:8080": true, "tailscale": false, "lan": false, "": false} {
-		if got := IsRelayURL(v); got != want {
-			t.Fatalf("IsRelayURL(%q) = %v, want %v", v, got, want)
-		}
+		t.Fatalf("relayLogin.Token() = %q, want the ID token", got)
 	}
 }
 
@@ -443,7 +438,7 @@ func TestRelayRemoval(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			err := relayRemoval(t.Context(), srv.Client(), RelayConfig{URL: srv.URL, AgentName: "coder", Token: tt.token}, "12D3KooWMe")
+			err := relayRemoval(t.Context(), srv.Client(), netprovider.JoinRequest{URL: srv.URL, Agent: "coder", Token: tt.token}, "12D3KooWMe")
 
 			got := ""
 			if err != nil {
@@ -453,5 +448,78 @@ func TestRelayRemoval(t *testing.T) {
 				t.Fatalf("relayRemoval() error = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestRelayLoginDecodesControlPlaneInfoProto(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "Ben@example.com", "email_verified": true})
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /info", func(w http.ResponseWriter, r *http.Request) {
+		payload, err := proto.Marshal(&api.ControlPlaneInfoResponse{
+			OidcIssuer:      srv.URL + "/idp",
+			ClientId:        "mesh-client",
+			Audience:        "mesh-aud",
+			RouterAddresses: []string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter"},
+			BannedPeerIds:   []string{"12D3KooWBanned"},
+			Routers:         []*api.RouterInfo{{PeerId: "12D3KooWRouter", Connections: 2, ConnectionLimit: 100}},
+			Directory:       api.NewDirectoryParameters(3, 5*time.Minute),
+		})
+		if err != nil {
+			t.Errorf("proto.Marshal() error = %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		if _, err := w.Write(payload); err != nil {
+			t.Errorf("Write() error = %v", err)
+		}
+	})
+	mux.HandleFunc("GET /idp/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"device_authorization_endpoint": srv.URL + "/idp/device",
+			"token_endpoint":                srv.URL + "/idp/token",
+		}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	mux.HandleFunc("POST /idp/device", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("client_id") != "mesh-client" || r.FormValue("audience") != "mesh-aud" {
+			http.Error(w, "bad client or audience", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"device_code":               "dc-proto",
+			"user_code":                 "WXYZ",
+			"verification_uri_complete": srv.URL + "/idp/activate?code=WXYZ",
+			"interval":                  0,
+			"expires_in":                60,
+		}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	mux.HandleFunc("POST /idp/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("device_code") != "dc-proto" {
+			http.Error(w, "bad code", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]string{"id_token": token}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	l := &relayLogin{RelayURL: srv.URL, StateDir: dir, HTTP: srv.Client(), Poll: time.Millisecond}
+	got, err := l.Token(context.Background())
+	if err != nil {
+		t.Fatalf("relayLogin.Token() error = %v, want nil", err)
+	}
+	if got != token {
+		t.Fatalf("relayLogin.Token() = %q, want %q", got, token)
+	}
+	if owner := savedOwner(dir); owner != "ben@example.com" {
+		t.Fatalf("savedOwner() = %q, want %q", owner, "ben@example.com")
 	}
 }

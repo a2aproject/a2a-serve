@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 )
 
 // Name is the name of the directory which marks an agent.
@@ -180,7 +181,17 @@ func (d Dir) TSNetDir() string { return filepath.Join(d.StateDir(), "tsnet") }
 
 // AgentMeshDir returns the directory of the agent's identity on an Agent
 // Mesh relay.
-func (d Dir) AgentMeshDir() string { return filepath.Join(d.StateDir(), "agentmesh") }
+func (d Dir) AgentMeshDir() string { return d.NetworkStateDir(NetworkAgentMesh) }
+
+// NetworkStateDir returns the directory of the agent's identity on the
+// network of the provider name: state/<name> for the well-known providers,
+// whose names are reserved, and state/network-<name> for others.
+func (d Dir) NetworkStateDir(name string) string {
+	if !netinstall.IsWellKnown(name) {
+		name = "network-" + name
+	}
+	return filepath.Join(d.StateDir(), name)
+}
 
 // HomeDir returns the harness home, mounted at /home/agent in a container.
 func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }

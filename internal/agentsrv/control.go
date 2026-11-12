@@ -97,8 +97,8 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
 		Local: local, Private: private, Public: public, Tasks: map[string]int{},
 	}
-	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
-		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
+	if n, ok := s.private.(network.PrivateNoter); ok && private != "" {
+		st.PrivateNote = n.PrivateNote()
 	}
 	if u, err := url.Parse(private); err == nil && private != "" && s.private != nil {
 		st.PrivateInspector = s.privateListener(u).inspector

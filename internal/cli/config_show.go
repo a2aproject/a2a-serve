@@ -171,15 +171,17 @@ func renderConfig(v *agentctl.View, all bool) string {
 	line("env", strings.Join(c.Env, ", "), "env")
 	network := []string{fmt.Sprintf("%-23s public %s", "private "+orNone(c.Network.Private), orNone(c.Network.Public))}
 	for _, extra := range []struct{ label, value string }{
+		{"network-provider", c.Network.Provider},
 		{"tailscale-control-url", c.Network.TailscaleControlURL},
 		{agentdir.SecretTailscaleKey, v.Secrets[agentdir.SecretTailscaleKey]},
+		{agentdir.SecretNetworkToken, v.Secrets[agentdir.SecretNetworkToken]},
 		{agentdir.SecretRelayToken, v.Secrets[agentdir.SecretRelayToken]},
 	} {
 		if extra.value != "" {
 			network = append(network, extra.label+" "+extra.value)
 		}
 	}
-	line("network", strings.Join(network, ", "), "private", "public", "tailscale-control-url")
+	line("network", strings.Join(network, ", "), "private", "public", "network-provider", "tailscale-control-url")
 	line("access", formatPolicy(c.Policy), "private-allow-incoming", "public-allow-incoming", "allow-email", "private-allow-outgoing")
 	var rules []string
 	for _, r := range c.Policy.Sandbox {

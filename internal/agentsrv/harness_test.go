@@ -53,6 +53,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
+	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -105,6 +106,10 @@ func postHeaders(t *testing.T, rawURL string, header http.Header, size int) *htt
 
 var fakeACP string
 
+// loopnet is the reference network provider, which tests run as a network
+// provider process.
+var loopnet string
+
 // migratedDB is a server.db with every migration applied. Migrations take
 // most of the CPU time of a fresh store, so tests copy it instead.
 var migratedDB []byte
@@ -132,6 +137,13 @@ func TestMain(m *testing.M) {
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "building fakeacp:", err)
+		os.Exit(1)
+	}
+	loopnet = filepath.Join(dir, "loopnet")
+	build = exec.Command("go", "build", "-o", loopnet, "github.com/a2aproject/a2a-serve/netprovider/internal/loopnet")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "building loopnet:", err)
 		os.Exit(1)
 	}
 	if migratedDB, err = migrateDB(filepath.Join(dir, "server.db")); err != nil {
@@ -202,7 +214,8 @@ type serverOpts struct {
 	sharedClientID string
 	private        network.Provider
 	public         network.Provider
-	newRelay       func(network.RelayConfig) (network.Provider, error)
+	newRelay       func(network.ExternalConfig) (network.Provider, error)
+	resolveNetwork func(context.Context, string) (netinstall.Provider, error)
 	now            func() time.Time
 	out            io.Writer
 	setupProblems  func(context.Context) []string
@@ -253,7 +266,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	})
 	ts := &testServer{t: t, dir: dir, ch: o.messenger, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, MaxAgentMessage: o.maxAgentMessage, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewNetwork: o.newRelay, ResolveNetwork: o.resolveNetwork, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, MaxAgentMessage: o.maxAgentMessage, Ready: func(s *Server) { ready <- s }}
 	if o.messenger != nil {
 		opts.Messengers = []messenger.Messenger{o.messenger}
 	}

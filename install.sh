@@ -60,7 +60,8 @@ sha256() {
 }
 
 # fetch downloads <name>_<version>_<os>_<arch>.tar.gz of a release, checks it
-# against the release's checksums.txt and installs the binary <name>.
+# against the release's checksums.txt and installs the binary <name>, and
+# the network providers in the archive.
 fetch() {
   name=$1 base=$2 tag=$3
   archive="${name}_${tag#v}_${os}_${arch}.tar.gz"
@@ -78,6 +79,12 @@ fetch() {
   mkdir -p "$INSTALL_DIR"
   install -m 0755 "$bin" "$INSTALL_DIR/$name"
   say "✓ installed $INSTALL_DIR/$name"
+  # The network providers that ship with a2a-serve go next to it, where it
+  # finds them.
+  find "$tmp/$name" -type f -name 'netprovider-*' | while read -r provider; do
+    install -m 0755 "$provider" "$INSTALL_DIR/$(basename "$provider")"
+    say "✓ installed $INSTALL_DIR/$(basename "$provider")"
+  done
 }
 
 main() {

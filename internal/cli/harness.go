@@ -39,6 +39,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 	var (
 		flags settingsFlags
 		mode  runMode
+		yes   bool
 	)
 	short := fmt.Sprintf("Start %s agent in this directory", output.WithArticle(name))
 	if name == agentdir.HarnessACP {
@@ -65,6 +66,9 @@ workspace unless --allow-broad-mount names it.
 			}
 			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
+				return err
+			}
+			if s.NetworkProvider, err = installNetworkProvider(cmd.Context(), cfg, s.NetworkProvider, yes); err != nil {
 				return err
 			}
 			if d.Exists() {
@@ -110,7 +114,8 @@ workspace unless --allow-broad-mount names it.
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
 	mode.addRunFlags(f)
-	setSection(f, sectionRun, "dir")
+	addYesFlag(f, &yes)
+	setSection(f, sectionRun, "dir", "yes")
 	cmd.SetUsageFunc(sectionedUsage)
 	hideImageForLocalSandbox(cmd, func() (agentdir.Dir, error) { return harnessDir(sf.dir) })
 	return cmd

@@ -68,15 +68,14 @@ type listener struct {
 // inspector on a tailnet, and tunneled on a relay.
 func (s *Server) privateListener(u *url.URL) listener {
 	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
-	switch s.private.Name() {
-	case network.ProviderTailscale:
+	if s.private.Name() == network.ProviderTailscale {
 		l.inspector = true
 		if u.Scheme == "http" {
 			l.host = u.Host
 		}
-	case network.ProviderAgentMesh:
-		l.tunneled = true
+		return l
 	}
+	_, l.tunneled = s.private.(network.ClientKeyer)
 	return l
 }
 
@@ -388,11 +387,11 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 
 // pairClient identifies the client of a pairing request for the limit on
 // failed attempts, and of unauthenticated requests for their limit on
-// concurrent ones: the source of a Funnel connection, the verified peer of
-// a relay connection, or the remote address of a direct one. Other
-// tunneled clients can't be told apart, so they get "". Their concurrent
-// requests count only toward the total, as one client could otherwise
-// take the share of all of them; the relay limits them for each address.
+// concurrent ones: the source of a Funnel connection, the client key a
+// network provider gives a connection, or the remote address of a direct
+// one. Other tunneled clients can't be told apart, so they get "". Their
+// concurrent requests count only toward the total, as one client could
+// otherwise take the share of all of them.
 func (s *Server) pairClient(r *http.Request, l listener) string {
 	if src, ok := r.Context().Value(funnelSourceKey{}).(string); ok {
 		return src
@@ -404,14 +403,11 @@ func (s *Server) pairClient(r *http.Request, l listener) string {
 	if l.kind == network.ListenerPublic {
 		p = s.public
 	}
-	if p == nil || p.Name() != network.ProviderAgentMesh {
+	ck, ok := p.(network.ClientKeyer)
+	if !ok {
 		return ""
 	}
-	peer, err := p.WhoIs(r.Context(), r.RemoteAddr)
-	if err != nil || peer.Node == "" {
-		return ""
-	}
-	return "peer:" + peer.Node
+	return ck.ClientKey(r.RemoteAddr, l.kind == network.ListenerPublic)
 }
 
 // funnelSourceKey keys the client address of a Funnel connection in the

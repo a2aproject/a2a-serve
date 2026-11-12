@@ -20,9 +20,9 @@
 #   Stage 1 (Token Join + P2P Delegation + Public Ingress):
 #     1. Starts `agentmesh-one` v0.2.0 (optionally exposed to the internet via
 #        `--tunnel cloudflare`).
-#     2. Builds `a2a-serve -tags agentmesh`, runs `a2a-serve doctor --fix`, and
+#     2. Builds `a2a-serve` and the Agent Mesh network provider, runs `a2a-serve doctor --fix`, and
 #        starts two Docker-sandboxed `a2a-serve start opencode` agents (`coder` and
-#        `reviewer`) with `--private "$RELAY" --public "$RELAY" --relay-token`.
+#        `reviewer`) with `--private "$RELAY" --public "$RELAY" --network-token`.
 #     3. Verifies `a2a-serve doctor --online`, discovers `reviewer` over the
 #        mesh DHT (`a2a-serve peers`), pairs with an invite code, and delegates
 #        a live LLM task (`coder -> reviewer`) over authenticated P2P streams.
@@ -34,7 +34,7 @@
 #     5. Starts a local RS256 OIDC Device-Flow Identity Provider and an
 #        `agentmesh-one --issuer <idp> --no-join-token` relay.
 #     6. Starts two Docker-sandboxed `a2a-serve start opencode` agents (`oidc-coder`
-#        and `oidc-reviewer`) without `--relay-token`, follows the printed
+#        and `oidc-reviewer`) without `--network-token`, follows the printed
 #        device sign-in link as `Ben@example.com`, verifies `owner.json`, adds
 #        `oidc-reviewer` without `--code`, delegates a live LLM task authorized
 #        by verified same-owner Biscuit identity (`Peer.Self == true`), and
@@ -182,8 +182,9 @@ banner() {
   printf '\n\033[1;36m==> %s\033[0m\n' "$*"
 }
 
-banner "0. Building a2a-serve (-tags agentmesh) and preparing a2a CLI (${PINNED_A2A_CLI}) + agentmesh-one (${AGENTMESH_VERSION})"
-CGO_ENABLED=0 go build -tags agentmesh -trimpath -o "$BIN_DIR/a2a-serve" .
+banner "0. Building a2a-serve with the Agent Mesh network provider and preparing a2a CLI (${PINNED_A2A_CLI}) + agentmesh-one (${AGENTMESH_VERSION})"
+CGO_ENABLED=0 go build -trimpath -o "$BIN_DIR/a2a-serve" .
+(cd providers/agentmesh && CGO_ENABLED=0 go build -trimpath -o "$BIN_DIR/netprovider-agentmesh" .)
 
 if [[ ! -x "$CACHE_DIR/a2a-${PINNED_A2A_CLI}" ]]; then
   TMP_GOBIN="$(mktemp -d "$WORK/gobin.XXXXXX")"
@@ -386,7 +387,7 @@ a2a-serve config set --dir "$WORK/coder" --agent opencode \
   --allow-tools read,search,execute \
   --private "$RELAY" \
   --public "$RELAY" \
-  --relay-token env:RELAY_TOKEN \
+  --network-token env:RELAY_TOKEN \
   "${SECRET_ARGS[@]}"
 a2a-serve start --dir "$WORK/coder" --quiet --detach
 
@@ -397,7 +398,7 @@ a2a-serve config set --dir "$WORK/reviewer" --agent opencode \
   --allow-tools read,search \
   --private "$RELAY" \
   --public "$RELAY" \
-  --relay-token env:RELAY_TOKEN \
+  --network-token env:RELAY_TOKEN \
   "${SECRET_ARGS[@]}"
 a2a-serve start --dir "$WORK/reviewer" --quiet --detach
 
@@ -685,7 +686,7 @@ approve_device_signin() {
   return 1
 }
 
-banner "6. Signing in oidc-coder & oidc-reviewer as Ben@example.com (no --relay-token) & delegating without pairing code"
+banner "6. Signing in oidc-coder & oidc-reviewer as Ben@example.com (no --network-token) & delegating without pairing code"
 approve_device_signin "$WORK/oidc-coder" &
 SIGNIN_PID=$!
 a2a-serve start opencode --dir "$WORK/oidc-coder" \

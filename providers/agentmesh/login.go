@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package network
+package main
 
 import (
 	"context"
@@ -31,46 +31,13 @@ import (
 	"time"
 	"unicode"
 
-	"google.golang.org/protobuf/encoding/protowire"
+	"github.com/google/agentmesh/api"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/netprovider"
 )
-
-// AgentMeshVersion is the Agent Mesh version this a2a-serve joins relays
-// with. Relays should run the same version.
-const AgentMeshVersion = agentmesh.Version
-
-// InstallAgentMesh installs an a2a-serve that joins relays. It builds
-// without cgo, which the launcher of the Docker sandbox's network needs.
-const InstallAgentMesh = "CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"
-
-// AgentMeshHost is the virtual host of private URLs on a relay, which only
-// agents on the relay reach, through their in-process mesh node.
-const AgentMeshHost = "agentmesh.local"
-
-// IsRelayURL reports whether a --private or --public value names an Agent
-// Mesh relay by its URL.
-func IsRelayURL(v string) bool {
-	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
-}
-
-// RelayConfig configures joining an Agent Mesh relay.
-type RelayConfig struct {
-	AgentName   string
-	Description string
-	// URL is the relay's URL.
-	URL string
-	// StateDir keeps the agent's mesh identity, so it keeps its URL.
-	StateDir string
-	// Token joins without signing in, for servers.
-	Token string
-	// Private and Public select the URLs the relay gives the agent.
-	Private bool
-	Public  bool
-	// Logf prints progress for the user, such as the sign-in link.
-	Logf func(string, ...any)
-}
 
 // ownerFile records the email the agent signed in to the relay with, so
 // agents of the same person treat each other as the owner.
@@ -80,8 +47,8 @@ type relayOwner struct {
 	Email string `json:"email"`
 }
 
-// SavedOwner returns the email the agent in stateDir signed in with, or "".
-func SavedOwner(stateDir string) string {
+// savedOwner returns the email the agent in stateDir signed in with, or "".
+func savedOwner(stateDir string) string {
 	data, err := os.ReadFile(filepath.Join(stateDir, ownerFile))
 	if err != nil {
 		return ""
@@ -92,6 +59,17 @@ func SavedOwner(stateDir string) string {
 		return ""
 	}
 	return o.Email
+}
+
+func saveOwner(stateDir, email string) error {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(relayOwner{Email: email})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(stateDir, ownerFile), data, 0o600)
 }
 
 // refreshFile keeps the refresh token the relay gave the agent at its
@@ -152,22 +130,11 @@ func removeFile(path string) error {
 	return nil
 }
 
-func saveOwner(stateDir, email string) error {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(relayOwner{Email: email})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(stateDir, ownerFile), data, 0o600)
-}
-
-// RelayLogin signs the agent in to a relay with the relay's identity
+// relayLogin signs the agent in to a relay with the relay's identity
 // provider, printing a sign-in link, as Tailscale does on a first run. It
 // returns the ID token the relay enrolls the agent with, and keeps the
 // refresh token that comes with it for later ID tokens.
-type RelayLogin struct {
+type relayLogin struct {
 	RelayURL string
 	StateDir string
 	HTTP     *http.Client
@@ -182,10 +149,10 @@ type relayInfo struct {
 	banned []string
 }
 
-func (l *RelayLogin) relayURL() string { return strings.TrimSuffix(l.RelayURL, "/") }
+func (l *relayLogin) relayURL() string { return strings.TrimSuffix(l.RelayURL, "/") }
 
 // info reads the relay's identity provider, which agents sign in with.
-func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
+func (l *relayLogin) info(ctx context.Context) (relayInfo, error) {
 	info, err := fetchRelayInfo(ctx, l.HTTP, l.RelayURL)
 	if err != nil {
 		return relayInfo{}, err
@@ -220,56 +187,18 @@ func fetchRelayInfo(ctx context.Context, client *http.Client, relayURL string) (
 	if err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
-	info, err := decodeRelayInfo(body)
-	if err != nil {
+	var info api.ControlPlaneInfoResponse
+	if err := proto.Unmarshal(body, &info); err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
-	return info, nil
-}
-
-// decodeRelayInfo reads oidc_issuer (1), client_id (2), audience (3) and
-// banned_peer_ids (5) from a serialized api.ControlPlaneInfoResponse
-// without pulling generated mesh protos into builds without -tags agentmesh.
-func decodeRelayInfo(b []byte) (relayInfo, error) {
-	var info relayInfo
-	for len(b) > 0 {
-		num, typ, n := protowire.ConsumeTag(b)
-		if n < 0 {
-			return relayInfo{}, protowire.ParseError(n)
-		}
-		b = b[n:]
-		if typ == protowire.BytesType && (num == 1 || num == 2 || num == 3 || num == 5) {
-			v, m := protowire.ConsumeString(b)
-			if m < 0 {
-				return relayInfo{}, protowire.ParseError(m)
-			}
-			b = b[m:]
-			switch num {
-			case 1:
-				info.issuer = v
-			case 2:
-				info.clientID = v
-			case 3:
-				info.audience = v
-			case 5:
-				info.banned = append(info.banned, v)
-			}
-			continue
-		}
-		m := protowire.ConsumeFieldValue(num, typ, b)
-		if m < 0 {
-			return relayInfo{}, protowire.ParseError(m)
-		}
-		b = b[m:]
-	}
-	return info, nil
+	return relayInfo{issuer: info.GetOidcIssuer(), clientID: info.GetClientId(), audience: info.GetAudience(), banned: info.GetBannedPeerIds()}, nil
 }
 
 // relayRemoval returns an error that says how to get back when the relay
-// in cfg removed the agent with peerID, and nil otherwise, also when it
+// of req removed the agent with peerID, and nil otherwise, also when it
 // can't tell.
-func relayRemoval(ctx context.Context, client *http.Client, cfg RelayConfig, peerID string) error {
-	info, err := fetchRelayInfo(ctx, client, cfg.URL)
+func relayRemoval(ctx context.Context, client *http.Client, req netprovider.JoinRequest, peerID string) error {
+	info, err := fetchRelayInfo(ctx, client, req.URL)
 	if err != nil {
 		slog.Debug("checking whether the relay removed this agent", "error", err)
 		return nil
@@ -277,13 +206,13 @@ func relayRemoval(ctx context.Context, client *http.Client, cfg RelayConfig, pee
 	if !slices.Contains(info.banned, peerID) {
 		return nil
 	}
-	if cfg.Token == "" {
-		return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let you back on --allow-email and restart the relay", cfg.URL, peerID)
+	if req.Token == "" {
+		return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let you back on --allow-email and restart the relay", req.URL, peerID)
 	}
-	return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let it back with `a2a-serve relay invite %s`, then run `a2a-serve restart`", cfg.URL, peerID, cfg.AgentName)
+	return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let it back with `a2a-serve relay invite %s`, then run `a2a-serve restart`", req.URL, peerID, req.Agent)
 }
 
-func (l *RelayLogin) getJSON(ctx context.Context, u string, out any) error {
+func (l *relayLogin) getJSON(ctx context.Context, u string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
@@ -306,7 +235,7 @@ func closeResp(resp *http.Response) {
 	}
 }
 
-func (l *RelayLogin) postForm(ctx context.Context, u string, form url.Values, out any) (int, error) {
+func (l *relayLogin) postForm(ctx context.Context, u string, form url.Values, out any) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
 	if err != nil {
 		return 0, err
@@ -336,7 +265,7 @@ type tokenResponse struct {
 // when the relay accepts it, and otherwise with the device authorization
 // flow, which prints a link and waits until the person signs in. It records
 // the email signed in with.
-func (l *RelayLogin) Token(ctx context.Context) (string, error) {
+func (l *relayLogin) Token(ctx context.Context) (string, error) {
 	info, err := l.info(ctx)
 	if err != nil {
 		return "", err
@@ -369,7 +298,7 @@ func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 // refresh trades the saved refresh token for an ID token. It returns
 // errSignInAgain when there is none or the relay refuses it, and other
 // errors when the relay may accept it later.
-func (l *RelayLogin) refresh(ctx context.Context, info relayInfo, tokenURL string) (string, error) {
+func (l *relayLogin) refresh(ctx context.Context, info relayInfo, tokenURL string) (string, error) {
 	saved, err := savedRefreshToken(l.StateDir)
 	if err != nil {
 		return "", fmt.Errorf("reading the relay's refresh token: %w", err)
@@ -407,7 +336,7 @@ func (l *RelayLogin) refresh(ctx context.Context, info relayInfo, tokenURL strin
 }
 
 // signedIn records who the agent signed in as, and the refresh token.
-func (l *RelayLogin) signedIn(info relayInfo, tok tokenResponse, announce bool) error {
+func (l *relayLogin) signedIn(info relayInfo, tok tokenResponse, announce bool) error {
 	if tok.RefreshToken != "" {
 		saved := savedRefresh{RelayURL: l.relayURL(), Issuer: info.issuer, ClientID: info.clientID, Token: tok.RefreshToken}
 		if err := saveRefreshToken(l.StateDir, saved); err != nil {
@@ -427,7 +356,7 @@ func (l *RelayLogin) signedIn(info relayInfo, tok tokenResponse, announce bool) 
 	return nil
 }
 
-func (l *RelayLogin) deviceSignIn(ctx context.Context, info relayInfo, deviceURL, tokenURL string) (string, error) {
+func (l *relayLogin) deviceSignIn(ctx context.Context, info relayInfo, deviceURL, tokenURL string) (string, error) {
 	form := url.Values{"client_id": {info.clientID}, "scope": {"openid email"}}
 	if info.audience != "" {
 		form.Set("audience", info.audience)
@@ -511,7 +440,7 @@ func relayText(s string) string {
 	return b.String()
 }
 
-func (l *RelayLogin) logf(format string, args ...any) {
+func (l *relayLogin) logf(format string, args ...any) {
 	if l.Logf != nil {
 		l.Logf(format, args...)
 	}

@@ -80,6 +80,8 @@ func TestUnset(t *testing.T) {
 		{setting: "email", wantErr: true},
 		{setting: "email-password", wantErr: true},
 		{setting: "tailscale-authkey", modify: func(*Config) {}, wantDeleted: []string{SecretTailscaleKey}},
+		{setting: "network-token", modify: func(*Config) {}, wantDeleted: []string{SecretNetworkToken, SecretRelayToken}},
+		{setting: "relay-token", modify: func(*Config) {}, wantDeleted: []string{SecretNetworkToken, SecretRelayToken}},
 		{setting: "env", entries: []string{"MISSING"}, wantErr: true},
 		{setting: "port", entries: []string{"1"}, wantErr: true},
 		{setting: "agent", wantErr: true},

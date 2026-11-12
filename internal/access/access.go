@@ -47,7 +47,7 @@ func NetworkOf(cfg *agentdir.Config) Network {
 	case agentdir.NetworkTailscale:
 		n.Private = network.ProviderTailscale
 	default:
-		n.Private = network.ProviderAgentMesh
+		n.Private = cfg.Network.ProviderSpec()
 	}
 	return n
 }
