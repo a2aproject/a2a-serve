@@ -205,7 +205,7 @@ func where(id Identity) string {
 		switch id.Provider {
 		case network.ProviderTailscale:
 			return " on the tailnet"
-		case network.ProviderRelay:
+		case network.ProviderAgentMesh:
 			return " on the relay"
 		}
 		return " on the private network"

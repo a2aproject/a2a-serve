@@ -63,7 +63,7 @@ func TestPolicyResolve(t *testing.T) {
 			id:     Identity{Network: network.ListenerPublic, Email: "anna@example.com", EmailSource: EmailFromGoogle, Domain: "other.com"},
 		},
 		{name: "domain pattern without a proven domain", policy: testPolicy(false, []string{"*@example.com"}), id: private},
-		{name: "full address from the relay", policy: testPolicy(false, []string{"anna@example.com"}), id: Identity{Network: network.ListenerPrivate, Provider: network.ProviderRelay, Email: "anna@example.com", EmailSource: EmailFromNetwork}, want: RoleMember},
+		{name: "full address from the relay", policy: testPolicy(false, []string{"anna@example.com"}), id: Identity{Network: network.ListenerPrivate, Provider: network.ProviderAgentMesh, Email: "anna@example.com", EmailSource: EmailFromNetwork}, want: RoleMember},
 		{name: "owner pairing", policy: testPolicy(false, nil), id: Identity{Pairing: "phone", PairingRole: RoleOwner}, want: RoleOwner},
 		{name: "highest of pairing and bindings", policy: Policy{Members: []string{MemberPrivate}}, id: Identity{Network: network.ListenerPrivate, Pairing: "anna", PairingRole: RoleOwner}, want: RoleOwner},
 		{name: "webhook node", policy: testPolicy(false, nil), id: Identity{Network: network.ListenerPublic, WebhookNode: "grok"}, want: RoleMember},
@@ -127,7 +127,7 @@ func TestPolicyOthers(t *testing.T) {
 	}{
 		{name: "private network", policy: testPolicy(true, nil), provider: network.ProviderTailscale, want: []string{"everyone on the tailnet"}},
 		{name: "no private network", policy: testPolicy(true, nil)},
-		{name: "closed private network", policy: testPolicy(false, nil), provider: network.ProviderRelay},
+		{name: "closed private network", policy: testPolicy(false, nil), provider: network.ProviderAgentMesh},
 		{
 			name: "emails", policy: testPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderTailscale,
 			want: []string{"everyone on the tailnet", "emails matching *@example.com", "emails matching anna@example.org"},

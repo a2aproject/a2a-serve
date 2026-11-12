@@ -244,7 +244,7 @@ type joinFailingRelay struct {
 	err error
 }
 
-func (r joinFailingRelay) Name() string               { return network.ProviderRelay }
+func (r joinFailingRelay) Name() string               { return network.ProviderAgentMesh }
 func (r joinFailingRelay) Join(context.Context) error { return r.err }
 func (r joinFailingRelay) Close() error               { return nil }
 
@@ -593,7 +593,7 @@ func (n *testRelayNode) Health() network.Health {
 	return n.health
 }
 
-func (n *testRelayNode) Name() string { return network.ProviderRelay }
+func (n *testRelayNode) Name() string { return network.ProviderAgentMesh }
 
 func (n *testRelayNode) start(ctx context.Context) error {
 	n.startOnce.Do(func() {

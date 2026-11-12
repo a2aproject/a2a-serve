@@ -225,7 +225,7 @@ func TestInspectorOnPrivateListener(t *testing.T) {
 		want     int
 	}{
 		{provider: network.ProviderTailscale, want: http.StatusSeeOther},
-		{provider: network.ProviderRelay, want: http.StatusNotFound},
+		{provider: network.ProviderAgentMesh, want: http.StatusNotFound},
 	}
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {
@@ -520,7 +520,7 @@ func holdPair(t *testing.T, u string) {
 
 func TestRelayCallersShareOnlyTheTotalUnauthenticatedLimit(t *testing.T) {
 	t.Parallel()
-	relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: true}
+	relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderAgentMesh, unidentified: true}
 	ts := startServer(t, serverOpts{public: relay, timings: func(tm *Timings) { tm.PairReadTimeout = time.Hour }})
 	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
 	if err != nil {
@@ -636,7 +636,7 @@ func TestPairingThroughTunnel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: !tc.peerPerConn, peerPerConn: tc.peerPerConn}
+			relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderAgentMesh, unidentified: !tc.peerPerConn, peerPerConn: tc.peerPerConn}
 			start := time.Now()
 			ts := startServer(t, serverOpts{public: relay, now: func() time.Time { return start }})
 			code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})

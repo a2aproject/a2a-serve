@@ -16,6 +16,7 @@ package front_test
 
 import (
 	"bufio"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -31,9 +32,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multibase"
+	mh "github.com/multiformats/go-multihash"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
@@ -431,18 +432,30 @@ func TestFrontLimitsTheRateOfEachClient(t *testing.T) {
 	}
 }
 
+// testPeer is a peer ID as libp2p builds it for an Ed25519 key: the
+// identity multihash of the key's protobuf encoding.
+type testPeer struct{ hash mh.Multihash }
+
+// String returns the base58 form of the peer ID.
+func (p testPeer) String() string { return p.hash.B58String() }
+
+// cid returns the peer ID as a CID of a libp2p key.
+func (p testPeer) cid() cid.Cid { return cid.NewCidV1(cid.Libp2pKey, p.hash) }
+
 // newPeer returns a new peer ID, as an agent on the relay has.
-func newPeer(t *testing.T) peer.ID {
+func newPeer(t *testing.T) testPeer {
 	t.Helper()
-	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := peer.IDFromPrivateKey(priv)
+	// PublicKey{Type: Ed25519, Data: pub} in protobuf.
+	key := append([]byte{0x08, 0x01, 0x12, byte(len(pub))}, pub...)
+	hash, err := mh.Sum(key, mh.IDENTITY, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return id
+	return testPeer{hash: hash}
 }
 
 // ingressTryer sends GET requests to an open front from one client and
@@ -481,7 +494,7 @@ func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
 		other    string
 	}{
 		{name: "an agent", segments: []string{limited.String()}, other: other.String()},
-		{name: "spellings of one agent", segments: append([]string{limited.String()}, spellings(t, limited)...), other: peer.ToCid(other).String()},
+		{name: "spellings of one agent", segments: append([]string{limited.String()}, spellings(t, limited)...), other: other.cid().String()},
 		{name: "segments that aren't agents", segments: []string{"not-a-peer", "also-not-a-peer", "1" + strings.Repeat("z", 1000)}, other: limited.String()},
 	}
 	for _, tt := range tests {
@@ -504,11 +517,11 @@ func TestFrontLimitsTheIngressRateOfEachAgent(t *testing.T) {
 
 // spellings returns the CID forms of id in every multibase that fits in a
 // path segment, which Agent Mesh reads as id.
-func spellings(t *testing.T, id peer.ID) []string {
+func spellings(t *testing.T, id testPeer) []string {
 	t.Helper()
 	var all []string
 	for base := range multibase.EncodingToStr {
-		s, err := peer.ToCid(id).StringOfBase(base)
+		s, err := id.cid().StringOfBase(base)
 		if err != nil {
 			t.Fatal(err)
 		}

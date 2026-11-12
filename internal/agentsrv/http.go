@@ -74,7 +74,7 @@ func (s *Server) privateListener(u *url.URL) listener {
 		if u.Scheme == "http" {
 			l.host = u.Host
 		}
-	case network.ProviderRelay:
+	case network.ProviderAgentMesh:
 		l.tunneled = true
 	}
 	return l
@@ -404,7 +404,7 @@ func (s *Server) pairClient(r *http.Request, l listener) string {
 	if l.kind == network.ListenerPublic {
 		p = s.public
 	}
-	if p == nil || p.Name() != network.ProviderRelay {
+	if p == nil || p.Name() != network.ProviderAgentMesh {
 		return ""
 	}
 	peer, err := p.WhoIs(r.Context(), r.RemoteAddr)
