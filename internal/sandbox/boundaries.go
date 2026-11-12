@@ -167,7 +167,7 @@ func (e *Boundaries) Close(context.Context) error {
 // launcherDir and launcherFile are the copy of the running a2a-serve, next
 // to the egress sockets, that containers run as their launcher, so that a
 // binary upgraded in place doesn't change under a running server. The
-// directory is emptied at each start and stays out of backups. The copy is
+// caller empties the directory of the boundaries at each start. The copy is
 // executable by everyone: with Docker, container root runs it without
 // CAP_DAC_OVERRIDE, as another user than its owner. It holds no secret.
 const (
