@@ -63,7 +63,7 @@ func TestNetworkOf(t *testing.T) {
 	}{
 		{name: "none"},
 		{name: "tailscale", cfg: agentdir.NetworkConfig{Private: "tailscale", Public: "tailscale"}, want: Network{Private: network.ProviderTailscale, Public: true}},
-		{name: "relay", cfg: agentdir.NetworkConfig{Private: "https://relay.example.com"}, want: Network{Private: network.ProviderRelay}},
+		{name: "relay", cfg: agentdir.NetworkConfig{Private: "https://relay.example.com"}, want: Network{Private: network.ProviderAgentMesh}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestDescribe(t *testing.T) {
 			},
 		},
 		{
-			name: "relay", net: Network{Private: network.ProviderRelay, Public: true},
+			name: "relay", net: Network{Private: network.ProviderAgentMesh, Public: true},
 			want: &Description{
 				PrivateAllowIncoming: "everyone", PublicAllowIncoming: "paired",
 				Owner: []string{"self"}, Member: []string{"private"}, Guest: []string{},
@@ -161,7 +161,7 @@ func TestDescribe(t *testing.T) {
 			},
 		},
 		{
-			name: "closed relay", settings: agentdir.PolicyConfig{PrivateAllowIncoming: "paired"}, net: Network{Private: network.ProviderRelay},
+			name: "closed relay", settings: agentdir.PolicyConfig{PrivateAllowIncoming: "paired"}, net: Network{Private: network.ProviderAgentMesh},
 			want: &Description{
 				PrivateAllowIncoming: "paired",
 				Owner:                []string{"self"}, Member: []string{}, Guest: []string{},

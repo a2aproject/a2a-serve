@@ -47,7 +47,7 @@ func NetworkOf(cfg *agentdir.Config) Network {
 	case agentdir.NetworkTailscale:
 		n.Private = network.ProviderTailscale
 	default:
-		n.Private = network.ProviderRelay
+		n.Private = network.ProviderAgentMesh
 	}
 	return n
 }
@@ -243,7 +243,7 @@ func yourDevices(provider string) string {
 	switch provider {
 	case network.ProviderTailscale:
 		return "this machine and your tailnet devices"
-	case network.ProviderRelay:
+	case network.ProviderAgentMesh:
 		return "this machine and your devices on the relay"
 	}
 	return "this machine"
@@ -267,7 +267,7 @@ func networkName(provider string) string {
 	switch provider {
 	case network.ProviderTailscale:
 		return "the tailnet"
-	case network.ProviderRelay:
+	case network.ProviderAgentMesh:
 		return "the relay"
 	}
 	return "the private network"

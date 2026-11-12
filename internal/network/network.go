@@ -111,7 +111,7 @@ type Joiner interface {
 // Provider names.
 const (
 	ProviderTailscale = "tailscale"
-	ProviderRelay     = "agentmesh"
+	ProviderAgentMesh = "agentmesh"
 )
 
 // Listener kinds, which tell authenticators how a request arrived.

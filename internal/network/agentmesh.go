@@ -98,7 +98,7 @@ func newAgentMesh(cfg RelayConfig, serve func(*meshnet.Server) meshServer) *agen
 	return &agentMesh{cfg: cfg, serve: serve, cards: newCardCache()}
 }
 
-func (a *agentMesh) Name() string { return ProviderRelay }
+func (a *agentMesh) Name() string { return ProviderAgentMesh }
 
 func (a *agentMesh) ListenPrivate(ctx context.Context) (net.Listener, *url.URL, error) {
 	if err := a.start(ctx); err != nil {
