@@ -95,6 +95,7 @@ nav:
       - Observability Agent: examples/04-observability-agent/index.md
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
       - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
+      - SLIM Network: examples/07-slim-network/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md

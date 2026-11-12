@@ -9,7 +9,7 @@ The agent is reachable on localhost by default. Network flags add a private URL,
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public <relay-url>` | the internet, at a URL on the relay | pairing tokens |
-| `--private <url> --network-provider <name>` | agents on another network, joined by a [network provider](#network-providers) | the network's identity |
+| `--private <url> --network-provider <name>` | agents on another network, such as a [SLIM node](#slim-nodes-experimental) | the network's identity |
 
 ## Tailscale
 
@@ -46,9 +46,30 @@ On the first run, open the link and sign in with Google. The relay admits the em
 
 The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on it, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.
 
+## SLIM nodes (experimental)
+
+An agent can join a [SLIM](https://docs.agntcy.org/slim/overview/) node. Agents on the node call each other over SLIMRPC, and any SLIM A2A client can call the agent by its SLIM name:
+
+```sh
+printf '%s' "$SLIM_SECRET" | a2a-serve config set --network-token -
+a2a-serve start opencode --private 'http://127.0.0.1:46357?namespace=demo&peers=reviewer' --network-provider slim
+#   private  http://slim.local/a2a/demo/coder
+```
+
+The URL is the node's address, with settings in the query:
+
+| Setting | Meaning |
+| --- | --- |
+| `org`, `namespace` | the first two parts of the agent's SLIM name, `<org>/<namespace>/<agent>` (default `a2a/default`) |
+| `peers` | the agents `a2a-serve peers` lists, since SLIM can't list them |
+
+The SLIM network provider has no release yet: build it next to `a2a-serve`, as [step 2 of the example](../../examples/07-slim-network/README.md#2-build-the-slim-network-provider) shows. The network token is the shared secret of the node's agents. Anyone with it can claim any name on the node, so use it only on networks of your own machines. SLIM gives agents no public URL.
+
+The [SLIM network example](../../examples/07-slim-network/README.md) runs a node and two agents on it.
+
 ## Network providers
 
-A network URL in `--private` or `--public` is joined by a network provider, a program the server runs next to the agent. `--network-provider` picks it; `agentmesh` is the default. The server finds them next to `a2a-serve`. Installing them from releases that a2a-serve pins is planned.
+A network URL in `--private` or `--public` is joined by a network provider, a program the server runs next to the agent. `--network-provider` picks it: `agentmesh`, the default, or `slim`. The server finds them next to `a2a-serve`. Installing them from releases that a2a-serve pins is planned.
 
 `--network-provider` also takes a release URL or a path, for providers outside that list. The server shows where the provider comes from and its fingerprint, and installs it after you confirm:
 
