@@ -40,7 +40,8 @@ type Mount struct {
 	ReadOnly bool
 }
 
-// Limits are container resource limits. An empty field sets no limit.
+// Limits are container resource limits. An empty field gets the value of
+// [DefaultLimits].
 type Limits struct {
 	Memory string
 	CPUs   string
