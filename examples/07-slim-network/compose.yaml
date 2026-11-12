@@ -1,0 +1,13 @@
+# The SLIM node that the agents of examples/07-slim-network join.
+services:
+  slim:
+    image: ghcr.io/agntcy/slim:3.4.6
+    command: ["/slim", "--config", "/slim-node.yaml"]
+    ports:
+      - "127.0.0.1:46357:46357"
+    volumes:
+      - ./slim-node.yaml:/slim-node.yaml:ro
+    healthcheck:
+      test: ["CMD", "/slim", "--version"]
+      interval: 2s
+      retries: 10
