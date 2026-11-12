@@ -44,11 +44,57 @@ jobs:
     - name: Test
       run: go test -mod=readonly -count=10 -shuffle=on ./...
 
-    # Agent Mesh support builds only with -tags agentmesh.
-    - name: Test agentmesh
+  # The network providers are modules of their own, so the core go.mod has
+  # none of their dependencies.
+  provider-agentmesh:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: providers/agentmesh
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Tidy
+      run: go mod tidy -diff
+
+    - name: Build
+      run: CGO_ENABLED=0 go build -mod=readonly -o netprovider-agentmesh .
+
+    - name: Test
       run: |
-        go vet -mod=readonly -tags agentmesh ./...
-        go test -race -mod=readonly -count=1 -shuffle=on -tags agentmesh ./internal/network/ ./internal/relay/
+        go vet -mod=readonly ./...
+        go test -race -mod=readonly -count=1 -shuffle=on ./...
+
+  # The SLIM provider links the SLIM bindings' native library with cgo, and
+  # its integration tests join a SLIM node in Docker.
+  provider-slim:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: providers/slim
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Tidy
+      run: go mod tidy -diff
+
+    - name: Native library
+      run: go run github.com/agntcy/slim-bindings-go/v3/cmd/slim-bindings-setup
+
+    - name: SLIM node
+      working-directory: examples/07-slim-network
+      run: docker compose up -d --wait slim
+
+    - name: Test
+      run: |
+        go vet -mod=readonly ./...
+        go test -race -mod=readonly -count=1 -shuffle=on ./...
 
   race:
     runs-on: ubuntu-latest
