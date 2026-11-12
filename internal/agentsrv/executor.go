@@ -369,8 +369,13 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress, stderr io.Wr
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
-	s.egress.started(spec.EgressMode, prepared.NoBoundary())
-	forget := s.egress.watch(prepared.NoBoundary)
+	problem := prepared.NoBoundary()
+	s.egress.started(spec.EgressMode, problem)
+	forget := func() {}
+	if problem == "" {
+		// A container can still fall back to Docker's network at a later start.
+		forget = s.egress.watch(prepared.NoBoundary)
+	}
 	stop := func(ctx context.Context) error {
 		forget()
 		return errors.Join(prepared.Close(ctx), closeEndpoint())
