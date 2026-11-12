@@ -162,7 +162,13 @@ func (s *dockerSandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 			if errors.Is(err, ErrNoBoundary) {
 				return nil, err
 			}
-			return nil, fmt.Errorf("checking the network setup of the container: %w", err)
+			err = fmt.Errorf("checking the network setup of the container: %w", err)
+			if s.opts.Stderr != nil {
+				if _, werr := fmt.Fprintf(s.opts.Stderr, "a2a-serve: %v\n", err); werr != nil {
+					slog.Warn("writing to the log of the process", "error", werr)
+				}
+			}
+			return nil, err
 		}
 	}
 	return startProcess(s.r.startCommand(context.WithoutCancel(ctx), s.runArgs), s.opts.Stderr)

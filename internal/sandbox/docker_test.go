@@ -545,7 +545,8 @@ case $(grep -c check `+calls+`) in
 *) echo run >>`+calls+`;; esac
 `)
 			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
-			sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{})
+			var stderr strings.Builder
+			sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{Stderr: &stderr})
 			if err != nil {
 				t.Fatalf("DockerRunner.Sandbox() error = %v", err)
 			}
@@ -567,6 +568,8 @@ case $(grep -c check `+calls+`) in
 					t.Fatalf("start %d Sandbox.Start() error = %v, want %q wrapping %v", i+1, err, wantSetup, ErrNoBoundary)
 				case wantErr != "" && !setup && (err == nil || errors.Is(err, ErrNoBoundary) || !strings.Contains(err.Error(), wantErr)):
 					t.Fatalf("start %d Sandbox.Start() error = %v, want an error containing %q", i+1, err, wantErr)
+				case wantErr != "" && !setup && !strings.Contains(stderr.String(), "a2a-serve: checking the network setup of the container: "):
+					t.Fatalf("start %d Sandbox.Start() stderr = %q, want the failed check", i+1, stderr.String())
 				}
 			}
 			data, err := os.ReadFile(calls)

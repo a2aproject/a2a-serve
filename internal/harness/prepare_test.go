@@ -1181,7 +1181,11 @@ func TestPrepareDockerFallsBackAtStart(t *testing.T) {
 			wantProblem: "egress control is off: the agent's container can't set up its network: no tun",
 			wantStderr:  "a2a-serve: egress control is off, as the container can't set up its network: no tun\n",
 		},
-		{name: "daemon error", checks: []string{"exit 0", sandboxtest.DaemonError, "exit 0"}, wantRuns: []string{"check", "check", "check", "boundary"}, wantErr: []bool{true, false}},
+		{
+			name: "daemon error", checks: []string{"exit 0", sandboxtest.DaemonError, "exit 0"},
+			wantRuns: []string{"check", "check", "check", "boundary"}, wantErr: []bool{true, false},
+			wantStderr: "a2a-serve: checking the network setup of the container: exit status 125: docker: Error response from daemon: failed to create task for container: EOF\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
