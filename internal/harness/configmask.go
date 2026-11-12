@@ -64,7 +64,8 @@ func configFiles(p Profile) ([]string, bool) {
 // itself, which aren't settings.
 var opencodeOwnFiles = []string{".gitignore", "package.json", "bun.lock", "node_modules", "skills"}
 
-// configMasks are the mounts that hide the agent's own configuration files.
+// configMasks are the masks and mounts that hide the agent's own
+// configuration files.
 type configMasks struct {
 	// masks lay the empty configuration file over the agent's own, and
 	// mounts keep the folders that hold them and the skills of masked
