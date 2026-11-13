@@ -15,7 +15,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 | Component | What it does |
 | --- | --- |
 | Listeners | Accept requests on localhost, the private network, the public URL and the local control socket. |
-| Network providers | Join a network URL, such as an Agent Mesh relay, as separate processes. See [network providers](#network-providers). |
+| Network providers | Join a network URL, such as an Agent Mesh relay or a SLIM node, as separate processes. See [network providers](#network-providers). |
 | Auth | Turns each request into an identity and gives it one role. See the [access model](access-model.md). |
 | A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
 | Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |
@@ -46,7 +46,7 @@ The server also relays the other agent's approval requests to the user, posts re
 
 ## Network providers
 
-Tailscale runs inside the server. Other networks run in a network provider: a separate program, in any language, that the server starts for the agent and controls over stdio. Agent Mesh is the first one.
+Tailscale runs inside the server. Other networks run in a network provider: a separate program, in any language, that the server starts for the agent and controls over stdio. Agent Mesh is the first one, and a SLIM provider joins SLIM nodes.
 
 - **The provider proves who calls.** It forwards each connection to the server unchanged, with a header that names the caller as the network proves it. The server terminates HTTP, applies its limits, and decides the caller's role with the same access model as on every network.
 - **The server decides the rest.** It names the provider, decides who the owner is from the email the agent signed in with, and checks everything the provider returns.

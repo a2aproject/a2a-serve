@@ -144,9 +144,10 @@ Networks other than Tailscale run in network providers, each a Go module of its 
 
 ```bash
 cd providers/agentmesh && go test ./...    # downloads the pinned agentmesh-one
+cd providers/slim && go run github.com/agntcy/slim-bindings-go/v3/cmd/slim-bindings-setup && go test ./...
 ```
 
-To try a provider with a local build of `a2a-serve`, build it next to the binary, as release archives do:
+The SLIM provider links the SLIM library with cgo. Its integration tests need a SLIM node: `docker compose up -d --wait` in [`examples/07-slim-network`](examples/07-slim-network/). To try a provider with a local build of `a2a-serve`, build it next to the binary, as release archives do:
 
 ```bash
 go build -o /tmp/a2a/a2a-serve . && (cd providers/agentmesh && CGO_ENABLED=0 go build -o /tmp/a2a/netprovider-agentmesh .)

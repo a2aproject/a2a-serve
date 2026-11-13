@@ -25,3 +25,7 @@ Run a relay on Google Cloud Run, with its data in Cloud SQL and its secrets in S
 ### 6. Talk to Your Agent on Telegram: [`06-telegram-voice/`](06-telegram-voice/)
 
 Connect the agent to a Telegram bot and give the server a speech service, either an OpenAI key or speaches on your machine. Send voice notes, check what the agent heard, turn on voice replies with `/voice`, and see how the agent card lists audio for A2A callers.
+
+### 7. SLIM Network (Experimental): [`07-slim-network/`](07-slim-network/)
+
+Run a SLIM node in Docker and join two agents to it with the SLIM network provider. Let one call the other over SLIMRPC, and call an agent by its SLIM name from a SLIM client that knows nothing about a2a-serve.
