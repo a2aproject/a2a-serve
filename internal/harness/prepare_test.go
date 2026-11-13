@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestPrepareLocal(t *testing.T) {
@@ -82,9 +83,7 @@ func TestPrepareLocalChecksCommand(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(agent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(agent, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteExecutable(t, agent, []byte("#!/bin/sh\n"))
 	const notInstalled = " is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"
 	tests := []struct {
 		name    string
@@ -418,9 +417,7 @@ func startErr(t *testing.T, p *Prepared) error {
 func printCommand(t *testing.T, args ...string) []string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "print-acp")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\nenv\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteExecutable(t, path, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\nenv\n"))
 	return append([]string{path}, args...)
 }
 

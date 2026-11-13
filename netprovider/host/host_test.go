@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 	"github.com/a2aproject/a2a-serve/netprovider"
 	"github.com/a2aproject/a2a-serve/netprovider/host"
 )
@@ -282,9 +283,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"child","version":"v1","
 printf '\033[31mred\033[0m log\n' >&2
 cat >/dev/null
 `
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, script, []byte(body))
 	p, err := host.Start(host.Config{Path: script, RunDir: runDir(t), Env: host.Environ(os.Environ()), Stderr: io.Discard})
 	if err != nil {
 		t.Fatalf("host.Start() error = %v", err)

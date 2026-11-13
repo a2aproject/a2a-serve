@@ -32,6 +32,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 var loopnet string
@@ -94,9 +96,7 @@ func TestFetchRunsNothing(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "ran")
 	src := filepath.Join(dir, "provider")
-	if err := os.WriteFile(src, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, src, []byte("#!/bin/sh\ntouch "+marker+"\n"))
 	if _, err := newInstaller(t).Fetch(t.Context(), src); err != nil {
 		t.Fatalf("Installer.Fetch() error = %v", err)
 	}
@@ -120,9 +120,7 @@ func TestTrustRefusesTakenNames(t *testing.T) {
 			t.Parallel()
 			src := filepath.Join(dir, tc.name)
 			script := "#!/bin/sh\nread -r line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"name\":\"" + tc.name + "\",\"version\":\"v1\",\"protocol\":1,\"hosts\":[]}}'\ncat >/dev/null\n"
-			if err := os.WriteFile(src, []byte(script), 0o755); err != nil {
-				t.Fatalf("os.WriteFile() error = %v", err)
-			}
+			testutil.WriteExecutable(t, src, []byte(script))
 			inst := newInstaller(t)
 			c, err := inst.Fetch(t.Context(), src)
 			if err != nil {
@@ -139,9 +137,7 @@ func TestResolveBundled(t *testing.T) {
 	t.Parallel()
 	inst := newInstaller(t)
 	bundled := filepath.Join(filepath.Dir(inst.Executable), "netprovider-agentmesh")
-	if err := os.WriteFile(bundled, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, bundled, []byte("#!/bin/sh\n"))
 	got, err := inst.Resolve(t.Context(), "")
 	if err != nil {
 		t.Fatalf("Installer.Resolve() error = %v", err)
@@ -231,9 +227,7 @@ func TestCustomProviderTrust(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
-	if err := os.WriteFile(src, data, 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, src, data)
 
 	if _, err := inst.Resolve(ctx, src); !errors.Is(err, ErrNotTrusted) {
 		t.Fatalf("Installer.Resolve() before trust error = %v, want %v", err, ErrNotTrusted)
@@ -263,30 +257,22 @@ func TestCustomProviderTrust(t *testing.T) {
 		t.Fatalf("Installer.Fetch() again = %+v, %v, want trusted", c, err)
 	}
 
-	if err := os.WriteFile(src, append(data, 0), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, src, append(data, 0))
 	if c, err := inst.Fetch(ctx, src); err != nil || !c.Changed {
 		t.Fatalf("Installer.Fetch() after a change = %+v, %v, want changed", c, err)
 	}
 
-	if err := os.WriteFile(installed.Path, []byte("tampered"), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, installed.Path, []byte("tampered"))
 	if _, err := inst.Resolve(ctx, src); err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("Installer.Resolve() after tampering error = %v, want changed", err)
 	}
-	if err := os.WriteFile(src, data, 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, src, data)
 	if c, err := inst.Fetch(ctx, src); err != nil || c.Trusted || c.Changed {
 		t.Fatalf("Installer.Fetch() of a trusted source with a tampered copy = %+v, %v, want it installed again without a change", c, err)
 	}
 
 	upgrade := filepath.Join(t.TempDir(), "loopnet")
-	if err := os.WriteFile(upgrade, data, 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, upgrade, data)
 	c, err = inst.Fetch(ctx, upgrade)
 	if err != nil {
 		t.Fatalf("Installer.Fetch(upgrade) error = %v", err)

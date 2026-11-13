@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -44,9 +45,7 @@ func addEchoMCP(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "mcpecho"), data, 0o700); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, filepath.Join(dir, "mcpecho"), data)
 	writeJSON(t, filepath.Join(dir, ".mcp.json"), map[string]any{
 		"mcpServers": map[string]any{"echo": map[string]any{"command": filepath.Join(dir, "mcpecho")}},
 	})

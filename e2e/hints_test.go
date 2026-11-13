@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/messenger/telegram"
 	"github.com/a2aproject/a2a-serve/internal/messenger/telegram/telegramtest"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 var quotedCommand = regexp.MustCompile("`((?:a2a|a2a-serve) [^`]+)`")
@@ -216,9 +217,7 @@ func TestConfigEditDraftHintWorksAsPrinted(t *testing.T) {
 	dir := t.TempDir()
 	withEditor := func(name, script string) *user {
 		path := dir + "/" + name
-		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteExecutable(t, path, []byte(script))
 		u := *owner
 		u.env = append(slices.Clone(owner.env), "EDITOR="+path)
 		return &u

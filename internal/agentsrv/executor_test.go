@@ -47,6 +47,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // turnExecutor cancels like a2aacp: it stops the turn, which ends the
@@ -335,9 +336,7 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 func TestStartReportsOutdatedA2AOnce(t *testing.T) {
 	bin := t.TempDir()
 	script := "#!/bin/sh\necho '{\"version\":\"v0.1.0\"}'\n"
-	if err := os.WriteFile(filepath.Join(bin, "a2a"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteExecutable(t, filepath.Join(bin, "a2a"), []byte(script))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out lockedBuffer
 	startServer(t, serverOpts{out: &out, setupProblems: func(context.Context) []string {

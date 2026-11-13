@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestStableExecutable(t *testing.T) {
@@ -99,9 +101,7 @@ func writeBinary(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("os.MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
+	testutil.WriteExecutable(t, path, []byte("#!/bin/sh\n"))
 }
 
 func symlink(t *testing.T, target, link string) {
