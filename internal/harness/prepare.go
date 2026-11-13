@@ -126,7 +126,7 @@ type Spec struct {
 	// Docker allows it. Nil OpenEgress gives containers Docker's network.
 	EgressMode  string
 	EgressAllow []string
-	OpenEgress  OpenEgress
+	OpenEgress  sandbox.OpenEgress
 	// Inject are the rules of the headers the boundary adds; with any, a
 	// container doesn't start without the boundary. EgressCA is the PEM
 	// certificate the boundary signs their hosts with, which the
@@ -504,29 +504,29 @@ func clone(dr *sandbox.DockerRunner) *sandbox.DockerRunner {
 // [DecideEgress] gives it one, and with Docker Desktop starts its relay
 // container.
 func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (eg *sandbox.DockerEgress, close func() error, decision EgressDecision, err error) {
-	arch, entrypoint, err := imageConfig(ctx, image)
+	arch, entrypoint, err := sandbox.ImageConfig(ctx, image)
 	if err != nil {
 		return nil, nil, EgressDecision{}, err
 	}
-	env := HostEgressEnv()
+	env := sandbox.HostEgressEnv()
 	env.ImageArch = cmp.Or(arch, "an unknown CPU architecture")
 	// relayEgress pulls or builds a missing relay image.
 	env.RelayImage = nil
 	if spec.Launcher != "" {
-		env.Launcher = func() (string, error) { return CheckLauncher(spec.Launcher) }
+		env.Launcher = func() (string, error) { return sandbox.CheckLauncher(spec.Launcher) }
 	}
-	decision = DecideEgress(spec.egressConfig(), env)
+	decision = DecideEgress(spec.egressConfig(), env.Probe)
 	if !decision.Boundary {
 		return nil, nil, decision, nil
 	}
 	if decision.Relay {
-		return relayEgress(ctx, spec, entrypoint, rootless, decision, hostGateway(env.GOOS))
+		return relayEgress(ctx, spec, entrypoint, rootless, decision, sandbox.HostGateway(env.GOOS))
 	}
 	launcher, err := env.Launcher()
 	if err != nil {
 		return nil, nil, EgressDecision{}, err
 	}
-	ep, err := spec.OpenEgress(hostGateway(env.GOOS), false)
+	ep, err := spec.OpenEgress(sandbox.HostGateway(env.GOOS), false)
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress socket: %w", err)
 	}
@@ -536,8 +536,8 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 // relayEgress opens the boundary of a container that reaches it through a
 // relay container, the egress container to users, and starts it. When the relay image isn't
 // available, the container gets Docker's own network.
-func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision, gateway HostGatewayFunc) (*sandbox.DockerEgress, func() error, EgressDecision, error) {
-	image, err := EnsureRelayImage(ctx, logLines{msg: "egress container image"})
+func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision, gateway sandbox.HostGatewayFunc) (*sandbox.DockerEgress, func() error, EgressDecision, error) {
+	image, err := sandbox.EnsureRelayImage(ctx, sandbox.LogLines{Msg: "egress container image"})
 	if err != nil {
 		return nil, nil, problemDecision(spec.egressConfig(), "the egress container's image isn't available: "+err.Error()), nil
 	}
@@ -545,27 +545,18 @@ func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless b
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress boundary: %w", err)
 	}
-	uid, gid := os.Getuid(), os.Getgid()
-	if rootless {
-		uid, gid = 0, 0
-	}
 	labels := maps.Clone(spec.Labels)
 	if labels == nil {
 		labels = map[string]string{}
 	}
 	labels["a2a.relay"] = spec.Name
-	rs := relaySpec{name: spec.Name + "-egress", image: image, labels: labels, uid: uid, gid: gid, egress: ep, serverSocket: spec.Socket, serverAddr: spec.BridgeAddr}
-	stop, err := startRelay(ctx, rs)
+	rs := sandbox.RelaySpec{Name: spec.Name + "-egress", Image: image, Labels: labels, Rootless: rootless, Egress: ep, ServerSocket: spec.Socket, ServerAddr: spec.BridgeAddr}
+	eg, stop, err := sandbox.StartRelay(ctx, rs, entrypoint)
 	if err != nil {
 		return nil, nil, EgressDecision{}, errors.Join(err, ep.Close())
 	}
 	closeAll := func() error { return errors.Join(stop(context.Background()), ep.Close()) }
-	ensure := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+sandbox.DockerTimeout)
-		defer cancel()
-		return ensureRelay(ctx, rs)
-	}
-	return &sandbox.DockerEgress{Relay: rs.name, Entrypoint: entrypoint, Ensure: ensure}, closeAll, decision, nil
+	return eg, closeAll, decision, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.

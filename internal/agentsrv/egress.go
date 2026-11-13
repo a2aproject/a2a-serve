@@ -127,45 +127,45 @@ func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets
 // opener returns the function that opens the boundary of the container
 // named name, which keeps mode and the headers of inject until it
 // restarts. Changes of the allow rules apply to its next connection.
-func (e *egressSockets) opener(name, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) harness.OpenEgress {
-	return func(gateway harness.HostGatewayFunc, relay bool) (harness.EgressEndpoint, error) {
+func (e *egressSockets) opener(name, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) sandbox.OpenEgress {
+	return func(gateway sandbox.HostGatewayFunc, relay bool) (sandbox.EgressEndpoint, error) {
 		allow := injectAllow(inject)
 		cfg := sandboxnet.BoundaryConfig{Sandbox: name, Policy: func() egress.Policy { return e.policy(mode, allow...) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
 		if relay {
 			return e.openRelayed(cfg)
 		}
 		if err := fsutil.MkdirPrivate(e.dir); err != nil {
-			return harness.EgressEndpoint{}, err
+			return sandbox.EgressEndpoint{}, err
 		}
 		dir := filepath.Join(e.dir, cryptoutil.RandomString(agentdir.HarnessSocketIDLen, handleAlphabet))
 		if err := os.Mkdir(dir, 0o700); err != nil {
-			return harness.EgressEndpoint{}, err
+			return sandbox.EgressEndpoint{}, err
 		}
 		sock := filepath.Join(dir, sandboxnet.SocketName)
 		b, err := sandboxnet.Listen(sock, cfg)
 		if err != nil {
-			return harness.EgressEndpoint{}, errors.Join(err, os.RemoveAll(dir))
+			return sandbox.EgressEndpoint{}, errors.Join(err, os.RemoveAll(dir))
 		}
-		return harness.EgressEndpoint{Socket: sock, Close: func() error { return errors.Join(b.Close(), os.RemoveAll(dir)) }}, nil
+		return sandbox.EgressEndpoint{Socket: sock, Close: func() error { return errors.Join(b.Close(), os.RemoveAll(dir)) }}, nil
 	}
 }
 
 // openRelayed opens a boundary that a relay container reaches through the
 // server's relay listener, with a key of its own.
-func (e *egressSockets) openRelayed(cfg sandboxnet.BoundaryConfig) (harness.EgressEndpoint, error) {
+func (e *egressSockets) openRelayed(cfg sandboxnet.BoundaryConfig) (sandbox.EgressEndpoint, error) {
 	relays, addr, mount, err := e.relayListener()
 	if err != nil {
-		return harness.EgressEndpoint{}, err
+		return sandbox.EgressEndpoint{}, err
 	}
 	b, err := sandboxnet.New(cfg)
 	if err != nil {
-		return harness.EgressEndpoint{}, err
+		return sandbox.EgressEndpoint{}, err
 	}
 	key, unregister, err := relays.Register(b)
 	if err != nil {
-		return harness.EgressEndpoint{}, errors.Join(err, b.Close())
+		return sandbox.EgressEndpoint{}, errors.Join(err, b.Close())
 	}
-	return harness.EgressEndpoint{RelayAddr: addr, RelayKey: key, RelayMount: mount, Close: func() error {
+	return sandbox.EgressEndpoint{RelayAddr: addr, RelayKey: key, RelayMount: mount, Close: func() error {
 		unregister()
 		return b.Close()
 	}}, nil
@@ -203,7 +203,7 @@ func (e *egressSockets) relayListener() (relays *sandboxnet.RelayServer, addr, m
 		if ln, err = net.Listen("unix", filepath.Join(mount, relaySocketName)); err != nil {
 			return nil, "", "", fmt.Errorf("listening for egress containers: %w", err)
 		}
-		addr = "unix://" + harness.RelayEgressDir + "/" + relaySocketName
+		addr = "unix://" + sandbox.RelayEgressDir + "/" + relaySocketName
 	}
 	e.relays, e.relayAddr, e.relayMount = sandboxnet.ServeRelays(ln), addr, mount
 	return e.relays, addr, mount, nil
@@ -249,7 +249,7 @@ func (e *egressSockets) started(mode, problem string) {
 // before the first.
 func (e *egressSockets) boundary(cfg *agentdir.Config) bool {
 	if e == nil {
-		return harness.DecideEgress(cfg, harness.HostEgressEnv()).Boundary
+		return harness.HostEgress(cfg).Boundary
 	}
 	fellBack := e.fellBack()
 	e.mu.Lock()
@@ -258,7 +258,7 @@ func (e *egressSockets) boundary(cfg *agentdir.Config) bool {
 	if prepared {
 		return problem == "" && cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
 	}
-	return harness.DecideEgress(cfg, harness.HostEgressEnv()).Boundary
+	return harness.HostEgress(cfg).Boundary
 }
 
 // status returns what status shows about the sandbox's connections: the
@@ -276,7 +276,7 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 		st.Inject = append(st.Inject, controlapi.EgressInjection{Host: r.Target(), Secrets: r.Secrets()})
 	}
 	if st.Problem == "" {
-		st.Problem = harness.DecideEgress(cfg, harness.HostEgressEnv()).Warning
+		st.Problem = harness.HostEgress(cfg).Warning
 	}
 	var recent []sandboxnet.Block
 	st.Blocked, recent = e.blocks.Snapshot()

@@ -277,8 +277,8 @@ esac
 
 func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 	log := sandboxtest.FakeDocker(t, noRelayImageDocker)
-	t.Setenv(EnvForceRelay, "1")
-	t.Setenv(EnvRelayImage, "example.com/egress:test")
+	t.Setenv(sandbox.EnvForceRelay, "1")
+	t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
 	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 	p, err := Prepare(context.Background(), Spec{
 		Profile: claude{},
@@ -288,8 +288,8 @@ func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 		Name:    "a2a-test",
 		Socket:  filepath.Join(sockDir, "a2a.sock"),
 		CLI:     "/opt/a2a/bin/a2a",
-		OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
-			return EgressEndpoint{}, errors.New("unexpected boundary")
+		OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+			return sandbox.EgressEndpoint{}, errors.New("unexpected boundary")
 		},
 	})
 	if err != nil {
@@ -1120,8 +1120,8 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sandboxtest.FakeDocker(t, relayDocker(tc.check))
-			t.Setenv(EnvForceRelay, "1")
-			t.Setenv(EnvRelayImage, "example.com/egress:test")
+			t.Setenv(sandbox.EnvForceRelay, "1")
+			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
 			ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 			var closed atomic.Bool
 			p, err := Prepare(context.Background(), Spec{
@@ -1132,8 +1132,8 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 				Name:    "a2a-test",
 				Socket:  filepath.Join(sockDir, "a2a.sock"),
 				CLI:     "/opt/a2a/bin/a2a",
-				OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
-					return EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
+				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
 						closed.Store(true)
 						return nil
 					}}, nil
@@ -1210,8 +1210,8 @@ func TestPrepareDockerFallsBackAtStart(t *testing.T) {
 *) echo "fake docker: $1 failed" >&2; exit 1 ;;
 esac
 `)
-			t.Setenv(EnvForceRelay, "1")
-			t.Setenv(EnvRelayImage, "example.com/egress:test")
+			t.Setenv(sandbox.EnvForceRelay, "1")
+			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
 			ws := t.TempDir()
 			var stderr strings.Builder
 			p, err := Prepare(context.Background(), Spec{
@@ -1221,8 +1221,8 @@ esac
 				EnvDir:  t.TempDir(),
 				Name:    "a2a-test",
 				Stderr:  &stderr,
-				OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
-					return EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
 				},
 			})
 			if err != nil {
