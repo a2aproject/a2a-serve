@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/a2aproject/a2a-serve/compare/v0.1.0...v0.2.0) (2026-11-13)
+
+
+### Features
+
+* add the network provider protocol, its Go SDK, host and conformance suite ([#500](https://github.com/a2aproject/a2a-serve/issues/500)) ([a9d8ce1](https://github.com/a2aproject/a2a-serve/commit/a9d8ce17fcd06ccf7f8cac62bae70db653653984))
+* add the SLIM network provider ([#503](https://github.com/a2aproject/a2a-serve/issues/503)) ([6e9bd85](https://github.com/a2aproject/a2a-serve/commit/6e9bd85493ec7c23b6256d591ca1220435b7f20d))
+* find, download and install network providers by fingerprint ([#501](https://github.com/a2aproject/a2a-serve/issues/501)) ([62ff755](https://github.com/a2aproject/a2a-serve/commit/62ff7557be6eba6569e9ddea213e9bce4a364d91))
+* run a SLIM relay with `relay run --backend slim` ([#497](https://github.com/a2aproject/a2a-serve/issues/497)) ([8feadde](https://github.com/a2aproject/a2a-serve/commit/8feadde8bbad7ae6ef151683ce80d4c8448decde))
+* run networks in network providers, and move Agent Mesh to its own module ([#502](https://github.com/a2aproject/a2a-serve/issues/502)) ([fd17a52](https://github.com/a2aproject/a2a-serve/commit/fd17a522962a6f7a6f23e2ae87d2d77b5ed79a8e))
+
+
+### Bug Fixes
+
+* keep a tunneled request's body open while the response streams, so a peer's stream isn't cut ([#516](https://github.com/a2aproject/a2a-serve/issues/516)) ([6f86b15](https://github.com/a2aproject/a2a-serve/commit/6f86b15d8eb9411149feaba0f3a987602c42c39b))
+* retry starting a network provider whose binary is still busy ([#510](https://github.com/a2aproject/a2a-serve/issues/510)) ([b0c01cf](https://github.com/a2aproject/a2a-serve/commit/b0c01cf578fd705f953203b7efd5d8324ac240b8))
+
 ## 0.1.0 (2026-11-11)
 
 First release. A2A Serve turns opencode, Claude Code or any ACP coding agent into a sandboxed [A2A](https://a2a-protocol.org) agent that people, messengers and other agents can call. See the [documentation](https://a2aproject.github.io/a2a-serve/).
