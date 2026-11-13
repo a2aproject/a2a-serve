@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // fakeMachine is a machine on which every tool works and is configured.
@@ -994,9 +995,7 @@ func TestAgentChecks(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(m.self), 0o755); err != nil {
 					t.Fatalf("os.MkdirAll() error = %v", err)
 				}
-				if err := os.WriteFile(m.self, []byte("#!/bin/sh\n"), 0o755); err != nil {
-					t.Fatalf("os.WriteFile() error = %v", err)
-				}
+				testutil.WriteExecutable(t, m.self, []byte("#!/bin/sh\n"))
 				link := filepath.Join(root, "bin", "a2a-serve")
 				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 					t.Fatalf("os.MkdirAll() error = %v", err)

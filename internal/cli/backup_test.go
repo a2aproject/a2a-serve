@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestBackupAndRestore(t *testing.T) {
@@ -124,9 +125,7 @@ ls) ls "$FAKE_BUCKET" | sed "s|^|$3/|" ;;
 rm) echo "AccessDeniedException: 403 no storage.objects.delete access" >&2; exit 1 ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(bin, "gcloud"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteExecutable(t, filepath.Join(bin, "gcloud"), []byte(script))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_BUCKET", store)
 	if err := os.WriteFile(filepath.Join(store, "coder-20200101T000000Z.a2abak"), nil, 0o600); err != nil {
