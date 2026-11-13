@@ -42,12 +42,7 @@ type DockerRunner struct {
 	Name   string
 	Image  string
 	Mounts []Mount
-	// WorkspaceSrc is the host directory mounted at the destination of the
-	// first mount in its place. Empty mounts the first mount's source.
-	WorkspaceSrc string
-	// Hidden are host paths which appear as empty read-only directories
-	// wherever a mount exposes them.
-	Hidden []string
+	Masks  []Mask
 	// Scratch are container paths which appear as empty directories, whose
 	// changes stay in the container.
 	Scratch []string
@@ -422,18 +417,22 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	for _, k := range slices.Sorted(maps.Keys(r.Labels)) {
 		args = append(args, "--label", k+"="+r.Labels[k])
 	}
-	for i, m := range r.Mounts {
-		if i == 0 && r.WorkspaceSrc != "" {
-			m.Src = r.WorkspaceSrc
-		}
+	for _, m := range r.Mounts {
 		spec := m.Src + ":" + m.Dst
 		if m.ReadOnly {
 			spec += ":ro"
 		}
 		args = append(args, "-v", spec)
 	}
-	for _, dst := range ContainerPaths(r.Mounts, r.Hidden) {
-		args = append(args, "--mount", "type=tmpfs,dst="+dst+",readonly")
+	for _, m := range r.Masks {
+		if m.Src != "" {
+			args = append(args, "-v", m.Src+":"+m.Dst+":ro")
+		}
+	}
+	for _, m := range r.Masks {
+		if m.Src == "" {
+			args = append(args, "--mount", "type=tmpfs,dst="+m.Dst+",readonly")
+		}
 	}
 	for _, dst := range r.Scratch {
 		args = append(args, "--mount", "type=tmpfs,dst="+dst)

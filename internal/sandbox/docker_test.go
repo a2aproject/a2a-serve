@@ -306,83 +306,7 @@ func argAfter(args []string, flag string) string {
 	return args[i+1]
 }
 
-func TestDockerRunnerHidden(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		mounts []Mount
-		hidden []string
-		want   []string
-	}{
-		{
-			name:   "inside the workspace",
-			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}},
-			hidden: []string{"/src/app/.a2a"},
-			want:   []string{"type=tmpfs,dst=/src/app/.a2a,readonly"},
-		},
-		{
-			name:   "under a mount with another destination",
-			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/home/u", Dst: "/u", ReadOnly: true}},
-			hidden: []string{"/home/u/proj/.a2a"},
-			want:   []string{"type=tmpfs,dst=/u/proj/.a2a,readonly"},
-		},
-		{
-			name:   "the mount itself",
-			mounts: []Mount{{Src: "/src/app/.a2a", Dst: "/cfg"}},
-			hidden: []string{"/src/app/.a2a"},
-			want:   []string{"type=tmpfs,dst=/cfg,readonly"},
-		},
-		{
-			name:   "outside every mount",
-			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}},
-			hidden: []string{"/src/application/.a2a", "/other/.a2a"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			r := &DockerRunner{Name: "n", Image: "img", Mounts: tc.mounts, Hidden: tc.hidden}
-			cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
-			if err != nil {
-				t.Fatalf("Command() error = %v", err)
-			}
-			var got []string
-			for i, a := range cmd.Args {
-				if a == "--mount" {
-					got = append(got, cmd.Args[i+1])
-				}
-			}
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
-			}
-		})
-	}
-}
-
-func TestDockerRunnerWorkspaceSrc(t *testing.T) {
-	t.Parallel()
-	r := &DockerRunner{
-		Name: "n", Image: "img", WorkspaceSrc: "/state/workspaces/u/own",
-		Mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}},
-		Hidden: []string{"/src/app/.a2a"},
-	}
-	cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
-	if err != nil {
-		t.Fatalf("Command() error = %v", err)
-	}
-	var got []string
-	for i, a := range cmd.Args {
-		if a == "-v" || a == "--mount" {
-			got = append(got, cmd.Args[i+1])
-		}
-	}
-	want := []string{"/state/workspaces/u/own:/src/app", "/docs:/docs:ro", "type=tmpfs,dst=/src/app/.a2a,readonly"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestDockerRunnerHiddenThroughSymlinks(t *testing.T) {
+func TestContainerPaths(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
 	real := filepath.Join(tmp, "real")
@@ -396,40 +320,75 @@ func TestDockerRunnerHiddenThroughSymlinks(t *testing.T) {
 	tests := []struct {
 		name   string
 		mounts []Mount
-		hidden []string
+		paths  []string
 		want   []string
 	}{
 		{
+			name:   "inside the workspace",
+			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}},
+			paths:  []string{"/src/app/.a2a"},
+			want:   []string{"/src/app/.a2a"},
+		},
+		{
+			name:   "under a mount with another destination",
+			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/home/u", Dst: "/u", ReadOnly: true}},
+			paths:  []string{"/home/u/proj/.a2a"},
+			want:   []string{"/u/proj/.a2a"},
+		},
+		{
+			name:   "the mount itself",
+			mounts: []Mount{{Src: "/src/app/.a2a", Dst: "/cfg"}},
+			paths:  []string{"/src/app/.a2a"},
+			want:   []string{"/cfg"},
+		},
+		{
+			name:   "outside every mount",
+			mounts: []Mount{{Src: "/src/app", Dst: "/src/app"}},
+			paths:  []string{"/src/application/.a2a", "/other/.a2a"},
+		},
+		{
 			name:   "root through a symlink, mount of the real path",
 			mounts: []Mount{{Src: link, Dst: link}, {Src: real, Dst: "/real"}},
-			hidden: []string{filepath.Join(link, ".a2a")},
-			want:   []string{"type=tmpfs,dst=" + filepath.Join(link, ".a2a") + ",readonly", "type=tmpfs,dst=/real/.a2a,readonly"},
+			paths:  []string{filepath.Join(link, ".a2a")},
+			want:   []string{filepath.Join(link, ".a2a"), "/real/.a2a"},
 		},
 		{
 			name:   "real root, mount through a symlink",
 			mounts: []Mount{{Src: link, Dst: "/w"}},
-			hidden: []string{filepath.Join(real, ".a2a")},
-			want:   []string{"type=tmpfs,dst=/w/.a2a,readonly"},
+			paths:  []string{filepath.Join(real, ".a2a")},
+			want:   []string{"/w/.a2a"},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := &DockerRunner{Name: "n", Image: "img", Mounts: tc.mounts, Hidden: tc.hidden}
-			cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
-			if err != nil {
-				t.Fatalf("Command() error = %v", err)
-			}
-			var got []string
-			for i, a := range cmd.Args {
-				if a == "--mount" {
-					got = append(got, cmd.Args[i+1])
-				}
-			}
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
+			if diff := cmp.Diff(tc.want, ContainerPaths(tc.mounts, tc.paths)); diff != "" {
+				t.Fatalf("ContainerPaths() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestDockerRunnerMasks(t *testing.T) {
+	t.Parallel()
+	r := &DockerRunner{
+		Name: "n", Image: "img",
+		Mounts: []Mount{{Src: "/state/workspaces/u/own", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}},
+		Masks:  []Mask{{Dst: "/src/app/.a2a"}, {Src: "/state/empty.json", Dst: "/src/app/.mcp.json"}},
+	}
+	cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	var got []string
+	for i, a := range cmd.Args {
+		if a == "-v" || a == "--mount" {
+			got = append(got, cmd.Args[i+1])
+		}
+	}
+	want := []string{"/state/workspaces/u/own:/src/app", "/docs:/docs:ro", "/state/empty.json:/src/app/.mcp.json:ro", "type=tmpfs,dst=/src/app/.a2a,readonly"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
