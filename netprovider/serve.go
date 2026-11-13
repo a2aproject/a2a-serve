@@ -332,7 +332,7 @@ func connectHandler(token string, outbound http.Handler) http.Handler {
 			c = &bufferedConn{Conn: conn, r: rw.Reader}
 		}
 		ln := newOneConnListener(c)
-		srv := &http.Server{Handler: outbound, ReadHeaderTimeout: time.Minute, ConnState: func(_ net.Conn, st http.ConnState) {
+		srv := &http.Server{Handler: fullDuplex(outbound), ReadHeaderTimeout: time.Minute, ConnState: func(_ net.Conn, st http.ConnState) {
 			if st == http.StateClosed || st == http.StateHijacked {
 				closeConn(ln)
 			}
@@ -340,6 +340,19 @@ func connectHandler(token string, outbound http.Handler) http.Handler {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, net.ErrClosed) {
 			slog.Debug("serving a tunnel", "error", err)
 		}
+	})
+}
+
+// fullDuplex serves next with the request body open once the response
+// starts. An outbound handler is usually a reverse proxy, whose transport
+// reads the body to its end after the peer may have answered; a closed
+// body fails that read, and the transport drops the peer's response.
+func fullDuplex(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).EnableFullDuplex(); err != nil {
+			slog.Debug("no full duplex for a tunneled request", "error", err)
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
