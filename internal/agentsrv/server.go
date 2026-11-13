@@ -324,7 +324,7 @@ func Run(ctx context.Context, opts Options) error {
 		cancel()
 		closers.close()
 	}()
-	closers.push(s.egress.close)
+	closers.push(s.egress.boundaries.Close)
 
 	if err := s.open(ctx, &closers, opts.Executor == nil); err != nil {
 		return startupError(ctx, err)

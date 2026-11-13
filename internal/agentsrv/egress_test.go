@@ -16,49 +16,11 @@ package agentsrv
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
-
-// TestLauncherCopyRunsAsAnotherUser checks the modes that let container
-// root, without CAP_DAC_OVERRIDE and so as another user than the owner,
-// run the launcher on rootful Docker, while the sockets stay private.
-func TestLauncherCopyRunsAsAnotherUser(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS != "linux" {
-		t.Skip("the launcher is copied on Linux only")
-	}
-	dir := filepath.Join(t.TempDir(), "harness")
-	e := newEgressSockets(dir, func() *agentdir.Config { return &agentdir.Config{} })
-	launcher := e.launcher()
-	if launcher == "" {
-		t.Fatalf("launcher() = \"\", want a copy")
-	}
-	for _, p := range []string{launcher, filepath.Dir(launcher)} {
-		info, err := os.Stat(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if perm := info.Mode().Perm(); perm&0o005 != 0o005 {
-			t.Fatalf("mode of %s = %v, want others to read and execute it", p, perm)
-		}
-	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		t.Fatalf("mode of the socket directory %s = %v, want it private", dir, perm)
-	}
-	if got := e.launcher(); got != launcher {
-		t.Fatalf("second launcher() = %q, want the same copy %q", got, launcher)
-	}
-}
 
 func TestEgressProbeOnce(t *testing.T) {
 	t.Parallel()

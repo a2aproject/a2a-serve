@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -107,6 +108,17 @@ func CheckEnvValue(name, value string) error {
 		return &LineBreakError{Name: name}
 	}
 	return nil
+}
+
+// DockerTCPBridge reports whether a container must reach a server on this
+// host over TCP rather than a Unix socket, and where the server listens
+// (bind) and the container connects (dial). Docker Desktop can't mount a
+// socket but forwards host.docker.internal to the host's loopback.
+func DockerTCPBridge() (bind, dial string, ok bool) {
+	if runtime.GOOS == "linux" {
+		return "", "", false
+	}
+	return "127.0.0.1", "host.docker.internal", true
 }
 
 // containerUser is the uid:gid that a container runs its process as: the
