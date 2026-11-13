@@ -110,10 +110,8 @@ func Compatible(v string) (bool, error) {
 	return got.Major == want.Major && got.Minor == want.Minor, nil
 }
 
-// InfoPath is where an a2a-serve relay reports its versions.
-const InfoPath = "/.well-known/a2a-serve-relay"
-
-// Info is what an a2a-serve relay reports at [InfoPath].
+// Info is what an a2a-serve relay that runs Agent Mesh reports at its info
+// path.
 type Info struct {
 	A2AServe  string `json:"a2a_serve"`
 	AgentMesh string `json:"agentmesh"`

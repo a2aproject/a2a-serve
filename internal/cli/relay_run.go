@@ -39,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/logfile"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
@@ -223,12 +224,12 @@ func agentmeshOnePath() (string, error) {
 	return f.Location(), nil
 }
 
-func newFetcher(hc *http.Client, logf func(string, ...any)) (*relay.Fetcher, error) {
+func newFetcher(hc *http.Client, logf func(string, ...any)) (*meshbackend.Fetcher, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return nil, err
 	}
-	return relay.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(relay.BinaryEnv), hc, runtime.GOOS, runtime.GOARCH, logf), nil
+	return meshbackend.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(meshbackend.BinaryEnv), hc, runtime.GOOS, runtime.GOARCH, logf), nil
 }
 
 // agentmeshOne returns the pinned agentmesh-one, downloading it if needed.
@@ -246,7 +247,7 @@ func agentmeshOne(ctx context.Context, cfg *globalConfig) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := relay.CheckBinary(ctx, bin); err != nil {
+	if err := meshbackend.CheckBinary(ctx, bin); err != nil {
 		return "", err
 	}
 	return bin, nil
@@ -274,8 +275,9 @@ func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string
 	ctx, stop := signalContext(ctx)
 	defer stop()
 	err = relay.New(relay.Options{
-		Dir: d, Binary: bin, Cloudflared: cloudflared, A2AServe: buildVersionInfo().Version, Google: googleauth.Google,
-		Out: cfg.Out, MeshLog: meshLog, Now: time.Now,
+		Dir: d, Backend: meshbackend.New(meshbackend.Options{Binary: bin, Log: meshLog, Now: time.Now}),
+		Cloudflared: cloudflared, A2AServe: buildVersionInfo().Version, Google: googleauth.Google,
+		Out: cfg.Out, TunnelLog: meshLog, Now: time.Now,
 	}).Run(ctx)
 	if !errors.Is(err, relay.ErrRestart) {
 		return err
@@ -325,8 +327,8 @@ func installRelayService(ctx context.Context, cfg *globalConfig, d relaydir.Dir)
 		return err
 	}
 	env := []string{"PATH=" + os.Getenv("PATH")}
-	if v := os.Getenv(relay.BinaryEnv); v != "" {
-		env = append(env, relay.BinaryEnv+"="+v)
+	if v := os.Getenv(meshbackend.BinaryEnv); v != "" {
+		env = append(env, meshbackend.BinaryEnv+"="+v)
 	}
 	note, err := service.Install(service.Unit{
 		Name:        d.ServiceName(),

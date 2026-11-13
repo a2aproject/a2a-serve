@@ -44,7 +44,7 @@ const maxRequest = 64 << 10
 
 // Handler serves the operations of svc. restart, when set, serves the
 // restart that `relay upgrade` asks a local relay for.
-func Handler(svc *Service, restart func()) http.Handler {
+func Handler(svc Service, restart func()) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		st, err := svc.Status(r.Context())

@@ -22,121 +22,112 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"os/exec"
-	"os/signal"
-	"path/filepath"
-	"slices"
 	"strings"
-	"sync/atomic"
-	"syscall"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
+	"github.com/a2aproject/a2a-serve/internal/relay/front"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
-// fakeMeshEnv makes the test binary act as agentmesh-one. Its value is how
-// long the fake runs before it exits on its own, "" to run until SIGTERM, or
-// one of the modes below.
-const fakeMeshEnv = "A2A_SERVE_TEST_FAKE_AGENTMESH"
-
-const (
-	// fakeMeshPortTaken makes the first fake hand its port to a holder
-	// process and exit, as if another process took the port first.
-	fakeMeshPortTaken = "port-taken"
-	fakeMeshHoldPort  = "hold-port"
-	// fakeMeshServing is created in the data directory by a fake that serves.
-	fakeMeshServing = "serving"
-)
-
-func TestMain(m *testing.M) {
-	if v, ok := os.LookupEnv(fakeMeshEnv); ok {
-		os.Exit(runFakeMesh(v))
-	}
-	os.Exit(m.Run())
+// fakeBackend starts once release is closed, and serves "backend" at its
+// upstream.
+type fakeBackend struct {
+	release  chan struct{}
+	upstream *httptest.Server
+	running  *fakeRunning
 }
 
-func runFakeMesh(exitAfter string) int {
-	if exitAfter == fakeMeshHoldPort {
-		time.Sleep(5 * time.Second)
-		return 0
-	}
-	i := slices.Index(os.Args, "--port")
-	if i < 0 || i+1 >= len(os.Args) {
-		return 2
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+os.Args[i+1])
-	if err != nil {
-		return 2
-	}
-	if exitAfter == fakeMeshPortTaken {
-		const marker = "port-taken"
-		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
-			if err := os.WriteFile(marker, nil, 0o600); err != nil {
-				return 1
-			}
-			if err := holdPort(ln.(*net.TCPListener)); err != nil {
-				return 1
-			}
-			return 2
-		}
-	}
-	if err := os.WriteFile(fakeMeshServing, nil, 0o600); err != nil {
-		return 1
-	}
-	go func() {
-		if err := http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/admin/") {
-				if _, err := io.WriteString(w, "{}"); err != nil {
-					return
-				}
-			}
-		})); err != nil {
-			return
-		}
-	}()
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM)
-	var after <-chan time.Time
-	if d, err := time.ParseDuration(exitAfter); err == nil {
-		after = time.After(d)
-	}
-	select {
-	case <-stop:
-		return 0
-	case <-after:
-		return 3
-	}
-}
-
-// holdPort passes ln to a process that keeps it open for a while.
-func holdPort(ln *net.TCPListener) error {
-	f, err := ln.File()
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), fakeMeshEnv+"="+fakeMeshHoldPort)
-	cmd.ExtraFiles = []*os.File{f}
-	return errors.Join(cmd.Start(), f.Close())
-}
-
-// runFake runs a relay over the fake agentmesh-one and returns its
-// directory, its control client, and the result of Run.
-func runFake(t *testing.T, exitAfter string) (relaydir.Dir, *control.Client, context.CancelFunc, <-chan error) {
+func newFakeBackend(t *testing.T) *fakeBackend {
 	t.Helper()
-	t.Setenv(fakeMeshEnv, exitAfter)
-	dir := testutil.ShortTempDir(t)
-	d := relaydir.Dir{Root: dir}
-	port, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort() error = %v", err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, "backend"); err != nil {
+			t.Errorf("writing the upstream's answer: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &fakeBackend{release: make(chan struct{}), upstream: srv, running: &fakeRunning{exited: make(chan struct{})}}
+}
+
+func (*fakeBackend) Name() string    { return "Fake" }
+func (*fakeBackend) Version() string { return "v1" }
+func (*fakeBackend) Prepare(context.Context, relaydir.Dir, *relaydir.Resolved, time.Time) (Prepared, error) {
+	return Prepared{}, nil
+}
+func (*fakeBackend) Info(a2aServe string, signIn bool) any {
+	return map[string]string{"a2a_serve": a2aServe}
+}
+func (*fakeBackend) Routes() front.Routes { return noRoutes{} }
+
+func (b *fakeBackend) Start(ctx context.Context, s Start) (Running, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-b.release:
 	}
-	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+	u, err := url.Parse(b.upstream.URL)
+	if err != nil {
+		return nil, err
+	}
+	b.running.upstream, b.running.status = u, s.Status
+	return b.running, nil
+}
+
+type fakeRunning struct {
+	upstream *url.URL
+	status   func() control.Status
+	exited   chan struct{}
+	exitOnce sync.Once
+	stopped  bool
+}
+
+func (r *fakeRunning) Upstream() *url.URL       { return r.upstream }
+func (r *fakeRunning) Service() control.Service { return fakeService{r.status} }
+func (r *fakeRunning) Reconcile(context.Context) ([]control.Member, []control.Member, error) {
+	return nil, nil, nil
+}
+func (r *fakeRunning) Exited() <-chan struct{} { return r.exited }
+func (r *fakeRunning) Err() error              { return errors.New("the fake backend exited") }
+func (r *fakeRunning) Stop() error {
+	r.stopped = true
+	r.exit()
+	return nil
+}
+func (r *fakeRunning) exit() { r.exitOnce.Do(func() { close(r.exited) }) }
+
+type fakeService struct{ status func() control.Status }
+
+func (s fakeService) Status(context.Context) (*control.Status, error) {
+	st := s.status()
+	return &st, nil
+}
+func (fakeService) Invite(context.Context, control.InviteRequest) (*control.Invite, error) {
+	return nil, errors.New("not implemented")
+}
+func (fakeService) Members(context.Context, bool) ([]control.Member, error) { return nil, nil }
+func (fakeService) Remove(context.Context, control.RemoveRequest) (*control.RemoveResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+type noRoutes struct{}
+
+func (noRoutes) Blocked(string, string) bool     { return false }
+func (noRoutes) Enrollment(string) bool          { return false }
+func (noRoutes) Ingress(string) (string, string) { return "", "" }
+
+// runFake runs a relay over b and returns its directory, its URL, its
+// control client, and the result of Run.
+func runFake(t *testing.T, b Backend) (relaydir.Dir, string, *control.Client, context.CancelFunc, <-chan error) {
+	t.Helper()
+	d := relaydir.Dir{Root: testutil.ShortTempDir(t)}
+	port := freeLoopbackPort(t)
+	relayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if _, err := d.SaveSettings(relaydir.Settings{URL: relayURL, Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
 	}
 	release, err := d.Lock()
@@ -146,14 +137,29 @@ func runFake(t *testing.T, exitAfter string) (relaydir.Dir, *control.Client, con
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		err := New(Options{Dir: d, Binary: os.Args[0], A2AServe: "test", Out: io.Discard, MeshLog: io.Discard, Now: time.Now}).Run(ctx)
+		err := New(Options{Dir: d, Backend: b, A2AServe: "test", Out: io.Discard, TunnelLog: io.Discard, Now: time.Now}).Run(ctx)
 		done <- errors.Join(err, release())
 	}()
 	t.Cleanup(cancel)
-	return d, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, done
+	return d, relayURL, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, done
 }
 
-func waitRunning(t *testing.T, c *control.Client, done <-chan error) {
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+// waitStatus waits until the relay's control API answers Status, and
+// returns its error.
+func waitStatus(t *testing.T, c *control.Client, done <-chan error) error {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -162,11 +168,23 @@ func waitRunning(t *testing.T, c *control.Client, done <-chan error) {
 			t.Fatalf("Relay.Run() error = %v before the relay ran", err)
 		default:
 		}
-		if _, err := c.Members(context.Background(), false); err == nil || !errors.Is(err, control.ErrNotRunning) {
-			return
+		_, err := c.Status(context.Background())
+		if err == nil || !errors.Is(err, control.ErrNotRunning) {
+			return err
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the relay didn't answer on its control socket")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func waitStarted(t *testing.T, c *control.Client, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for waitStatus(t, c, done) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the relay's backend didn't start")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -183,51 +201,65 @@ func wait(t *testing.T, done <-chan error) error {
 	}
 }
 
-func TestRunReturnsWhenAgentMeshExits(t *testing.T) {
-	_, c, _, done := runFake(t, "1s")
-	waitRunning(t, c, done)
+func TestRunRefusesTheControlAPIUntilTheBackendStarts(t *testing.T) {
+	b := newFakeBackend(t)
+	_, _, c, _, done := runFake(t, b)
 
-	err := wait(t, done)
+	err := waitStatus(t, c, done)
 
-	if err == nil || !strings.Contains(err.Error(), "agentmesh-one exited") {
-		t.Fatalf("Relay.Run() error = %v, want agentmesh-one exited", err)
+	if err == nil || !strings.Contains(err.Error(), "the relay is starting") {
+		t.Fatalf("Client.Status() before the backend started error = %v, want the relay is starting", err)
+	}
+	close(b.release)
+	waitStarted(t, c, done)
+}
+
+func TestRunProxiesToTheBackend(t *testing.T) {
+	b := newFakeBackend(t)
+	close(b.release)
+	_, relayURL, c, _, done := runFake(t, b)
+	waitStarted(t, c, done)
+
+	resp, err := http.Get(relayURL + "/anything")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err := errors.Join(err, resp.Body.Close()); err != nil {
+		t.Fatal(err)
+	}
+
+	if string(body) != "backend" {
+		t.Fatalf("Get() of a backend route = %q, want %q", body, "backend")
 	}
 }
 
-func TestRunPicksAnotherPortWhenAgentMeshLosesIt(t *testing.T) {
-	d, c, cancel, done := runFake(t, fakeMeshPortTaken)
-	waitRunning(t, c, done)
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		select {
-		case err := <-done:
-			t.Fatalf("Relay.Run() error = %v, want it to start agentmesh-one on another port", err)
-		default:
-		}
-		if _, err := os.Stat(filepath.Join(d.MeshDir(), fakeMeshServing)); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("agentmesh-one didn't start on another port")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+func TestRunReturnsWhenTheBackendExits(t *testing.T) {
+	b := newFakeBackend(t)
+	close(b.release)
+	_, _, c, _, done := runFake(t, b)
+	waitStarted(t, c, done)
 
-	cancel()
+	b.running.exit()
 
-	if err := wait(t, done); err != nil {
-		t.Fatalf("Relay.Run() error = %v", err)
+	if err := wait(t, done); err == nil || !strings.Contains(err.Error(), "the fake backend exited") {
+		t.Fatalf("Relay.Run() error = %v, want the fake backend exited", err)
 	}
 }
 
 func TestRunStops(t *testing.T) {
-	d, c, cancel, done := runFake(t, "")
-	waitRunning(t, c, done)
+	b := newFakeBackend(t)
+	close(b.release)
+	d, _, c, cancel, done := runFake(t, b)
+	waitStarted(t, c, done)
 
 	cancel()
 
 	if err := wait(t, done); err != nil {
 		t.Fatalf("Relay.Run() error = %v", err)
+	}
+	if !b.running.stopped {
+		t.Fatal("Relay.Run() returned without stopping the backend")
 	}
 	if _, err := os.Stat(d.SocketPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of the control socket after the relay stopped error = %v, want %v", err, os.ErrNotExist)
@@ -242,7 +274,7 @@ func TestRunStops(t *testing.T) {
 }
 
 func TestRunStopsWhileStarting(t *testing.T) {
-	d, _, cancel, done := runFake(t, "")
+	d, _, _, cancel, done := runFake(t, newFakeBackend(t))
 
 	cancel()
 
@@ -255,8 +287,10 @@ func TestRunStopsWhileStarting(t *testing.T) {
 }
 
 func TestRunRestartsWhenAsked(t *testing.T) {
-	_, c, _, done := runFake(t, "")
-	waitRunning(t, c, done)
+	b := newFakeBackend(t)
+	close(b.release)
+	_, _, c, _, done := runFake(t, b)
+	waitStarted(t, c, done)
 
 	if err := c.Restart(context.Background()); err != nil {
 		t.Fatalf("Client.Restart() error = %v", err)
@@ -264,44 +298,5 @@ func TestRunRestartsWhenAsked(t *testing.T) {
 
 	if err := wait(t, done); !errors.Is(err, ErrRestart) {
 		t.Fatalf("Relay.Run() error = %v, want %v", err, ErrRestart)
-	}
-}
-
-func TestFreePortIsBelowTheEphemeralRange(t *testing.T) {
-	t.Parallel()
-	port, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort() error = %v", err)
-	}
-	if port < freePortMin || port >= freePortMax {
-		t.Fatalf("freePort() = %d, want in [%d, %d)", port, freePortMin, freePortMax)
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatalf("Listen() on the port from freePort() error = %v", err)
-	}
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestWaitReadyReportsAnExitWithoutProbingAgain(t *testing.T) {
-	t.Parallel()
-	var probes atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		probes.Add(1)
-		<-r.Context().Done()
-	}))
-	t.Cleanup(srv.Close)
-	mesh := &meshProcess{exited: make(chan struct{}), err: errors.New("exit status 2")}
-	close(mesh.exited)
-
-	err := waitReady(context.Background(), meshadmin.New(srv.URL, "", srv.Client()), mesh, 1)
-
-	if err == nil || !strings.Contains(err.Error(), "exited while starting") {
-		t.Fatalf("waitReady() error = %v, want agentmesh-one exited while starting", err)
-	}
-	if got := probes.Load(); got != 1 {
-		t.Fatalf("waitReady() sent %d readiness probes after agentmesh-one exited, want 1", got)
 	}
 }

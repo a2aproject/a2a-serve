@@ -27,8 +27,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
-	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/front"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
@@ -52,7 +53,7 @@ func relayOnline(ctx context.Context, hc *http.Client, relayURL string) []Result
 	if status != http.StatusOK {
 		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s isn't ready: %d %s", relayURL, status, http.StatusText(status))}}
 	}
-	status, body, err := fetch(ctx, hc, base+agentmesh.InfoPath)
+	status, body, err := fetch(ctx, hc, base+front.InfoPath)
 	if err != nil {
 		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s is unreachable: %v", relayURL, err)}}
 	}
@@ -62,7 +63,7 @@ func relayOnline(ctx context.Context, hc *http.Client, relayURL string) []Result
 	}
 	var info agentmesh.Info
 	if status != http.StatusOK || json.Unmarshal(body, &info) != nil {
-		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s answers %s with %d", relayURL, agentmesh.InfoPath, status)}}
+		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s answers %s with %d", relayURL, front.InfoPath, status)}}
 	}
 	ok, err := agentmesh.Compatible(info.AgentMesh)
 	switch {
@@ -193,7 +194,7 @@ func checkRelayBinary(ctx context.Context, path string) Result {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return Result{ID: "agentmesh-one", Status: StatusOK, Message: fmt.Sprintf("agentmesh-one %s is downloaded on the next relay run", agentmesh.Version)}
 	}
-	if err := relay.CheckBinary(ctx, path); err != nil {
+	if err := meshbackend.CheckBinary(ctx, path); err != nil {
 		return Result{ID: "agentmesh-one", Status: StatusFail, Message: err.Error(), Fix: "rm " + path + "; `a2a-serve relay run` downloads it again"}
 	}
 	return Result{ID: "agentmesh-one", Status: StatusOK, Message: fmt.Sprintf("agentmesh-one %s at %s", agentmesh.Version, path)}

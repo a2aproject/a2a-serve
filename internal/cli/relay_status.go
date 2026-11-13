@@ -23,8 +23,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
-	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -106,7 +106,7 @@ func localRelayStatus(d relaydir.Dir, st *relayStatus) error {
 	if st.DataVersion, err = d.RecordedVersion(); err != nil {
 		return err
 	}
-	_, st.LastBackup, err = relay.LastBackup(d)
+	_, st.LastBackup, err = meshbackend.LastBackup(d)
 	return err
 }
 

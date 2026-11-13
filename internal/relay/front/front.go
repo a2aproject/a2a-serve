@@ -14,9 +14,9 @@
 
 // Package front is the HTTP front of a relay. It serves the relay's public
 // port: it reports the relay's versions, serves the control API to callers
-// with the admin token and the relay's identity provider, blocks Agent
-// Mesh's admin, console and metrics routes, and proxies everything else to
-// agentmesh-one.
+// with the admin token and the relay's identity provider, refuses the
+// backend's routes that the relay doesn't expose, and proxies everything
+// else to the backend.
 package front
 
 import (
@@ -31,16 +31,36 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 )
 
+// Routes describes the routes of the backend behind a front.
+type Routes interface {
+	// Blocked reports whether the front refuses the route p for method.
+	Blocked(p, method string) bool
+	// Enrollment reports whether p is a route where agents join the relay
+	// or sign in to it.
+	Enrollment(p string) bool
+	// Ingress splits the part of a path after /ingress/ into the agent it
+	// calls, in a canonical form, and that agent's own route. Either is ""
+	// when the path names none.
+	Ingress(rest string) (agent, route string)
+}
+
+// InfoPath is where a relay reports what it runs.
+const InfoPath = "/.well-known/a2a-serve-relay"
+
+// maxAgentSegment bounds the agent segment of an ingress path that the
+// front passes on. No agent's segment is longer.
+const maxAgentSegment = 512
+
 // Front is the handler of a relay's public port.
 type Front struct {
-	info    agentmesh.Info
+	info    any
+	routes  Routes
 	control http.Handler
 	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
@@ -49,7 +69,7 @@ type Front struct {
 	// callers before they authenticate.
 	onboarding *httpserver.KeyedLimiter
 	// enrollments and ingress limit how often each client may call the
-	// routes that Agent Mesh limits for all the relay's callers together,
+	// routes that the backend limits for all the relay's callers together,
 	// since they all reach it from the relay's address. ingressClient
 	// limits each client across agents, so that one client can't add keys
 	// to ingress faster than it forgets them.
@@ -59,7 +79,7 @@ type Front struct {
 	transport *http.Transport
 }
 
-// maxProxiedPerClient is how many requests to Agent Mesh one client may
+// maxProxiedPerClient is how many requests to the backend one client may
 // have open, WebSockets of agents included.
 const maxProxiedPerClient = 64
 
@@ -91,31 +111,33 @@ const (
 	maxRateClients = 10000
 )
 
-// New returns the front of a relay that reports info and serves control,
-// which checks the admin token itself, at [control.RemotePath], and signIn
-// at [signin.Path], or nil when agents can't sign in. It answers 503 on
-// proxied routes until [Front.Open].
-func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
+// New returns the front of a relay that reports info, proxies the backend
+// that routes describes, and serves control, which checks the admin token
+// itself, at [control.RemotePath], and signIn at [signin.Path], or nil when
+// agents can't sign in. It answers 503 on proxied routes until
+// [Front.Open].
+func New(info any, routes Routes, ctl, signIn http.Handler) *Front {
 	// The control API and the identity provider serve callers before they
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
 	f := &Front{
-		info:          info,
-		control:       unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
-		proxied:       httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
-		onboarding:    httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
-		enrollments:   httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
-		ingress:       httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, clientOfAgent),
-		ingressClient: httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client),
-		transport:     upstreamTransport(),
+		info:        info,
+		routes:      routes,
+		control:     unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied:     httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		onboarding:  httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
+		enrollments: httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
+		transport:   upstreamTransport(),
 	}
+	f.ingress = httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, f.clientOfAgent)
+	f.ingressClient = httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client)
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
 	}
 	return f
 }
 
-// maxIdleUpstream is how many idle connections to agentmesh-one the front
+// maxIdleUpstream is how many idle connections to the backend the front
 // keeps, so that a burst of requests reuses them.
 const maxIdleUpstream = 64
 
@@ -125,13 +147,13 @@ func upstreamTransport() *http.Transport {
 	return t
 }
 
-// Open starts proxying to the agentmesh-one at upstream.
+// Open starts proxying to the backend at upstream.
 func (f *Front) Open(upstream *url.URL) {
 	p := &httputil.ReverseProxy{
 		Transport: f.transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(upstream)
-			// Agent Mesh gets the path the front checked, so an escaped dot
+			// The backend gets the path the front checked, so an escaped dot
 			// segment can't lead it to a blocked route.
 			r.Out.URL.Path, r.Out.URL.RawPath = cleanPath(r.In.URL.Path), ""
 			r.Out.Host = r.In.Host
@@ -141,22 +163,22 @@ func (f *Front) Open(upstream *url.URL) {
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if !errors.Is(err, r.Context().Err()) {
-				slog.Warn("proxying to Agent Mesh", "path", r.URL.Path, "error", err)
+				slog.Warn("proxying to the relay's backend", "path", r.URL.Path, "error", err)
 			}
-			jsonhttp.Error(w, http.StatusBadGateway, "the relay's Agent Mesh didn't answer")
+			jsonhttp.Error(w, http.StatusBadGateway, "the relay's backend didn't answer")
 		},
 	}
 	f.proxy.Store(p)
 }
 
-// Close answers 503 on proxied routes again, while agentmesh-one stops.
+// Close answers 503 on proxied routes again, while the backend stops.
 func (f *Front) Close() {
 	f.proxy.Store(nil)
 	f.transport.CloseIdleConnections()
 }
 
 // methods are the methods the front passes on. Go's mux doesn't clean the
-// path of a CONNECT request, and Agent Mesh serves none of the others.
+// path of a CONNECT request, and backends serve none of the others.
 var methods = map[string]bool{
 	http.MethodGet: true, http.MethodHead: true, http.MethodPost: true, http.MethodPut: true,
 	http.MethodPatch: true, http.MethodDelete: true, http.MethodOptions: true,
@@ -179,7 +201,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p := path.Clean("/" + r.URL.Path)
 	switch {
-	case p == agentmesh.InfoPath:
+	case p == InfoPath:
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			jsonhttp.Error(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -196,7 +218,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.signIn.ServeHTTP(w, r)
 		return
-	case blocked(p, r.Method):
+	case f.routes.Blocked(p, r.Method):
 		jsonhttp.Error(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -207,24 +229,25 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := f.proxied.Handler(proxy)
-	if onboarding(p) {
+	if f.isOnboarding(p) {
 		h = f.onboarding.Handler(h)
 	}
 	switch {
-	case enrollment(p):
+	case f.routes.Enrollment(p):
 		h = f.enrollments.Handler(h)
 	case under(p, "/ingress"):
-		h = f.ingressClient.Handler(f.ingress.Handler(refuseLongPeer(h)))
+		h = f.ingressClient.Handler(f.ingress.Handler(refuseLongAgent(h)))
 	}
 	h.ServeHTTP(w, r)
 }
 
-// refuseLongPeer answers 400 for an ingress path whose peer segment no peer
-// ID is that long. Agent Mesh's decoder takes time quadratic in its length.
-func refuseLongPeer(next http.Handler) http.Handler {
+// refuseLongAgent answers 400 for an ingress path whose agent segment no
+// agent has. Agent Mesh's decoder of peer IDs takes time quadratic in its
+// length.
+func refuseLongAgent(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
-		if seg, _, _ := strings.Cut(rest, "/"); len(seg) > maxPeerSegment {
+		if seg, _, _ := strings.Cut(rest, "/"); len(seg) > maxAgentSegment {
 			jsonhttp.Error(w, http.StatusBadRequest, "no agent has this peer ID")
 			return
 		}
@@ -232,26 +255,19 @@ func refuseLongPeer(next http.Handler) http.Handler {
 	})
 }
 
-// enrollment reports whether p is a route where agents join the relay or
-// sign in to it.
-func enrollment(p string) bool {
-	return p == "/register" || p == "/enroll" || p == "/enroll/status"
-}
-
-// onboarding reports whether p reaches, through ingress, a route where an
+// isOnboarding reports whether p reaches, through ingress, a route where an
 // a2a-serve agent serves callers before they authenticate: pairing,
 // sign-in, approval links and downloads.
-func onboarding(p string) bool {
+func (f *Front) isOnboarding(p string) bool {
 	rest, ok := strings.CutPrefix(p, "/ingress/")
 	if !ok {
 		return false
 	}
-	// The path is /ingress/<peer>/<service type>/<service name>/<route>.
-	parts := strings.SplitN(rest, "/", 4)
-	if len(parts) < 4 {
+	_, route := f.routes.Ingress(rest)
+	if route == "" {
 		return false
 	}
-	route := "/" + parts[3]
+	route = "/" + route
 	for _, prefix := range []string{"/pair", "/oauth", "/hitl", "/download"} {
 		if under(route, prefix) {
 			return true
@@ -269,14 +285,13 @@ func Client(r *http.Request) string {
 // clientOfAgent identifies the client of a request together with the agent
 // whose public URL it calls, as Agent Mesh does for its ingress limit. The
 // requests of a client to paths that name no agent share one key.
-func clientOfAgent(r *http.Request) string {
+func (f *Front) clientOfAgent(r *http.Request) string {
 	rest, _ := strings.CutPrefix(path.Clean("/"+r.URL.Path), "/ingress/")
-	seg, _, _ := strings.Cut(rest, "/")
-	peer, ok := canonicalPeer(seg)
-	if !ok {
+	agent, _ := f.routes.Ingress(rest)
+	if agent == "" {
 		return client(r)
 	}
-	return client(r) + " " + peer
+	return client(r) + " " + agent
 }
 
 // client identifies the client of a request for its limits. A tunnel or a
@@ -320,16 +335,4 @@ func isProxy(ip netip.Addr) bool {
 
 func under(p, prefix string) bool {
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
-}
-
-// blocked reports whether the front refuses a route of Agent Mesh. The
-// relay is managed through the control API and its policy comes from its
-// settings; the console and metrics answer without authentication.
-func blocked(p, method string) bool {
-	for _, prefix := range []string{"/admin", "/console", "/metrics"} {
-		if under(p, prefix) {
-			return true
-		}
-	}
-	return p == "/policies" && method != http.MethodGet && method != http.MethodOptions
 }

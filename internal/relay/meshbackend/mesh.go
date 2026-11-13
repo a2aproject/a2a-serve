@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package relay runs a relay: one a2a-serve process that serves the relay's
-// public port and runs Agent Mesh's agentmesh-one behind it on loopback.
-package relay
+package meshbackend
 
 import (
 	"strconv"
