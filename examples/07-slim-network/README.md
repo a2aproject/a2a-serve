@@ -93,7 +93,7 @@ a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example7/coder)" \
   --task-id <task-id> once
 ```
 
-The call travels over SLIMRPC through the node, and reviewer sees it come from `a2a/example7/coder`.
+The call travels over SLIMRPC through the node, [encrypted end to end](../../docs/guide/networks.md#slim-nodes-experimental), and reviewer sees it come from `a2a/example7/coder`.
 
 ## 5. Call an agent from a SLIM client
 

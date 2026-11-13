@@ -65,6 +65,8 @@ The URL is the node's address, with settings in the query:
 
 The SLIM network provider has no release yet: build it next to `a2a-serve`, as [step 2 of the example](../../examples/07-slim-network/README.md#2-build-the-slim-network-provider) shows. The network token is the shared secret of the node's agents. Anyone with it can claim any name on the node, so use it only on networks of your own machines. SLIM gives agents no public URL.
 
+SLIMRPC encrypts calls end to end with MLS. The node sees the SLIM names of the caller and the agent, and routes the call by them. It can't read the messages.
+
 The [SLIM network example](../../examples/07-slim-network/README.md) runs a node and two agents on it.
 
 ## Network providers
