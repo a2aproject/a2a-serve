@@ -285,23 +285,25 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress, stderr io.Wr
 	}
 	env := append([]string{}, cfg.Env...)
 	spec := harness.Spec{
-		Profile:    profile,
-		Sandbox:    cfg.Sandbox,
+		Profile: profile,
+		Sandbox: cfg.Sandbox,
+		Backend: s.backend(cfg.Sandbox),
+		Base: sandbox.Spec{
+			Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
+			Image:    cfg.Image,
+			Limits:   sandbox.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
+			Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
+			Progress: imageProgress,
+			Stderr:   stderr,
+		},
 		Mounts:     mounts,
 		Home:       s.dir.HomeDir(),
-		EnvDir:     s.dir.EnvFilesDir(),
 		Hidden:     s.hidden(),
 		Pins:       s.pins,
 		MCPMask:    s.dir.MCPMaskPath(),
 		ConfigMask: s.dir.ConfigMaskPath(),
 		Env:        env,
 		Model:      cfg.Model,
-		Name:       "a2a-" + cfg.Name + "-" + s.dir.ID(),
-		Image:      cfg.Image,
-		Limits:     sandbox.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
-		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
-		Progress:   imageProgress,
-		Stderr:     stderr,
 	}
 	_, isUser := agentkey.UserOf(key)
 	switch {
@@ -333,8 +335,8 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress, stderr io.Wr
 	}
 	closeEndpoint := func() error { return nil }
 	if key == agentkey.Guest {
-		spec.Name += "-guest"
-		spec.Labels["a2a.role"] = auth.RoleGuest
+		spec.Base.Name += "-guest"
+		spec.Base.Labels["a2a.role"] = auth.RoleGuest
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {
 			return nil, err
 		}
@@ -390,6 +392,14 @@ func (s *Server) checkHome(cfg *agentdir.Config, mounts []agentdir.Mount, home s
 	return harness.PrepareHome(harness.Spec{Sandbox: cfg.Sandbox, Mounts: mounts, Hidden: s.hidden(), Home: home, Pins: s.pins})
 }
 
+// backend returns the backend of the sandbox kind.
+func (s *Server) backend(kind string) sandbox.Backend {
+	if kind == harness.SandboxLocal {
+		return sandbox.Local{}
+	}
+	return s.docker
+}
+
 // hidden are the host paths sandboxes hide even where a mount exposes them.
 func (s *Server) hidden() []string { return []string{s.dir.Path()} }
 
@@ -398,10 +408,10 @@ func (s *Server) hidden() []string { return []string{s.dir.Path()} }
 // credential helper in its home.
 func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 	if ep.key == "" {
-		spec.Socket = ep.socket
+		spec.Server.Path = ep.socket
 		return nil
 	}
-	spec.BridgeAddr = strings.TrimPrefix(s.harness.url, "http://")
+	spec.Server.Addr = strings.TrimPrefix(s.harness.url, "http://")
 	env, err := writeHarnessHelper(spec.Home, s.harness.dial, ep.key)
 	if err != nil {
 		return fmt.Errorf("saving the agent key: %w", err)
@@ -413,8 +423,8 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 // prepareUserHome gives spec the container name of the agent process of
 // a member's agent key, and its home the instructions of the owner's home.
 func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, key string) error {
-	spec.Name += "-" + userProcessName(key)
-	spec.Labels["a2a.role"] = auth.RoleMember
+	spec.Base.Name += "-" + userProcessName(key)
+	spec.Base.Labels["a2a.role"] = auth.RoleMember
 	for _, dir := range []string{s.dir.UserHomesDir(), spec.Home} {
 		if err := fsutil.CheckPrivate(dir); err != nil {
 			return err

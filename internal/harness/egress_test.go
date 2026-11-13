@@ -75,7 +75,7 @@ func TestDecideEgress(t *testing.T) {
 	}
 }
 
-func TestProbeFailed(t *testing.T) {
+func TestNoBoundaryDecision(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -89,14 +89,14 @@ func TestProbeFailed(t *testing.T) {
 			want: "--inject-model-key can't apply: the agent's container can't set up its network: operation not permitted. The agent doesn't start, so that it can't read OPENROUTER_API_KEY. Fix that, or put the keys in the agent's environment: remove the rules with `a2a-serve config unset inject-model-key`, then store the keys again with `a2a-serve config set --secret OPENROUTER_API_KEY=-`",
 		},
 	}
-	two := probeFailed(&agentdir.Config{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "K"}, {Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, errors.New("x"))
+	two := problemDecision(&agentdir.Config{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "K"}, {Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, "x")
 	if want := "remove the rules with `a2a-serve config unset inject-model-key` and `a2a-serve config unset inject-header`, then store the keys again with `a2a-serve config set --secret K=-` and `a2a-serve config set --secret GH=-`"; !strings.Contains(two.Warning, want) {
-		t.Fatalf("probeFailed() warning = %q, want it to contain %q", two.Warning, want)
+		t.Fatalf("problemDecision() warning = %q, want it to contain %q", two.Warning, want)
 	}
 	for _, tc := range tests {
-		got := probeFailed(&tc.cfg, errors.New("operation not permitted"))
+		got := problemDecision(&tc.cfg, noBoundaryReason(&sandbox.EgressSetupError{Reason: "operation not permitted"}))
 		if got.Boundary || got.Problem == "" || !strings.HasPrefix(got.Warning, tc.want) {
-			t.Fatalf("probeFailed(%s) = %+v, want no boundary and a warning starting with %q", tc.name, got, tc.want)
+			t.Fatalf("problemDecision(%s) = %+v, want no boundary and a warning starting with %q", tc.name, got, tc.want)
 		}
 	}
 }
