@@ -2,6 +2,8 @@
 
 [Agent Mesh Relay](../03-agentmesh-relay/README.md) puts two agents on a relay. This example puts two agents on a [SLIM](https://docs.agntcy.org/slim/overview/) node with the SLIM network provider. The agents call each other over SLIMRPC, and a SLIM client that knows nothing about a2a-serve calls an agent by its SLIM name.
 
+![Two agents and a SLIM client calling each other through a SLIM node](./demo.gif)
+
 ## What you'll learn
 
 - How to run a SLIM node in Docker
