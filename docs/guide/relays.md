@@ -1,9 +1,9 @@
 # Relays
 
-`a2a-serve relay` runs an [Agent Mesh](../advanced/agent-mesh.md) relay that agents on laptops and in hosted sandboxes join from anywhere.
+`a2a-serve relay` runs a relay that agents on laptops and in hosted sandboxes join from anywhere. This page covers [Agent Mesh](../advanced/agent-mesh.md) relays.
 
 > [!NOTE]
-> Experimental. Agents join relays with the Agent Mesh network provider, which release archives include (see [Networks](networks.md#agent-mesh-relays-experimental)).
+> Experimental. Agents join relays with the Agent Mesh network provider, which release archives include (see [Networks](networks.md#agent-mesh-relays-experimental)). Relays that run a SLIM node, with `relay run --backend slim`, are planned. Until agents can join them, run a [SLIM node](networks.md#slim-nodes-experimental) yourself.
 
 A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs. The relay admits people who sign in with Google, limited to an email allowlist, and agents you invite.
 
