@@ -205,7 +205,7 @@ func TestRelayStatusJSON(t *testing.T) {
 	want := map[string]any{
 		"url": url, "running": true, "pid": float64(7), "join": "invites", "members": float64(1),
 		"versions": map[string]any{"a2aServe": "v1.0.0", "agentMesh": "v0.2.0"},
-		"pinned":   map[string]any{"a2aServe": buildVersionInfo().Version, "agentMesh": "v0.2.0"},
+		"pinned":   map[string]any{"a2aServe": buildVersionInfo().Version, "agentMesh": "v0.2.0", "backend": "Agent Mesh", "backendVersion": "v0.2.0"},
 	}
 	delete(got, "started")
 	if diff := cmp.Diff(want, got); diff != "" {

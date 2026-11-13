@@ -111,12 +111,18 @@ func doctorRun(env doctor.Env, sf *serverFlags, online bool) (func(context.Conte
 	rd, rerr := rf.relayDir()
 	switch {
 	case rerr == nil:
-		bin, err := agentmeshOnePath()
+		// A relay.yaml that doesn't parse fails its own check.
+		b := relayBackends[0]
+		if conf, err := rd.ReadConfig(); err == nil {
+			b = relayBackendOf(conf)
+		}
+		bin, err := b.binaryPath()
 		if err != nil {
 			return nil, err
 		}
+		opts := doctor.RelayOptions{Dir: rd, Binary: bin, Program: b.release.Program, Version: b.version, CheckBinary: b.check, Online: online}
 		return func(ctx context.Context) []doctor.Result {
-			return doctor.RunRelay(ctx, env, doctor.RelayOptions{Dir: rd, Binary: bin, Online: online})
+			return doctor.RunRelay(ctx, env, opts)
 		}, nil
 	case sf.dir != "":
 		return nil, err

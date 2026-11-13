@@ -15,16 +15,8 @@
 package meshbackend
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -267,118 +259,5 @@ func TestPrepareDataKeepsTheLastThreeBackups(t *testing.T) {
 	want := []string{"agentmesh-v0.3.0-20261105T100000Z.db", "agentmesh-v0.4.0-20261105T110000Z.db", "agentmesh-v0.5.0-20261105T120000Z.db"}
 	if diff := cmp.Diff(want, names); diff != "" {
 		t.Fatalf("backups wrong (-want +got) diff = %s", diff)
-	}
-}
-
-func tarGz(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	for name, body := range files {
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func zipped(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for name, body := range files {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := w.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func sum(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-
-func TestFetcher(t *testing.T) {
-	t.Parallel()
-	linux := tarGz(t, map[string]string{"README.md": "readme", "agentmesh-one": "linux binary"})
-	windows := zipped(t, map[string]string{"agentmesh-one.exe": "windows binary"})
-	tests := []struct {
-		name         string
-		goos         string
-		archive      []byte
-		hash         string
-		override     string
-		wantBinary   string
-		wantErr      string
-		wantDownload bool
-	}{
-		{name: "tar.gz", goos: "linux", archive: linux, hash: sum(linux), wantBinary: "linux binary", wantDownload: true},
-		{name: "zip", goos: "windows", archive: windows, hash: sum(windows), wantBinary: "windows binary", wantDownload: true},
-		{name: "wrong hash", goos: "linux", archive: linux, hash: sum([]byte("other")), wantErr: "SHA-256"},
-		{name: "override", goos: "linux", override: "/opt/agentmesh-one"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			downloads := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				downloads++
-				if _, err := w.Write(tt.archive); err != nil {
-					t.Errorf("writing: %v", err)
-				}
-			}))
-			t.Cleanup(srv.Close)
-			name := map[string]string{"linux": "agentmesh_Linux_x86_64.tar.gz", "windows": "agentmesh_Windows_x86_64.zip"}[tt.goos]
-			f := &Fetcher{
-				cacheDir: t.TempDir(), override: tt.override, hc: srv.Client(), goos: tt.goos, goarch: "amd64",
-				archives: map[string]string{name: tt.hash}, url: func(n string) string { return srv.URL + "/" + n },
-			}
-
-			path, err := f.Get(context.Background())
-
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("Fetcher.Get() error = %v, want one containing %q", err, tt.wantErr)
-				}
-				if _, err := os.Stat(f.Path()); !os.IsNotExist(err) {
-					t.Fatalf("Stat(%s) error = %v, want no binary after a failed check", f.Path(), err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Fetcher.Get() error = %v", err)
-			}
-			if tt.override != "" {
-				if path != tt.override || downloads != 0 {
-					t.Fatalf("Fetcher.Get() = %s after %d downloads, want the override and none", path, downloads)
-				}
-				return
-			}
-			data, err := os.ReadFile(path)
-			if err != nil || string(data) != tt.wantBinary {
-				t.Fatalf("the fetched binary = %q, %v, want %q", data, err, tt.wantBinary)
-			}
-			if _, err := f.Get(context.Background()); err != nil || downloads != 1 {
-				t.Fatalf("a second Fetcher.Get() = %v after %d downloads, want the cached binary", err, downloads)
-			}
-		})
 	}
 }

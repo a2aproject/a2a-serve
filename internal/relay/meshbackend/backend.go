@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -76,8 +75,11 @@ func New(opts Options) *Backend {
 
 var _ relay.Backend = (*Backend)(nil)
 
+// Name is the backend's name in the relay's output.
+const Name = "Agent Mesh"
+
 // Name returns "Agent Mesh".
-func (*Backend) Name() string { return "Agent Mesh" }
+func (*Backend) Name() string { return Name }
 
 // Version returns the Agent Mesh version the relay runs.
 func (*Backend) Version() string { return agentmesh.Version }
@@ -88,11 +90,7 @@ func (*Backend) Prepare(ctx context.Context, d relaydir.Dir, conf *relaydir.Reso
 	if err != nil {
 		return relay.Prepared{}, err
 	}
-	p := relay.Prepared{To: up.To, Backup: up.Backup}
-	if up.Upgraded() {
-		p.From = up.From
-	}
-	return p, nil
+	return relay.Prepared{From: up.From, To: up.To, Backup: up.Backup}, nil
 }
 
 // Info reports the versions the relay runs, which agents check before they
@@ -126,7 +124,7 @@ func (b *Backend) Start(ctx context.Context, s relay.Start) (relay.Running, erro
 }
 
 func (b *Backend) start(ctx context.Context, s relay.Start) (relay.Running, error) {
-	port, err := freePort()
+	port, err := relay.FreePort()
 	if err != nil {
 		return nil, err
 	}
@@ -298,51 +296,10 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess, 
 // whether another process took its port.
 func meshExitError(mesh *meshProcess, port int) error {
 	err := fmt.Errorf("agentmesh-one exited while starting: %v; its log says why", mesh.err)
-	if portTaken(port) {
+	if relay.PortTaken(port) {
 		return fmt.Errorf("%w: %w", errMeshPortTaken, err)
 	}
 	return err
-}
-
-// portTaken reports whether another process listens on port. freePort
-// can't reserve the port it returns.
-func portTaken(port int) bool {
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	if err != nil {
-		return errors.Is(err, syscall.EADDRINUSE)
-	}
-	closeLogged(ln)
-	return false
-}
-
-// Ports from freePortMin up to freePortMax lie below the ephemeral ranges of
-// Linux, macOS and Windows, and below the ports the agentsrv tests give their
-// agents, which run next to the relay tests.
-const (
-	freePortMin = 10000
-	freePortMax = 20000
-)
-
-// freePort returns a free loopback port for agentmesh-one, which listens on it
-// after it starts. The system hands out ephemeral ports to outgoing
-// connections and to listeners on port 0 too, so one of those would often be
-// taken by then; ports below the ephemeral range are only taken by another
-// program that listens on that exact port.
-func freePort() (int, error) {
-	for range 20 {
-		port := freePortMin + rand.IntN(freePortMax-freePortMin)
-		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-		if err != nil {
-			continue
-		}
-		return port, ln.Close()
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	return port, ln.Close()
 }
 
 func closeLogged(c io.Closer) {

@@ -17,7 +17,6 @@ package meshbackend
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -200,24 +199,6 @@ func TestStopStopsAgentMesh(t *testing.T) {
 	case <-r.Exited():
 	default:
 		t.Fatal("Running.Exited() is open after Stop")
-	}
-}
-
-func TestFreePortIsBelowTheEphemeralRange(t *testing.T) {
-	t.Parallel()
-	port, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort() error = %v", err)
-	}
-	if port < freePortMin || port >= freePortMax {
-		t.Fatalf("freePort() = %d, want in [%d, %d)", port, freePortMin, freePortMax)
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatalf("Listen() on the port from freePort() error = %v", err)
-	}
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
 	}
 }
 

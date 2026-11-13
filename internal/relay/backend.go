@@ -46,12 +46,16 @@ type Backend interface {
 	Start(ctx context.Context, s Start) (Running, error)
 }
 
-// Prepared reports an upgrade of a backend's data: the versions it went
-// from and to, and the backup taken first. From is empty when nothing was
-// upgraded.
+// Prepared reports what a backend did to its data: the versions it went
+// from and to, and the backup taken first. From is empty on the first run.
 type Prepared struct {
-	From, To, Backup string
+	From   string `json:"from,omitempty"`
+	To     string `json:"to"`
+	Backup string `json:"backup,omitempty"`
 }
+
+// Upgraded reports whether the data moved to a newer version.
+func (p Prepared) Upgraded() bool { return p.From != "" && p.From != p.To }
 
 // Start is what a backend starts with.
 type Start struct {

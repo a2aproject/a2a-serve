@@ -35,6 +35,12 @@ import (
 // TunnelCloudflare runs a Cloudflare quick tunnel to the relay.
 const TunnelCloudflare = "cloudflare"
 
+// Backends a relay runs.
+const (
+	BackendAgentMesh = "agentmesh"
+	BackendSLIM      = "slim"
+)
+
 // DefaultListen is where the relay serves HTTP unless --listen says otherwise.
 const DefaultListen = "127.0.0.1:8443"
 
@@ -53,7 +59,10 @@ type Config struct {
 	// Listen is the address the relay serves HTTP on.
 	Listen string `yaml:"listen,omitempty"`
 	// Tunnel publishes the relay through a tunnel, which gives it its URL.
-	Tunnel     string `yaml:"tunnel,omitempty"`
+	Tunnel string `yaml:"tunnel,omitempty"`
+	// Backend is the network the relay runs: agentmesh, the default, or
+	// slim.
+	Backend    string `yaml:"backend,omitempty"`
 	AdminToken string `yaml:"admin_token,omitempty"`
 	// Database is a PostgreSQL DSN; without it the relay uses SQLite.
 	Database string `yaml:"database,omitempty"`
@@ -64,6 +73,14 @@ type Config struct {
 	// in with.
 	GoogleClientID     string `yaml:"google_client_id,omitempty"`
 	GoogleClientSecret string `yaml:"google_client_secret,omitempty"`
+}
+
+// BackendName returns the backend the relay runs.
+func (c *Config) BackendName() string {
+	if c.Backend == "" {
+		return BackendAgentMesh
+	}
+	return c.Backend
 }
 
 // SignIn reports whether people may sign in to the relay.
@@ -85,6 +102,7 @@ type Settings struct {
 	URL                string
 	Listen             string
 	Tunnel             string
+	Backend            string
 	AdminToken         string
 	Database           string
 	AllowEmails        []string
@@ -148,6 +166,21 @@ func (d Dir) ApplySettings(s Settings) (*Config, agentdir.Secrets, error) {
 	default:
 		c.Tunnel = s.Tunnel
 	}
+	if s.Backend != "" && s.Backend != c.BackendName() {
+		ran, err := d.hasRun(c)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ran {
+			return nil, nil, agenterr.Invalidf("the relay in %s runs %s, and its members live there; run a %s relay in another directory", d.Root, c.BackendName(), s.Backend)
+		}
+	}
+	if s.Backend != "" {
+		c.Backend = s.Backend
+		if c.Backend == BackendAgentMesh {
+			c.Backend = ""
+		}
+	}
 	if s.AdminToken != "" {
 		if c.AdminToken, err = secretInput("admin-token", s.AdminToken, AdminTokenSecret, secrets); err != nil {
 			return nil, nil, err
@@ -195,6 +228,20 @@ func (d Dir) ApplySettings(s Settings) (*Config, agentdir.Secrets, error) {
 	return c, secrets, nil
 }
 
+// hasRun reports whether the relay ran on the backend of c, so that its
+// members live there.
+func (d Dir) hasRun(c *Config) (bool, error) {
+	dir := d.MeshDir()
+	if c.BackendName() == BackendSLIM {
+		dir = d.SlimDir()
+	}
+	_, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func secretInput(flag, v, fallback string, secrets agentdir.Secrets) (string, error) {
 	ref, s, err := agentdir.ResolveInput(v, fallback)
 	if err != nil {
@@ -234,6 +281,18 @@ func (c *Config) Validate() error {
 	case "", TunnelCloudflare:
 	default:
 		return agenterr.Invalidf("unknown tunnel %q; want %s", c.Tunnel, TunnelCloudflare)
+	}
+	switch c.BackendName() {
+	case BackendAgentMesh:
+	case BackendSLIM:
+		if c.Database != "" {
+			return agenterr.Invalidf("a SLIM relay keeps its members in the relay directory; drop --database with --database none")
+		}
+		if c.SignIn() {
+			return agenterr.Invalidf("people can't sign in to a SLIM relay yet; join agents with invites, and turn sign-in off with --allow-email none")
+		}
+	default:
+		return agenterr.Invalidf("unknown backend %q; want %s or %s", c.Backend, BackendAgentMesh, BackendSLIM)
 	}
 	if c.Tunnel != "" && c.URL != "" {
 		return agenterr.Invalidf("a quick tunnel gives the relay a new URL on every start; drop --url, or drop the tunnel with --tunnel none")

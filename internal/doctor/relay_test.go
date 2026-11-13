@@ -201,7 +201,7 @@ func TestRunRelay(t *testing.T) {
 				return tt.status, nil
 			}
 
-			got := relayChecks(context.Background(), env, RelayOptions{Dir: d, Binary: filepath.Join(t.TempDir(), "agentmesh-one"), Online: tt.online})
+			got := relayChecks(context.Background(), env, RelayOptions{Dir: d, Binary: filepath.Join(t.TempDir(), "agentmesh-one"), Program: "agentmesh-one", Version: agentmesh.Version, Online: tt.online})
 
 			if diff := cmp.Diff(tt.want, checks(got)); diff != "" {
 				t.Fatalf("relayChecks() wrong result (-want +got) diff = %s\n%+v", diff, got)
@@ -215,7 +215,7 @@ func TestRunRelaySkipsCLIChecks(t *testing.T) {
 	d := newTestRelayDir(t, "https://relay.example.com")
 	env := newFakeMachine(t).Env()
 
-	got := RunRelay(context.Background(), env, RelayOptions{Dir: d, Binary: filepath.Join(t.TempDir(), "agentmesh-one")})
+	got := RunRelay(context.Background(), env, RelayOptions{Dir: d, Binary: filepath.Join(t.TempDir(), "agentmesh-one"), Program: "agentmesh-one", Version: agentmesh.Version})
 
 	want := []check{{"relay-config", StatusOK}, {"agentmesh-one", StatusOK}, {"relay-data", StatusOK}}
 	if diff := cmp.Diff(want, checks(got)); diff != "" {

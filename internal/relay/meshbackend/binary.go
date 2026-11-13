@@ -16,130 +16,40 @@ package meshbackend
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/download"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // BinaryEnv names an agentmesh-one to run in place of the pinned release,
 // such as the one in the relay image.
 const BinaryEnv = "A2A_SERVE_AGENTMESH_ONE"
 
-// Fetcher gets the pinned agentmesh-one.
-type Fetcher struct {
-	// cacheDir keeps downloaded binaries, one directory per version.
-	cacheDir string
-	// override is the binary of [BinaryEnv], used instead of a download.
-	override string
-	hc       *http.Client
-	// goos and goarch select the release archive.
-	goos, goarch string
-	// archives maps archive names to their SHA-256.
-	archives map[string]string
-	// url returns where an archive is downloaded from.
-	url  func(name string) string
-	logf func(string, ...any)
-}
-
-// NewFetcher returns a fetcher of the pinned release for this platform.
-func NewFetcher(cacheDir, override string, hc *http.Client, goos, goarch string, logf func(string, ...any)) *Fetcher {
-	return &Fetcher{
-		cacheDir: cacheDir, override: override, hc: hc, goos: goos, goarch: goarch,
-		archives: agentmesh.Archives, url: agentmesh.ArchiveURL, logf: logf,
-	}
-}
-
-func (f *Fetcher) binaryName() string {
-	if f.goos == "windows" {
-		return "agentmesh-one.exe"
-	}
-	return "agentmesh-one"
-}
-
-// Path returns where the pinned binary is cached.
-func (f *Fetcher) Path() string {
-	return filepath.Join(f.cacheDir, "agentmesh-"+agentmesh.Version, f.binaryName())
-}
-
-// Location returns where the pinned agentmesh-one is: the override, or the
-// cache it is downloaded to.
-func (f *Fetcher) Location() string {
-	if f.override != "" {
-		return f.override
-	}
-	return f.Path()
-}
-
-// Get returns the path of the pinned agentmesh-one: the override, the
-// cached binary, or one downloaded from the release and checked against its
-// SHA-256.
-func (f *Fetcher) Get(ctx context.Context) (string, error) {
-	if f.override != "" {
-		return f.override, nil
-	}
-	path := f.Path()
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	}
-	name, err := agentmesh.ArchiveName(f.goos, f.goarch)
-	if err != nil {
-		return "", err
-	}
-	sum, ok := f.archives[name]
-	if !ok {
-		return "", fmt.Errorf("no checksum of %s in this a2a-serve", name)
-	}
-	f.progress("… downloading agentmesh-one %s", agentmesh.Version)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	archive, err := os.CreateTemp(filepath.Dir(path), name+".*")
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if err := errors.Join(archive.Close(), os.Remove(archive.Name())); err != nil && !errors.Is(err, os.ErrClosed) {
-			slog.Debug("removing the downloaded archive", "error", err)
+// Release is the pinned agentmesh-one.
+var Release = download.Release{
+	Program:  "agentmesh-one",
+	Version:  agentmesh.Version,
+	CacheDir: "agentmesh-" + agentmesh.Version,
+	Binary: func(goos string) string {
+		if goos == "windows" {
+			return "agentmesh-one.exe"
 		}
-	}()
-	if err := f.download(ctx, f.url(name), archive, sum); err != nil {
-		return "", err
-	}
-	data, err := extract(archive, name, f.binaryName())
-	if err != nil {
-		return "", fmt.Errorf("extracting agentmesh-one from %s: %w", name, err)
-	}
-	if err := fsutil.WriteAtomic(path, data, 0o755); err != nil {
-		return "", err
-	}
-	return path, nil
+		return "agentmesh-one"
+	},
+	Archive:  agentmesh.ArchiveName,
+	Archives: agentmesh.Archives,
+	URL:      agentmesh.ArchiveURL,
 }
 
-func (f *Fetcher) download(ctx context.Context, url string, dst *os.File, want string) error {
-	if _, err := download.ToFile(ctx, f.hc, url, dst, want); err != nil {
-		return fmt.Errorf("downloading agentmesh-one: %w", err)
-	}
-	return nil
-}
-
-func extract(archive *os.File, archiveName, binary string) ([]byte, error) {
-	return download.Extract(archive, archiveName, binary)
-}
-
-func (f *Fetcher) progress(format string, args ...any) {
-	if f.logf != nil {
-		f.logf(format, args...)
-	}
+// NewFetcher returns a fetcher of the pinned agentmesh-one for goos and
+// goarch, or of override when it is set.
+func NewFetcher(cacheDir, override string, hc *http.Client, goos, goarch string, logf func(string, ...any)) *download.Fetcher {
+	return download.NewFetcher(Release, cacheDir, override, hc, goos, goarch, logf)
 }
 
 // BinaryVersion returns the version agentmesh-one at path reports.

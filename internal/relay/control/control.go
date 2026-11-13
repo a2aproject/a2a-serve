@@ -24,8 +24,23 @@ import (
 
 // Versions are the versions a relay runs.
 type Versions struct {
-	A2AServe  string `json:"a2aServe"`
-	AgentMesh string `json:"agentMesh"`
+	A2AServe string `json:"a2aServe"`
+	// Backend names the network the relay runs, such as Agent Mesh, and
+	// BackendVersion is its version.
+	Backend        string `json:"backend,omitempty"`
+	BackendVersion string `json:"backendVersion,omitempty"`
+	// AgentMesh is set on relays that run Agent Mesh, as relays did before
+	// they named their backend.
+	AgentMesh string `json:"agentMesh,omitempty"`
+}
+
+// BackendOrDefault returns the backend's name and version, which relays
+// that predate backends report as AgentMesh.
+func (v Versions) BackendOrDefault() (name, version string) {
+	if v.Backend == "" {
+		return "Agent Mesh", v.AgentMesh
+	}
+	return v.Backend, v.BackendVersion
 }
 
 // Status describes a running relay.

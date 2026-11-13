@@ -156,6 +156,22 @@ func TestApplySettings(t *testing.T) {
 			want:        &Config{URL: "https://relay.example.com"},
 			wantSecrets: agentdir.Secrets{},
 		},
+		{
+			name:        "SLIM backend",
+			settings:    Settings{URL: "https://relay.example.com", Backend: "slim"},
+			want:        &Config{URL: "https://relay.example.com", Backend: "slim"},
+			wantSecrets: agentdir.Secrets{},
+		},
+		{
+			name:        "the default backend isn't saved",
+			saved:       &Config{URL: "https://relay.example.com", Backend: "slim"},
+			settings:    Settings{Backend: "agentmesh"},
+			want:        &Config{URL: "https://relay.example.com"},
+			wantSecrets: agentdir.Secrets{},
+		},
+		{name: "unknown backend", settings: Settings{URL: "https://relay.example.com", Backend: "libp2p"}, wantErr: true},
+		{name: "SLIM backend with a database", settings: Settings{URL: "https://relay.example.com", Backend: "slim", Database: "env:TEST_RELAY_DSN"}, wantErr: true},
+		{name: "SLIM backend with sign-in", settings: Settings{URL: "https://relay.example.com", Backend: "slim", AllowEmails: []string{"anna@example.org"}, GoogleClientID: "app", GoogleClientSecret: "gsecret"}, wantErr: true},
 		{name: "allow-email without the Google app", settings: Settings{URL: "https://relay.example.com", AllowEmails: []string{"anna@example.org"}}, wantErr: true},
 		{name: "Google app without allow-email", settings: Settings{URL: "https://relay.example.com", GoogleClientID: "app", GoogleClientSecret: "gsecret"}, wantErr: true},
 		{name: "client ID without its secret", settings: Settings{URL: "https://relay.example.com", AllowEmails: []string{"anna@example.org"}, GoogleClientID: "app"}, wantErr: true},
@@ -200,6 +216,22 @@ func TestApplySettings(t *testing.T) {
 				t.Fatalf("ApplySettings() wrong secrets (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestApplySettingsKeepsTheBackendARelayRanOn(t *testing.T) {
+	d := newDir(t)
+	if _, err := d.SaveSettings(Settings{URL: "https://relay.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d.MeshDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := d.ApplySettings(Settings{Backend: "slim"})
+
+	if !agenterr.IsRequest(err) {
+		t.Fatalf("ApplySettings() of another backend after a run error = %v, want an invalid request", err)
 	}
 }
 

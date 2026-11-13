@@ -21,11 +21,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +36,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/logfile"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
@@ -52,9 +48,10 @@ func newRelayRunCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the relay of this directory, creating it on the first run",
-		Long: `Run a relay: one process that serves HTTP on --listen and runs Agent Mesh's
-agentmesh-one behind it on loopback, at the version this a2a-serve pins. The
-first run creates the relay directory here and downloads agentmesh-one.
+		Long: `Run a relay: one process that serves HTTP on --listen and runs a network
+behind it on loopback, at the version this a2a-serve pins: Agent Mesh's
+agentmesh-one, or with --backend slim a SLIM node. The first run creates the
+relay directory here and downloads that program.
 
 The relay needs an address that doesn't change, since agents and pairing
 tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
@@ -68,13 +65,15 @@ join with ` + "`a2a-serve relay invite`" + `.
 
 The flags are saved in .a2a/relay.yaml, so later runs need none. A newer
 a2a-serve that pins a newer Agent Mesh backs up the relay's database first,
-and an older one refuses to run on it.
+and an older one refuses to run on it. A SLIM relay joins agents with
+invites only, and keeps its members in the relay directory.
 
 ` + flagparse.SecretHelp,
 		Example: `  a2a-serve relay run --url https://relay.example.com
   a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
     --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
   a2a-serve relay run --tunnel cloudflare
+  a2a-serve relay run --url https://relay.example.com --backend slim
   a2a-serve relay run --service`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -90,7 +89,12 @@ and an older one refuses to run on it.
 			if err := saveRelaySettings(cmd, cfg, d, s); err != nil {
 				return err
 			}
-			bin, err := agentmeshOne(cmd.Context(), cfg)
+			conf, err := d.ReadConfig()
+			if err != nil {
+				return err
+			}
+			b := relayBackendOf(conf)
+			bin, err := b.binary(cmd.Context(), cfg)
 			if err != nil {
 				return err
 			}
@@ -100,13 +104,14 @@ and an older one refuses to run on it.
 				}
 				return installRelayService(cmd.Context(), cfg, d)
 			}
-			return runRelay(cmd.Context(), cfg, d, bin, release)
+			return runRelay(cmd.Context(), cfg, d, b, bin, release)
 		},
 	}
 	fs := cmd.Flags()
 	fs.StringVar(&f.dir, "dir", "", "Relay directory (default: the nearest relay directory up from the current one, or else the current directory)")
 	fs.StringVar(&s.URL, "url", "", "The relay's address, which agents join: https://..., or http:// on loopback")
 	fs.StringVar(&s.Listen, "listen", "", "Address to serve HTTP on (default "+relaydir.DefaultListen+")")
+	fs.StringVar(&s.Backend, "backend", "", "The network the relay runs: "+relaydir.BackendAgentMesh+", the default, or "+relaydir.BackendSLIM+"; set on the first run")
 	fs.StringVar(&s.Tunnel, "tunnel", "", "Publish the relay through a Cloudflare quick tunnel (cloudflare, or none); needs cloudflared on PATH")
 	fs.StringVar(&s.AdminToken, "admin-token", "", "The relay's admin token, at least 32 characters, as a "+flagparse.SecretSyntax+" (default: generated on the first run)")
 	fs.StringVar(&s.Database, "database", "", "A PostgreSQL DSN, as a "+flagparse.SecretSyntax+" (default: SQLite in the relay directory; none goes back to it)")
@@ -115,6 +120,7 @@ and an older one refuses to run on it.
 	fs.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of the relay's Google app, as a "+flagparse.SecretSyntax)
 	fs.BoolVar(&runService, "service", false, "Install and start the relay as a launchd or systemd user service")
 	must(cmd.RegisterFlagCompletionFunc("tunnel", fixedCompletions(relaydir.TunnelCloudflare, "none")))
+	must(cmd.RegisterFlagCompletionFunc("backend", fixedCompletions(relaydir.BackendAgentMesh, relaydir.BackendSLIM)))
 	return cmd
 }
 
@@ -214,49 +220,10 @@ func confirmURLChange(cfg *globalConfig, from, to string) error {
 	return nil
 }
 
-// agentmeshOnePath returns where the pinned agentmesh-one is, or is
-// downloaded to.
-func agentmeshOnePath() (string, error) {
-	f, err := newFetcher(nil, nil)
-	if err != nil {
-		return "", err
-	}
-	return f.Location(), nil
-}
-
-func newFetcher(hc *http.Client, logf func(string, ...any)) (*meshbackend.Fetcher, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return nil, err
-	}
-	return meshbackend.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(meshbackend.BinaryEnv), hc, runtime.GOOS, runtime.GOARCH, logf), nil
-}
-
-// agentmeshOne returns the pinned agentmesh-one, downloading it if needed.
-func agentmeshOne(ctx context.Context, cfg *globalConfig) (string, error) {
-	hc := &http.Client{Timeout: 10 * time.Minute, Transport: cfg.httpTransport}
-	f, err := newFetcher(hc, func(format string, args ...any) {
-		if _, err := fmt.Fprintf(cfg.progress(), format+"\n", args...); err != nil {
-			slog.Debug("writing progress", "error", err)
-		}
-	})
-	if err != nil {
-		return "", err
-	}
-	bin, err := f.Get(ctx)
-	if err != nil {
-		return "", err
-	}
-	if err := meshbackend.CheckBinary(ctx, bin); err != nil {
-		return "", err
-	}
-	return bin, nil
-}
-
 // runRelay runs the relay in the foreground, with its lock held until
 // release. When `relay upgrade` asks it to restart, it runs the a2a-serve
 // binary on disk in its place.
-func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string, release func() error) error {
+func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, b relayBackend, bin string, release func() error) error {
 	conf, err := d.ReadConfig()
 	if err != nil {
 		return err
@@ -267,7 +234,7 @@ func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string
 			return errors.New("--tunnel cloudflare needs cloudflared on PATH; install it from Cloudflare's downloads page")
 		}
 	}
-	meshLog, closeLog, err := relayMeshLog(cfg, d)
+	backendLog, closeLog, err := relayBackendLog(cfg, d, b)
 	if err != nil {
 		return err
 	}
@@ -275,9 +242,9 @@ func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string
 	ctx, stop := signalContext(ctx)
 	defer stop()
 	err = relay.New(relay.Options{
-		Dir: d, Backend: meshbackend.New(meshbackend.Options{Binary: bin, Log: meshLog, Now: time.Now}),
+		Dir: d, Backend: b.newFunc(bin, backendLog),
 		Cloudflared: cloudflared, A2AServe: buildVersionInfo().Version, Google: googleauth.Google,
-		Out: cfg.Out, TunnelLog: meshLog, Now: time.Now,
+		Out: cfg.Out, TunnelLog: backendLog, Now: time.Now,
 	}).Run(ctx)
 	if !errors.Is(err, relay.ErrRestart) {
 		return err
@@ -289,10 +256,11 @@ func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string
 	return relay.Reexec(d.Root)
 }
 
-// relayMeshLog returns where the output of agentmesh-one goes: the relay's
-// log, rotated, when someone watches the terminal or a service manager
-// writes stderr to the log, and stderr otherwise, which Cloud Run collects.
-func relayMeshLog(cfg *globalConfig, d relaydir.Dir) (io.Writer, func(), error) {
+// relayBackendLog returns where the output of the relay's backend goes: the
+// relay's log, rotated, when someone watches the terminal or a service
+// manager writes stderr to the log, and stderr otherwise, which Cloud Run
+// collects.
+func relayBackendLog(cfg *globalConfig, d relaydir.Dir, b relayBackend) (io.Writer, func(), error) {
 	toLog := writesTo(os.Stderr, d.LogPath())
 	if out, ok := cfg.Out.(*os.File); !toLog && (cfg.verbose || !ok || !term.IsTerminal(int(out.Fd()))) {
 		return cfg.stderr(), func() {}, nil
@@ -305,7 +273,7 @@ func relayMeshLog(cfg *globalConfig, d relaydir.Dir) (io.Writer, func(), error) 
 		return nil, nil, err
 	}
 	if !toLog {
-		if _, err := fmt.Fprintf(cfg.Out, "  (Agent Mesh logs to %s)\n", d.LogPath()); err != nil {
+		if _, err := fmt.Fprintf(cfg.Out, "  (%s logs to %s)\n", b.name, d.LogPath()); err != nil {
 			return nil, nil, errors.Join(err, log.Close())
 		}
 	}
@@ -327,8 +295,10 @@ func installRelayService(ctx context.Context, cfg *globalConfig, d relaydir.Dir)
 		return err
 	}
 	env := []string{"PATH=" + os.Getenv("PATH")}
-	if v := os.Getenv(meshbackend.BinaryEnv); v != "" {
-		env = append(env, meshbackend.BinaryEnv+"="+v)
+	for _, b := range relayBackends {
+		if v := os.Getenv(b.binaryEnv); v != "" {
+			env = append(env, b.binaryEnv+"="+v)
+		}
 	}
 	note, err := service.Install(service.Unit{
 		Name:        d.ServiceName(),

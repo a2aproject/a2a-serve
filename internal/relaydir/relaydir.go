@@ -114,6 +114,10 @@ func (d Dir) MeshDir() string { return filepath.Join(d.StateDir(), "agentmesh") 
 // MeshDBPath returns the SQLite database of agentmesh-one.
 func (d Dir) MeshDBPath() string { return filepath.Join(d.MeshDir(), "agentmesh.db") }
 
+// SlimDir returns the data directory of a SLIM relay: its node's config and
+// its members.
+func (d Dir) SlimDir() string { return filepath.Join(d.StateDir(), "slim") }
+
 // RemovedAgentsPath is where the relay remembers the agents it removed.
 func (d Dir) RemovedAgentsPath() string { return filepath.Join(d.StateDir(), "removed-agents.json") }
 
