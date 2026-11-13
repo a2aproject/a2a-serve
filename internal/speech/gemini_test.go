@@ -459,8 +459,7 @@ func TestGeminiErrorsNameNoURLOrKey(t *testing.T) {
 	t.Cleanup(slow.Close)
 	refusing := newGeminiServer(t, http.StatusBadRequest, apiKeyInvalid)
 	echoing := newGeminiServer(t, http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid request.","status":"INVALID_ARGUMENT"}}`)
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
+	unreachable := unreachableURL(t)
 	tests := []struct {
 		name       string
 		url        string
@@ -470,7 +469,7 @@ func TestGeminiErrorsNameNoURLOrKey(t *testing.T) {
 		{name: "timeout", url: slow.URL + "/v1beta", timeout: 50 * time.Millisecond, wantReason: "the speech service timed out"},
 		{name: "refused", url: refusing.URL(), timeout: time.Minute, wantReason: "the speech service refused the key"},
 		{name: "bad request", url: echoing.URL(), timeout: time.Minute, wantReason: "the speech service refused the request: Invalid request."},
-		{name: "unreachable", url: closed.URL + "/v1beta", timeout: time.Minute, wantReason: "couldn't reach the speech service"},
+		{name: "unreachable", url: unreachable + "/v1beta", timeout: time.Minute, wantReason: "couldn't reach the speech service"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -333,6 +334,33 @@ func TestSpeak(t *testing.T) {
 	}
 }
 
+// unreachableURL returns the URL of a listener that closes every connection.
+// It stays open for the test, so a parallel test can't take its port.
+func unreachableURL(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("closing the listener: %v", err)
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if err := c.Close(); err != nil {
+				t.Logf("closing a connection: %v", err)
+			}
+		}
+	}()
+	return "http://" + ln.Addr().String()
+}
+
 func TestErrorsNameNoURLOrKey(t *testing.T) {
 	t.Parallel()
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +372,7 @@ func TestErrorsNameNoURLOrKey(t *testing.T) {
 	}))
 	t.Cleanup(slow.Close)
 	refusing := speechtest.NewServer(t, speechtest.Options{Key: "sk-right"})
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
+	unreachable := unreachableURL(t)
 	tests := []struct {
 		name       string
 		url        string
@@ -354,7 +381,7 @@ func TestErrorsNameNoURLOrKey(t *testing.T) {
 	}{
 		{name: "timeout", url: slow.URL + "/v1", timeout: 50 * time.Millisecond, wantReason: "the speech service timed out"},
 		{name: "refused", url: refusing.URL(), timeout: time.Minute, wantReason: "the speech service refused the key"},
-		{name: "unreachable", url: closed.URL + "/v1", timeout: time.Minute, wantReason: "couldn't reach the speech service"},
+		{name: "unreachable", url: unreachable + "/v1", timeout: time.Minute, wantReason: "couldn't reach the speech service"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
