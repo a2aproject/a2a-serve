@@ -1,9 +1,8 @@
 # Agent Mesh Relay (Experimental)
 
-[Tailscale, Telegram and a Grok Bot](../02-tailscale-telegram-grok/README.md) put an agent on a tailnet. This example puts two agents on an
-[Agent Mesh](https://google.github.io/agentmesh/) relay: no Tailscale
-account, agents reachable from behind NAT, and a public URL for each on the
-relay.
+This example puts two agents on an [Agent Mesh](https://google.github.io/agentmesh/)
+relay. The agents reach each other from behind NAT, and each gets a public
+URL on the relay.
 
 ![Two agents calling each other over an Agent Mesh relay](./demo.gif)
 
