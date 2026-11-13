@@ -105,7 +105,7 @@ func (p *Pins) checkLocked(dir string) error {
 
 // PrepareHome makes the home of spec a real directory and pins it. With
 // Docker, it first refuses paths that the agent could have redirected, as
-// [Prepared.Check] does. Call it before writing into the home.
+// [Prepared.Start] does. Call it before writing into the home.
 func PrepareHome(spec Spec) error {
 	if spec.Sandbox == "" || spec.Sandbox == SandboxDocker {
 		if err := checkPaths(spec); err != nil {

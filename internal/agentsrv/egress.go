@@ -86,18 +86,15 @@ func (e *egressSockets) probeOnce(probe func() error) error {
 		return e.probeErr
 	}
 	err := probe()
-	if _, setup := errors.AsType[*sandbox.EgressSetupError](err); err == nil || setup {
+	if err == nil || errors.Is(err, sandbox.ErrNoBoundary) {
 		e.probeErr, e.probed = err, true
 	}
 	return err
 }
 
-// watch adds fellBack, which tells whether a container fell back to
-// Docker's own network, to what status reports, until forget.
+// watch adds fellBack, which tells why a container has Docker's own
+// network, to what status reports, until forget.
 func (e *egressSockets) watch(fellBack func() string) (forget func()) {
-	if fellBack == nil {
-		return func() {}
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	id := e.nextWatch

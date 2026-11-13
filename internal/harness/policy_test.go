@@ -141,13 +141,13 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
 
-			if got := slices.Contains(bindMounts(p.Args), policy+":/etc/claude-code:ro"); got != tc.want {
-				t.Fatalf("Prepare() mounts %q, want the policy mounted: %t", bindMounts(p.Args), tc.want)
+			if got := slices.Contains(bindMounts(output(t, p)), policy+":/etc/claude-code:ro"); got != tc.want {
+				t.Fatalf("Prepare() mounts %q, want the policy mounted: %t", bindMounts(output(t, p)), tc.want)
 			}
 		})
 	}

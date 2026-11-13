@@ -60,8 +60,8 @@ func startDocker(t *testing.T, spec Spec) (*Prepared, error) {
 	p, err := Prepare(context.Background(), spec)
 	if err == nil {
 		t.Cleanup(func() {
-			if err := p.Stop(context.Background()); err != nil {
-				t.Errorf("Stop() error = %v", err)
+			if err := p.Close(context.Background()); err != nil {
+				t.Errorf("Prepared.Close() error = %v", err)
 			}
 		})
 	}
@@ -329,8 +329,8 @@ func TestPreparedCheck(t *testing.T) {
 
 			tc.change(t, l, data)
 
-			if err := p.Check(); (err != nil) != tc.wantErr {
-				t.Fatalf("Prepared.Check() error = %v, want error %v", err, tc.wantErr)
+			if err := startErr(t, p); (err != nil) != tc.wantErr {
+				t.Fatalf("Prepared.Start() error = %v, want error %v", err, tc.wantErr)
 			}
 		})
 	}

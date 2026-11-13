@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
@@ -36,7 +39,8 @@ import (
 func TestPrepareLocal(t *testing.T) {
 	t.Parallel()
 	ws, home := t.TempDir(), t.TempDir()
-	profile, err := Lookup("opencode", []string{"my-acp", "--flag"})
+	command := printCommand(t, "--flag")
+	profile, err := Lookup("opencode", command)
 	if err != nil {
 		t.Fatalf("Lookup() error = %v", err)
 	}
@@ -53,19 +57,20 @@ func TestPrepareLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
-	if !slices.Equal(p.Args, []string{"my-acp", "--flag"}) {
-		t.Fatalf("Prepare() args = %v, want the custom command", p.Args)
+	out := output(t, p)
+	if !slices.Equal(out[:2], command) {
+		t.Fatalf("Prepared.Start() ran %v, want the custom command %v", out[:2], command)
 	}
 	for _, want := range []string{"API_KEY=k", EnvUnixSocket + "=/run/agent/a2a.sock", "PATH=/opt/a2a/bin" + string(os.PathListSeparator)} {
-		if !slices.ContainsFunc(p.Env, func(kv string) bool { return strings.HasPrefix(kv, want) }) {
-			t.Fatalf("Prepare() env is missing %q", want)
+		if !slices.ContainsFunc(out, func(kv string) bool { return strings.HasPrefix(kv, want) }) {
+			t.Fatalf("Prepared.Start() env is missing %q", want)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); err != nil {
 		t.Fatalf("Prepare() did not bootstrap the harness home: %v", err)
 	}
-	if err := p.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop() error = %v", err)
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatalf("Prepared.Close() error = %v", err)
 	}
 }
 
@@ -101,12 +106,12 @@ func TestPrepareLocalChecksCommand(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Prepare() error = %v", err)
 			}
-			err = p.Check()
+			err = startErr(t, p)
 			if tc.wantErr == "" && err != nil {
-				t.Fatalf("Prepared.Check() error = %v, want nil", err)
+				t.Fatalf("Prepared.Start() error = %v, want nil", err)
 			}
 			if tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr) {
-				t.Fatalf("Prepared.Check() error = %v, want %q", err, tc.wantErr)
+				t.Fatalf("Prepared.Start() error = %v, want %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -115,10 +120,9 @@ func TestPrepareLocalChecksCommand(t *testing.T) {
 func TestPrepareModel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		command []string
-		model   string
-		want    []string
+		name  string
+		model string
+		want  []string
 	}{
 		{name: "opencode", model: "openrouter/a/b", want: []string{
 			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true},"model":"openrouter/a/b"}`,
@@ -127,15 +131,14 @@ func TestPrepareModel(t *testing.T) {
 			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true}}`,
 		}},
 		{name: "claude", model: "sonnet", want: []string{"ANTHROPIC_MODEL=sonnet"}},
-		{name: "claude", command: []string{"my-claude"}, model: "opus", want: []string{"ANTHROPIC_MODEL=opus"}},
 		{name: "claude"},
-		{name: "gemini", command: []string{"gemini"}, model: "m"},
+		{name: "gemini", model: "m"},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name+strings.Join(tc.command, "_")+tc.model, func(t *testing.T) {
+		t.Run(tc.name+tc.model, func(t *testing.T) {
 			t.Parallel()
 			ws := t.TempDir()
-			profile, err := Lookup(tc.name, tc.command)
+			profile, err := Lookup(tc.name, printCommand(t))
 			if err != nil {
 				t.Fatalf("Lookup() error = %v", err)
 			}
@@ -151,7 +154,7 @@ func TestPrepareModel(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			var got []string
-			for _, kv := range p.Env {
+			for _, kv := range output(t, p) {
 				if strings.HasPrefix(kv, "ANTHROPIC_MODEL=") || strings.Contains(kv, "_CONFIG_CONTENT=") {
 					got = append(got, kv)
 				}
@@ -166,15 +169,13 @@ func TestPrepareModel(t *testing.T) {
 func TestPrepareProviderKeyAliases(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		agent   string
-		command []string
-		env     []string
-		want    []string
+		name  string
+		agent string
+		env   []string
+		want  []string
 	}{
 		{name: "gemini key for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
 		{name: "google key for opencode", agent: "opencode", env: []string{"GOOGLE_API_KEY=k"}, want: []string{"GOOGLE_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
-		{name: "gemini key for opencode with a command", agent: "opencode", command: []string{"opencode", "acp"}, env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
 		{name: "both keys for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}, want: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}},
 		{name: "gemini key for claude", agent: "claude", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k"}},
 	}
@@ -182,7 +183,7 @@ func TestPrepareProviderKeyAliases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ws := t.TempDir()
-			profile, err := Lookup(tc.agent, tc.command)
+			profile, err := Lookup(tc.agent, printCommand(t))
 			if err != nil {
 				t.Fatalf("Lookup() error = %v", err)
 			}
@@ -198,7 +199,7 @@ func TestPrepareProviderKeyAliases(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			var got []string
-			for _, kv := range p.Env {
+			for _, kv := range output(t, p) {
 				if name, _, _ := strings.Cut(kv, "="); slices.Contains([]string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"}, name) {
 					got = append(got, kv)
 				}
@@ -212,9 +213,11 @@ func TestPrepareProviderKeyAliases(t *testing.T) {
 }
 
 // runningDocker runs rootful, has every image and removes any container.
+// docker run prints its arguments, one per line.
 const runningDocker = `case "$1" in
 info) echo "[name=seccomp,profile=builtin]" ;;
 image|rm) ;;
+run) shift; printf '%s\n' "$@" ;;
 *) echo "fake docker: $1 failed" >&2; exit 1 ;;
 esac
 `
@@ -235,18 +238,18 @@ func TestPrepareDocker(t *testing.T) {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := p.Stop(context.Background()); err != nil {
-			t.Errorf("Stop() error = %v", err)
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
 		}
 	})
 	var mounts []string
 	var envFile string
-	for i := 0; i+1 < len(p.Args); i++ {
-		switch p.Args[i] {
+	for i := 0; i+1 < len(output(t, p)); i++ {
+		switch output(t, p)[i] {
 		case "-v":
-			mounts = append(mounts, p.Args[i+1])
+			mounts = append(mounts, output(t, p)[i+1])
 		case "--env-file":
-			envFile = p.Args[i+1]
+			envFile = output(t, p)[i+1]
 		}
 	}
 	wantMounts := []string{ws + ":" + ws, sockDir + ":" + SandboxDir + ":ro", home + ":" + ContainerHome}
@@ -293,8 +296,8 @@ func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := p.Stop(context.Background()); err != nil {
-			t.Errorf("Stop() error = %v", err)
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
 		}
 	})
 	calls, err := os.ReadFile(log)
@@ -304,8 +307,8 @@ func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 	if want := "pull example.com/egress:test"; !strings.Contains(string(calls), want) {
 		t.Fatalf("Prepare() docker calls = %q, want them to contain %q", calls, want)
 	}
-	if want := "the egress container's image isn't available"; !strings.Contains(p.EgressProblem, want) {
-		t.Fatalf("Prepare().EgressProblem = %q, want it to contain %q", p.EgressProblem, want)
+	if want := "the egress container's image isn't available"; !strings.Contains(p.NoBoundary(), want) {
+		t.Fatalf("Prepare().NoBoundary() = %q, want it to contain %q", p.NoBoundary(), want)
 	}
 }
 
@@ -323,8 +326,12 @@ func TestPrepareCLITimeout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ws := t.TempDir()
+			profile, err := Lookup("claude", printCommand(t))
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
 			p, err := Prepare(context.Background(), Spec{
-				Profile: claude{},
+				Profile: profile,
 				Sandbox: SandboxLocal,
 				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
@@ -335,7 +342,7 @@ func TestPrepareCLITimeout(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			var got []string
-			for _, kv := range p.Env {
+			for _, kv := range output(t, p) {
 				if strings.HasPrefix(kv, EnvTimeout+"=") {
 					got = append(got, kv)
 				}
@@ -371,6 +378,51 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 	}
 }
 
+// output starts p and returns the lines its process printed until it exited.
+func output(t *testing.T, p *Prepared) []string {
+	t.Helper()
+	rwc, err := p.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Prepared.Start() error = %v", err)
+	}
+	data, err := io.ReadAll(rwc)
+	if err != nil {
+		t.Fatalf("reading the agent process error = %v", err)
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the agent process error = %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+// startErr starts p, waits for its process to exit, and returns the error
+// of the start.
+func startErr(t *testing.T, p *Prepared) error {
+	t.Helper()
+	rwc, err := p.Start(context.Background())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, rwc); err != nil {
+		t.Fatalf("reading the agent process error = %v", err)
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the agent process error = %v", err)
+	}
+	return nil
+}
+
+// printCommand writes a command that prints its path and arguments, then
+// its environment, one per line, and returns it with args.
+func printCommand(t *testing.T, args ...string) []string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "print-acp")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\nenv\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return append([]string{path}, args...)
+}
+
 func tmpfsMounts(args []string) []string {
 	var out []string
 	for i := 0; i+1 < len(args); i++ {
@@ -403,19 +455,19 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 		"type=tmpfs,dst=" + filepath.Join(ws, "sub", "deeper", agentdir.Name) + ",readonly",
 		"type=tmpfs,dst=/docs/x/" + agentdir.Name + ",readonly",
 	}
-	if diff := cmp.Diff(want, tmpfsMounts(p.Args)); diff != "" {
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
 		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
 	}
 	wantWarnings := []string{"found other agents in " + filepath.Join(ws, "sub", "deeper") + ", " + filepath.Join(docs, "x") + "; the sandbox hides their .a2a directories"}
 	if diff := cmp.Diff(wantWarnings, p.Warnings); diff != "" {
 		t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s", diff)
 	}
-	if err := p.Check(); err != nil {
-		t.Fatalf("Prepared.Check() error = %v, want nil", err)
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() error = %v, want nil", err)
 	}
 	mkdir(t, filepath.Join(ws, "later", agentdir.Name))
-	if err := p.Check(); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
-		t.Fatalf("Prepared.Check() error = %v, want a restart for the agent created later", err)
+	if err := startErr(t, p); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the agent created later", err)
 	}
 }
 
@@ -435,7 +487,7 @@ func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 	}
 
 	want := []string{"type=tmpfs,dst=" + own + ",readonly", "type=tmpfs,dst=" + filepath.Join("/host", own) + ",readonly"}
-	if diff := cmp.Diff(want, tmpfsMounts(p.Args)); diff != "" {
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
 		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
 	}
 }
@@ -494,14 +546,14 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
 			var mounts []string
-			for i := 0; i+1 < len(p.Args); i++ {
-				if p.Args[i] == "-v" {
-					mounts = append(mounts, p.Args[i+1])
+			for i := 0; i+1 < len(output(t, p)); i++ {
+				if output(t, p)[i] == "-v" {
+					mounts = append(mounts, output(t, p)[i+1])
 				}
 			}
 			wantMounts := []string{ws + ":" + ws, ws + ":/copy:ro", mask + ":" + mcpFile + ":ro", mask + ":/copy/" + project.MCPFile + ":ro", home + ":" + ContainerHome}
@@ -620,14 +672,14 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
 
 			wantMounts, wantTmpfs, wantCreated := tc.want(ws, docs, copyDir, mask)
 			var mounts []string
-			for _, m := range bindMounts(p.Args) {
+			for _, m := range bindMounts(output(t, p)) {
 				if !strings.HasSuffix(m, ":"+ContainerHome) {
 					mounts = append(mounts, m)
 				}
@@ -636,7 +688,7 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
 			}
 			wantTmpfs = append([]string{"type=tmpfs,dst=" + hidden + ",readonly"}, wantTmpfs...)
-			if diff := cmp.Diff(wantTmpfs, tmpfsMounts(p.Args)); diff != "" {
+			if diff := cmp.Diff(wantTmpfs, tmpfsMounts(output(t, p))); diff != "" {
 				t.Fatalf("Prepare() tmpfs mounts wrong result (-want +got) diff = %s", diff)
 			}
 			for _, file := range wantCreated {
@@ -678,23 +730,23 @@ func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := p.Stop(context.Background()); err != nil {
-			t.Errorf("Stop() error = %v", err)
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
 		}
 	})
 
-	if want := mask + ":" + filepath.Join(repo, "services", "opencode.json") + ":ro"; !slices.Contains(bindMounts(p.Args), want) {
-		t.Fatalf("Prepare() mounts = %q, want %q", bindMounts(p.Args), want)
+	if want := mask + ":" + filepath.Join(repo, "services", "opencode.json") + ":ro"; !slices.Contains(bindMounts(output(t, p)), want) {
+		t.Fatalf("Prepare() mounts = %q, want %q", bindMounts(output(t, p)), want)
 	}
-	if err := p.Check(); err != nil {
-		t.Fatalf("Prepared.Check() error = %v, want nil", err)
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() error = %v, want nil", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "opencode.json")); !os.IsNotExist(err) {
 		t.Fatalf("Prepare() created opencode.json above the workspace: %v", err)
 	}
 	writeTestFile(t, filepath.Join(repo, "opencode.json"), `{"permission": {"bash": "allow"}}`)
-	if err := p.Check(); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
-		t.Fatalf("Prepared.Check() error = %v, want a restart for the opencode.json created later", err)
+	if err := startErr(t, p); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the opencode.json created later", err)
 	}
 }
 
@@ -718,13 +770,13 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 		t.Fatalf("Prepare() with a symlinked .claude in a mount error = %v, want nil", err)
 	}
 	t.Cleanup(func() {
-		if err := p.Stop(context.Background()); err != nil {
-			t.Errorf("Stop() error = %v", err)
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
 		}
 	})
 	writeTestFile(t, filepath.Join(dotfiles, "claude", "settings.json"), `{}`)
-	if err := p.Check(); err != nil {
-		t.Fatalf("Prepared.Check() after a file appeared in a mount error = %v, want nil", err)
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() after a file appeared in a mount error = %v, want nil", err)
 	}
 
 	symlink(t, filepath.Join(dotfiles, ".claude"), filepath.Join(repo, ".claude"))
@@ -735,8 +787,8 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 		t.Fatalf("Prepare() for Claude Code with a symlinked .claude above the workspace error = %v, want nil", err)
 	}
 	t.Cleanup(func() {
-		if err := above.Stop(context.Background()); err != nil {
-			t.Errorf("Stop() error = %v", err)
+		if err := above.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
 		}
 	})
 	spec.Profile = opencode{}
@@ -887,13 +939,13 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
 
 			var mounts []string
-			for _, m := range bindMounts(p.Args) {
+			for _, m := range bindMounts(output(t, p)) {
 				if m != ws+":"+ws && m != home+":"+ContainerHome {
 					mounts = append(mounts, m)
 				}
@@ -966,8 +1018,8 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
 
@@ -1100,12 +1152,104 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 				t.Fatalf("Prepare() error = %v", err)
 			}
 			t.Cleanup(func() {
-				if err := p.Stop(context.Background()); err != nil {
-					t.Errorf("Stop() error = %v", err)
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
 				}
 			})
-			if p.Egress != tc.wantEgress || !strings.HasPrefix(p.EgressProblem, tc.wantProblem) || (tc.wantProblem == "") != (p.EgressProblem == "") {
-				t.Fatalf("Prepare() = egress %v, problem %q, want egress %v, problem %q", p.Egress, p.EgressProblem, tc.wantEgress, tc.wantProblem)
+			if p.Egress != tc.wantEgress || !strings.HasPrefix(p.NoBoundary(), tc.wantProblem) || (tc.wantProblem == "") != (p.NoBoundary() == "") {
+				t.Fatalf("Prepare() = egress %v, problem %q, want egress %v, problem %q", p.Egress, p.NoBoundary(), tc.wantEgress, tc.wantProblem)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerFallsBackAtStart(t *testing.T) {
+	tests := []struct {
+		name string
+		// checks are what the checks do: the first at Prepare, the next at
+		// the starts.
+		checks      []string
+		wantRuns    []string
+		wantErr     []bool
+		wantProblem string
+		wantStderr  string
+	}{
+		{name: "check passes", checks: []string{"exit 0", "exit 0", "exit 0"}, wantRuns: []string{"check", "check", "boundary", "check", "boundary"}, wantErr: []bool{false, false}},
+		{
+			name: "launcher can't set up the network", checks: []string{"exit 0", sandboxtest.LauncherNoTUN},
+			wantRuns: []string{"check", "check", "open", "open"}, wantErr: []bool{false, false},
+			wantProblem: "egress control is off: the agent's container can't set up its network: no tun",
+			wantStderr:  "a2a-serve: egress control is off, as the container can't set up its network: no tun\n",
+		},
+		{
+			name: "daemon error", checks: []string{"exit 0", sandboxtest.DaemonError, "exit 0"},
+			wantRuns: []string{"check", "check", "check", "boundary"}, wantErr: []bool{true, false},
+			wantStderr: "a2a-serve: checking the network setup of the container: exit status 125: docker: Error response from daemon: failed to create task for container: EOF\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := filepath.Join(t.TempDir(), "calls")
+			var checks strings.Builder
+			for i, c := range tc.checks {
+				fmt.Fprintf(&checks, "%d) %s;;\n", i+1, c)
+			}
+			sandboxtest.FakeDocker(t, `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") echo "amd64 null" ;;
+"rm "*|"run -d") ;;
+"logs "*) echo "`+sandboxnet.RelayReady+`" ;;
+"inspect "*) case "$*" in *RestartCount*) echo "true 0 0" ;; *) echo true ;; esac ;;
+"run --name") case "$*" in
+  *--check*) echo check >>`+calls+`
+    case $(grep -c check `+calls+`) in
+`+checks.String()+`    esac ;;
+  *"--network none"*) echo boundary >>`+calls+` ;;
+  *) echo open >>`+calls+` ;;
+  esac ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`)
+			t.Setenv(EnvForceRelay, "1")
+			t.Setenv(EnvRelayImage, "example.com/egress:test")
+			ws := t.TempDir()
+			var stderr strings.Builder
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				EnvDir:  t.TempDir(),
+				Name:    "a2a-test",
+				Stderr:  &stderr,
+				OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
+					return EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+			for i, wantErr := range tc.wantErr {
+				if err := startErr(t, p); (err != nil) != wantErr || errors.Is(err, sandbox.ErrNoBoundary) {
+					t.Fatalf("start %d Prepared.Start() error = %v, want error %v", i+1, err, wantErr)
+				}
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantRuns, strings.Fields(string(data))); diff != "" {
+				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
+			}
+			if got := p.NoBoundary(); !strings.HasPrefix(got, tc.wantProblem) || (tc.wantProblem == "") != (got == "") {
+				t.Fatalf("Prepared.NoBoundary() = %q, want %q", got, tc.wantProblem)
+			}
+			if got := stderr.String(); got != tc.wantStderr {
+				t.Fatalf("Prepared.Start() stderr = %q, want %q", got, tc.wantStderr)
 			}
 		})
 	}
