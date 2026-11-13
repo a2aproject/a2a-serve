@@ -27,6 +27,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 )
 
@@ -130,11 +131,10 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 
 			p, err := Prepare(context.Background(), Spec{
 				Profile:   tc.profile,
-				Name:      "a2a-test",
+				Base:      sandbox.Spec{Name: "a2a-test", Image: "img:1"},
 				Mounts:    []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:      t.TempDir(),
-				EnvDir:    t.TempDir(),
-				Image:     "img:1",
+				Backend:   sandbox.NewDocker(t.TempDir(), nil),
 				PolicyDir: policy,
 			})
 			if err != nil {
@@ -160,10 +160,10 @@ func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
 
 	_, err := Prepare(context.Background(), Spec{
 		Profile:   claude{},
-		Name:      "a2a-test",
+		Base:      sandbox.Spec{Name: "a2a-test"},
 		Mounts:    []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:      t.TempDir(),
-		EnvDir:    t.TempDir(),
+		Backend:   sandbox.NewDocker(t.TempDir(), nil),
 		PolicyDir: policy,
 	})
 

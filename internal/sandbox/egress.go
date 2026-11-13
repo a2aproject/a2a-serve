@@ -142,6 +142,8 @@ func HostEgressEnv() EgressEnv {
 // Capabilities are facts about this machine, which the caller combines
 // with its config to decide about the egress boundary.
 type Capabilities struct {
+	// Rootless is set for rootless Docker.
+	Rootless bool
 	// Boundary is nil when the egress boundary can work, and otherwise
 	// wraps [ErrNoBoundary] with the reason.
 	Boundary error

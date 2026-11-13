@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
 )
 
@@ -56,7 +57,7 @@ func replace(t *testing.T, dir string) {
 func startDocker(t *testing.T, spec Spec) (*Prepared, error) {
 	t.Helper()
 	spec.Profile = claude{}
-	spec.Name = "a2a-test"
+	spec.Base.Name = "a2a-test"
 	p, err := Prepare(context.Background(), spec)
 	if err == nil {
 		t.Cleanup(func() {
@@ -166,7 +167,7 @@ func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
 			if home == "" {
 				home = t.TempDir()
 			}
-			_, err := startDocker(t, Spec{Mounts: mounts, Hidden: hidden, Home: home, EnvDir: t.TempDir()})
+			_, err := startDocker(t, Spec{Mounts: mounts, Hidden: hidden, Home: home, Backend: sandbox.NewDocker(t.TempDir(), nil)})
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Prepare() error = %v, want nil", err)
@@ -198,7 +199,7 @@ func TestPrepareDockerNamesResolvedMountSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = startDocker(t, Spec{Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: shared, Dst: "/shared"}}, Home: t.TempDir(), EnvDir: t.TempDir()})
+	_, err = startDocker(t, Spec{Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: shared, Dst: "/shared"}}, Home: t.TempDir(), Backend: sandbox.NewDocker(t.TempDir(), nil)})
 
 	if want := "use the resolved path " + resolved + " instead"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Prepare() error = %v, want %q", err, want)
@@ -224,7 +225,7 @@ func newAgentLayout(t *testing.T) agentLayout {
 
 func (l agentLayout) spec(t *testing.T, pins *Pins, home string) Spec {
 	t.Helper()
-	return Spec{Mounts: []agentdir.Mount{{Src: l.ws, Dst: l.ws}}, Hidden: []string{l.a2a}, Home: home, EnvDir: t.TempDir(), Pins: pins}
+	return Spec{Mounts: []agentdir.Mount{{Src: l.ws, Dst: l.ws}}, Hidden: []string{l.a2a}, Home: home, Backend: sandbox.NewDocker(t.TempDir(), nil), Pins: pins}
 }
 
 func (l agentLayout) pins(t *testing.T) *Pins {

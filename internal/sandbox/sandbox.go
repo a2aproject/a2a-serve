@@ -35,6 +35,8 @@ type Sandbox interface {
 	Start(ctx context.Context) (io.ReadWriteCloser, error)
 	// Close removes what the sandbox set up.
 	Close(ctx context.Context) error
+	// Info describes the sandbox.
+	Info() Info
 }
 
 // ErrNoBoundary means that the egress boundary can't work on this host.
@@ -109,11 +111,6 @@ func (LocalRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// NewLocal returns the [Sandbox] that runs c directly on the host. Each
-// process gets a [ProcessMark], so the processes it starts are killed once
-// it exits.
-func NewLocal(c Command, opts Options) Sandbox { return local{c: c, opts: opts} }
-
 type local struct {
 	c    Command
 	opts Options
@@ -138,3 +135,5 @@ func (l local) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 }
 
 func (local) Close(context.Context) error { return nil }
+
+func (local) Info() Info { return Info{Summary: "no sandbox"} }
