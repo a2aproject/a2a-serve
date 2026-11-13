@@ -6,10 +6,11 @@ The agent is reachable on localhost by default. Network flags add a private URL,
 | --- | --- | --- |
 | *(none)* | localhost and messengers | pairing tokens |
 | `--private tailscale` | your tailnet, as `https://<name>.<tailnet>.ts.net` (`http://` with Headscale) | Tailscale identity |
+| `--private <node-url> --network-provider slim` | agents and SLIM clients on a [SLIM node](#slim-nodes-experimental) | SLIM name |
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public <relay-url>` | the internet, at a URL on the relay | pairing tokens |
-| `--private <url> --network-provider <name>` | agents on another network, such as a [SLIM node](#slim-nodes-experimental) | the network's identity |
+| `--private <url> --network-provider <name>` | agents on another network, with a [network provider](#network-providers) | the network's identity |
 
 ## Tailscale
 
@@ -27,24 +28,6 @@ a2a-serve start opencode --private tailscale
 - for Funnel, add the `funnel` node attribute to the tailnet policy.
 
 `--tailscale-control-url` points at a Headscale server. Headscale issues no HTTPS certificates, so the private URL is `http://<name>.<base domain>`. WireGuard encrypts the traffic when the caller resolves the name with MagicDNS. On a device without MagicDNS, requests with tokens could cross the internet unencrypted, so pick a base domain that doesn't resolve on the internet. Headscale offers no Funnel, so `--public tailscale` needs Tailscale's own control server.
-
-## Agent Mesh relays (experimental)
-
-An agent can join an [Agent Mesh](https://google.github.io/agentmesh/) relay with no Tailscale account. Agents on the relay can call each other from behind NAT, and each can get a public URL:
-
-```sh
-a2a-serve start opencode --private https://relay.example.com --public https://relay.example.com
-# first run: → sign in to the relay https://relay.example.com: https://…
-a2a-serve config set --network-token env:RELAY_TOKEN    # on servers: join with an invite
-```
-
-On the first run, open the link and sign in with Google. The relay admits the emails its operator allows. [Relays](relays.md) shows how to run a relay with `a2a-serve relay run`, let people sign in, and invite agents to it.
-
-- Everyone the relay admits can call your agent. With `--private-allow-incoming paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
-- The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
-- Release archives include the Agent Mesh network provider. A build from source needs it next to `a2a-serve`; `a2a-serve doctor` prints the command that builds it.
-
-The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on it, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.
 
 ## SLIM nodes (experimental)
 
@@ -68,6 +51,24 @@ The SLIM network provider has no release yet: build it next to `a2a-serve`, as [
 SLIMRPC encrypts calls end to end with MLS. The node sees the SLIM names of the caller and the agent, and routes the call by them. It can't read the messages.
 
 The [SLIM network example](../../examples/07-slim-network/README.md) runs a node and two agents on it.
+
+## Agent Mesh relays (experimental)
+
+An agent can join an [Agent Mesh](https://google.github.io/agentmesh/) relay with no Tailscale account. Agents on the relay can call each other from behind NAT, and each can get a public URL:
+
+```sh
+a2a-serve start opencode --private https://relay.example.com --public https://relay.example.com
+# first run: → sign in to the relay https://relay.example.com: https://…
+a2a-serve config set --network-token env:RELAY_TOKEN    # on servers: join with an invite
+```
+
+On the first run, open the link and sign in with Google. The relay admits the emails its operator allows. [Relays](relays.md) shows how to run a relay with `a2a-serve relay run`, let people sign in, and invite agents to it.
+
+- Everyone the relay admits can call your agent. With `--private-allow-incoming paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
+- The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
+- Release archives include the Agent Mesh network provider. A build from source needs it next to `a2a-serve`; `a2a-serve doctor` prints the command that builds it.
+
+The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on it, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.
 
 ## Network providers
 

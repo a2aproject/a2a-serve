@@ -1,6 +1,6 @@
 # SLIM Network (Experimental)
 
-[Agent Mesh Relay](../03-agentmesh-relay/README.md) puts two agents on a relay. This example puts two agents on a [SLIM](https://docs.agntcy.org/slim/overview/) node with the SLIM network provider. The agents call each other over SLIMRPC, and a SLIM client that knows nothing about a2a-serve calls an agent by its SLIM name.
+This example puts two agents on a [SLIM](https://docs.agntcy.org/slim/overview/) node, the messaging layer of AGNTCY, with the SLIM network provider. The agents call each other over SLIMRPC, encrypted end to end, and a SLIM client that knows nothing about a2a-serve calls an agent by its SLIM name.
 
 ![Two agents and a SLIM client calling each other through a SLIM node](./demo.gif)
 
@@ -93,7 +93,7 @@ a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example7/coder)" \
   --task-id <task-id> once
 ```
 
-The call travels over SLIMRPC through the node, [encrypted end to end](../../docs/guide/networks.md#slim-nodes-experimental), and reviewer sees it come from `a2a/example7/coder`.
+The call travels over SLIMRPC through the node, which routes it by SLIM name and can't read it. reviewer sees it come from `a2a/example7/coder`.
 
 ## 5. Call an agent from a SLIM client
 
