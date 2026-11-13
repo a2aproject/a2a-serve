@@ -152,11 +152,10 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 			return ensure()
 		}
 	}
-	sb, err := r.sandbox(Command{Path: spec.Command.Path, Args: spec.Command.Args, Dir: spec.Command.Dir}, spec.Network.Recheck, opts)
+	sb, err := r.sandbox(Command{Path: spec.Command.Path, Args: spec.Command.Args, Dir: spec.Command.Dir}, spec.Network.Recheck, opts, info, closeEgress)
 	if err != nil {
 		return nil, errors.Join(err, r.Stop(ctx), closeEgress())
 	}
-	sb.info, sb.closeEgress = info, closeEgress
 	return sb, nil
 }
 

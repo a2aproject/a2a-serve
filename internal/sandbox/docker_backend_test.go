@@ -111,8 +111,99 @@ esac
 	}
 }
 
+// relayDocker is a fake docker whose containers reach the boundary through
+// an egress container. Each check run appends "check" to calls, and the
+// command's run copies its env file to env.
+func relayDocker(calls, env string) string {
+	return `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") echo "amd64 null" ;;
+"rm "*|"run -d") ;;
+"logs "*) echo "` + sandboxnet.RelayReady + `" ;;
+"inspect "*) echo "true 0 0" ;;
+"run --name") case "$*" in
+  *--check*) echo check >>` + calls + ` ;;
+  *) prev=; for a; do [ "$prev" = --env-file ] && cp "$a" ` + env + `; prev=$a; done ;;
+  esac ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+}
+
+func relaySpec(t *testing.T) Spec {
+	t.Helper()
+	t.Setenv(EnvForceRelay, "1")
+	t.Setenv(EnvRelayImage, "example.com/egress:test")
+	return Spec{
+		Name:    "a2a-test",
+		Image:   "img:1",
+		Command: Command{Path: "agent"},
+		Network: Network{Boundary: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
+			return EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+		}},
+	}
+}
+
+func TestDockerPrepareChecksBoundaryOnce(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	sandboxtest.FakeDocker(t, relayDocker(calls, filepath.Join(t.TempDir(), "env")))
+	spec := relaySpec(t)
+	d := NewDocker(t.TempDir(), nil)
+	for i := range 2 {
+		sb, err := d.Prepare(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("Docker.Prepare() %d error = %v", i+1, err)
+		}
+		if err := sb.Close(context.Background()); err != nil {
+			t.Fatalf("Sandbox.Close() error = %v", err)
+		}
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "check"); n != 1 {
+		t.Fatalf("two Docker.Prepare() calls checked the boundary %d times, want once", n)
+	}
+}
+
+func TestDockerPrepareTrustsOnlyItsCA(t *testing.T) {
+	env := filepath.Join(t.TempDir(), "env")
+	sandboxtest.FakeDocker(t, relayDocker(filepath.Join(t.TempDir(), "calls"), env))
+	spec := relaySpec(t)
+	spec.Command.Env = []string{"A=1", sandboxnet.EgressCAEnv([]byte("from the caller"))}
+	spec.Network.CA = []byte("from the boundary")
+	sb, err := NewDocker(t.TempDir(), nil).Prepare(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Docker.Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Close(context.Background()); err != nil {
+			t.Errorf("Sandbox.Close() error = %v", err)
+		}
+	})
+	rwc, err := sb.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Sandbox.Start() error = %v", err)
+	}
+	drain(t, rwc)
+	data, err := os.ReadFile(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for line := range strings.Lines(string(data)) {
+		if line = strings.TrimSpace(line); line == "A=1" || strings.HasPrefix(line, sandboxnet.EnvEgressCA+"=") {
+			got = append(got, line)
+		}
+	}
+	if diff := cmp.Diff([]string{"A=1", sandboxnet.EgressCAEnv([]byte("from the boundary"))}, got); diff != "" {
+		t.Fatalf("container env wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 // TestDockerRunsCommandBehindBoundary runs a command in a container with
-// a mount, both kinds of mask and an allowlist boundary.
+// a read-only mount, both kinds of mask and an allowlist boundary.
 func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -151,7 +242,7 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 		Name:  name,
 		Image: image,
 		Command: Command{Path: "/probe", Args: []string{
-			"read:/data/hello.txt", "read:/data/secret.txt", "ls:/data/private",
+			"read:/data/hello.txt", "write:/data/new.txt", "read:/data/secret.txt", "ls:/data/private",
 			"dial:" + net.JoinHostPort(egress.HostGateway, allowed), "dial:" + net.JoinHostPort(egress.HostGateway, other),
 		}},
 		Mounts:  []Mount{{Src: data, Dst: "/data", ReadOnly: true}},
@@ -178,6 +269,7 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	got := strings.Split(strings.TrimSpace(drain(t, rwc)), "\n")
 	want := []string{
 		"read:/data/hello.txt hello",
+		"write:/data/new.txt error",
 		"read:/data/secret.txt masked",
 		"ls:/data/private 0 entries",
 		"dial:" + net.JoinHostPort(egress.HostGateway, allowed) + " ok",

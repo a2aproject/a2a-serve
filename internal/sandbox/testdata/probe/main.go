@@ -14,8 +14,8 @@
 
 // Command probe runs in the containers of the tests of the sandbox package
 // and prints, one line per argument, what it finds: "read:<path>" prints
-// the file, "ls:<dir>" its entries, and "dial:<host:port>" whether a TCP
-// connection opens.
+// the file, "write:<path>" whether creating it works, "ls:<dir>" its
+// entries, and "dial:<host:port>" whether a TCP connection opens.
 package main
 
 import (
@@ -41,6 +41,11 @@ func probe(kind, target string) string {
 			return "error"
 		}
 		return strings.TrimSpace(string(data))
+	case "write":
+		if err := os.WriteFile(target, []byte("written"), 0o644); err != nil {
+			return "error"
+		}
+		return "ok"
 	case "ls":
 		entries, err := os.ReadDir(target)
 		if err != nil {

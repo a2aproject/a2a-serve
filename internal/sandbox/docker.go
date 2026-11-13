@@ -149,16 +149,17 @@ func (r *DockerRunner) startCommand(ctx context.Context, runArgs []string) *exec
 	return cmd
 }
 
-// sandbox returns the sandbox that runs c in the container of r. With
-// checkBoundary, every start first runs the check of the launcher's setup,
-// and fails with an [*EgressSetupError] when the setup can't work on this
-// host. Close calls [DockerRunner.Stop].
-func (r *DockerRunner) sandbox(c Command, checkBoundary bool, opts Options) (*dockerSandbox, error) {
+// sandbox returns the sandbox described by info that runs c in the
+// container of r. With checkBoundary, every start first runs the check of
+// the launcher's setup, and fails with an [*EgressSetupError] when the
+// setup can't work on this host. Close calls [DockerRunner.Stop], then
+// closeEgress unless it is nil.
+func (r *DockerRunner) sandbox(c Command, checkBoundary bool, opts Options, info Info, closeEgress func() error) (*dockerSandbox, error) {
 	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
 	if err != nil {
 		return nil, err
 	}
-	return &dockerSandbox{r: r, runArgs: r.runArgs(c, envFile, false), envFile: envFile, checkBoundary: checkBoundary && r.Egress != nil, opts: opts}, nil
+	return &dockerSandbox{r: r, runArgs: r.runArgs(c, envFile, false), envFile: envFile, checkBoundary: checkBoundary && r.Egress != nil, opts: opts, info: info, closeEgress: closeEgress}, nil
 }
 
 type dockerSandbox struct {

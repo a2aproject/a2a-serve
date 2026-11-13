@@ -190,7 +190,7 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err := spec.Profile.Bootstrap(ws); err != nil {
 		return nil, fmt.Errorf("bootstrapping %s: %w", spec.Profile.Name(), err)
 	}
-	if spec.Backend == nil {
+	if _, local := spec.Backend.(sandbox.Local); spec.Backend == nil || local != (spec.Sandbox == SandboxLocal) {
 		return nil, fmt.Errorf("no backend for the %s sandbox", cmp.Or(spec.Sandbox, SandboxDocker))
 	}
 	var p *Prepared

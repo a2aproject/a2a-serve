@@ -505,7 +505,7 @@ case $(grep -c check `+calls+`) in
 `)
 			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
 			var stderr strings.Builder
-			sb, err := r.sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{Stderr: &stderr})
+			sb, err := r.sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{Stderr: &stderr}, Info{}, nil)
 			if err != nil {
 				t.Fatalf("DockerRunner.sandbox() error = %v", err)
 			}
@@ -552,7 +552,7 @@ func TestDockerSandboxRunsCommand(t *testing.T) {
 			return errors.New("refused")
 		}
 		return nil
-	}})
+	}}, Info{}, nil)
 	if err != nil {
 		t.Fatalf("DockerRunner.sandbox() error = %v", err)
 	}

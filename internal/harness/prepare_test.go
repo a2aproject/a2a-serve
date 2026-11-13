@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -365,6 +366,9 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 		{name: "no workspace", spec: Spec{Sandbox: SandboxLocal}, wantErr: "no workspace"},
 		{name: "moved workspace", spec: Spec{Sandbox: SandboxLocal, Mounts: []agentdir.Mount{{Src: ws, Dst: "/work"}}}, wantErr: "must keep its path"},
 		{name: "unknown sandbox", spec: Spec{Sandbox: "vm", Mounts: []agentdir.Mount{{Src: ws, Dst: ws}}}, wantErr: "unknown sandbox"},
+		{name: "no backend", spec: Spec{Mounts: []agentdir.Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
+		{name: "local backend for docker", spec: Spec{Backend: sandbox.Local{}, Mounts: []agentdir.Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
+		{name: "docker backend for local", spec: Spec{Sandbox: SandboxLocal, Backend: sandbox.NewDocker(t.TempDir(), nil), Mounts: []agentdir.Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the local sandbox"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1260,6 +1264,9 @@ func TestPrepareDockerResolvesImageOnce(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.launcher != "" && runtime.GOOS != "linux" {
+				t.Skip("other systems get an egress container, which needs no launcher")
+			}
 			builtMark := filepath.Join(t.TempDir(), "built")
 			log := sandboxtest.FakeDocker(t, `case "$1 $2" in
 "info "*) echo "[name=seccomp,profile=builtin]" ;;
