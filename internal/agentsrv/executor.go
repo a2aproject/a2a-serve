@@ -929,8 +929,11 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 	}
 }
 
+// maxLoggedReason bounds the reason a failed task logs.
+const maxLoggedReason = 300
+
 // logTransition logs a task reaching a state where it stops: it finished or
-// waits for input.
+// waits for input. A failed or rejected task logs the reason callers got.
 func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	state, ok := eventState(ev)
 	if !ok {
@@ -939,7 +942,22 @@ func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
 		return
 	}
-	slog.Info("task "+a2atext.StateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
+	attrs := []any{"task", id, "duration", time.Since(start).Round(time.Millisecond)}
+	if msg := eventMessage(ev); msg != nil && (state == a2a.TaskStateFailed || state == a2a.TaskStateRejected) {
+		attrs = append(attrs, "reason", a2atext.Snippet(a2atext.Message(msg), maxLoggedReason))
+	}
+	slog.Info("task "+a2atext.StateName(state), attrs...)
+}
+
+// eventMessage returns the status message an event reports, if any.
+func eventMessage(ev a2a.Event) *a2a.Message {
+	switch e := ev.(type) {
+	case *a2a.Task:
+		return e.Status.Message
+	case *a2a.TaskStatusUpdateEvent:
+		return e.Status.Message
+	}
+	return nil
 }
 
 // eventState returns the task state an event reports, if it reports one.
@@ -970,7 +988,35 @@ type callerInterceptor struct {
 	removeHome func(home string)
 }
 
+// newTaskKey marks the context of a request that starts a task.
+type newTaskKey struct{}
+
+// Before admits a request, and logs the refusal of a new task, so that the
+// owner sees why callers' messages don't run.
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
+	ctx, res, err := i.admit(ctx, callCtx, req)
+	msg, ok := req.Payload.(*a2a.SendMessageRequest)
+	if !ok || msg.Message == nil || msg.Message.TaskID != "" {
+		return ctx, res, err
+	}
+	if err != nil {
+		logRefused(ctx, err)
+		return ctx, res, err
+	}
+	return context.WithValue(ctx, newTaskKey{}, true), res, nil
+}
+
+// logRefused logs that the server refused a new task of the caller with
+// err.
+func logRefused(ctx context.Context, err error) {
+	from := ""
+	if p, ok := auth.Caller(ctx); ok {
+		from = p.ID
+	}
+	slog.Info("task refused", "from", from, "error", err)
+}
+
+func (i *callerInterceptor) admit(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
 	p, ok := auth.Caller(ctx)
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
@@ -1084,7 +1130,12 @@ func lastQuestion(task *a2a.Task) *approvals.Question {
 // After names the task, and what to do next with the a2a CLI, in the error
 // of a reply that the task refused since it already runs an execution.
 // In-process senders, such as chats, render the outcome themselves.
+// It also logs the refusal of a new task by the handler, such as at the
+// limit of running tasks.
 func (i *callerInterceptor) After(ctx context.Context, _ *a2asrv.CallContext, resp *a2asrv.Response) error {
+	if newTask, _ := ctx.Value(newTaskKey{}).(bool); newTask && resp.Err != nil {
+		logRefused(ctx, resp.Err)
+	}
 	r, ok := ctx.Value(replyKey{}).(reply)
 	if !ok || auth.IsInProcess(ctx) || !a2aerr.ExecutionInProgress(resp.Err) {
 		return nil

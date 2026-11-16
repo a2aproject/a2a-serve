@@ -332,6 +332,53 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 	}
 }
 
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestFailedTaskLogsItsReason(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("crash", "", ""))
+
+	want := `msg="task failed" task=` + string(task.ID)
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, want) {
+			if !strings.Contains(line, `reason="the agent stopped unexpectedly; send the message again"`) {
+				t.Fatalf("task failed log line = %q, want the reason of the failure", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("logs = %q, want a line with %q", logs.String(), want)
+}
+
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestRefusedTaskIsLogged(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	for range maxCallerExecutions {
+		send(t, anna, userText("ask", "", ""))
+	}
+
+	if _, err := anna.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")}); err == nil {
+		t.Fatalf("SendMessage() over the limit error = nil, want a refusal")
+	}
+
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, `msg="task refused"`) && strings.Contains(line, "from=pair:anna") && strings.Contains(line, "unfinished tasks") {
+			return
+		}
+	}
+	t.Fatalf("logs = %q, want a task refused line from pair:anna that names the limit", logs.String())
+}
+
 // Not parallel: it changes PATH.
 func TestStartReportsOutdatedA2AOnce(t *testing.T) {
 	bin := t.TempDir()
