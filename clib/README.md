@@ -109,7 +109,7 @@ Without `network`, the container gets Docker's own network. With it, the contain
 
 `forward` sends the request, changed, to the host of its URL as an `allow` would, and streams the response back. A connection waits for its answer, so answer `connect` within seconds.
 
-`a2a_sandbox_exec` stops a command that runs out of `timeout_ms` when the sandbox has the boundary, and reports the timeout as an error. Without the boundary, the command runs until it exits or the sandbox closes.
+`a2a_sandbox_exec` stops a command that runs out of `timeout_ms` when the sandbox has the boundary, and reports the timeout as an error. With an egress container, as Docker Desktop needs, the sandbox runs the launcher of the egress container's image, so `exec` needs an image built from this branch. Without the boundary, the command runs until it exits or the sandbox closes.
 
 Each container and volume carries the label `a2a.sandboxlib.owner` with the process that made it. The first `a2a_sandbox_open` of a process removes those of processes that are gone, such as after a crash.
 

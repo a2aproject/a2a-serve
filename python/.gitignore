@@ -1,0 +1,3 @@
+# The C libraries and the launcher that clib/build.sh builds for the package
+src/a2a_serve/_lib/
+*.egg-info/
