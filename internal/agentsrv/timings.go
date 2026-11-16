@@ -80,10 +80,10 @@ type Timings struct {
 	// callers fetch before they authenticate.
 	DownloadTimeout time.Duration
 	// ResponseTimeout bounds writing a whole A2A response that isn't a
-	// stream, and StreamIdleTimeout each 64 KiB of any A2A response. They
-	// bound how long a client that doesn't read holds its request.
-	ResponseTimeout   time.Duration
-	StreamIdleTimeout time.Duration
+	// stream, and IdleTimeout each 64 KiB of any A2A response. They bound
+	// how long a client that doesn't read holds its request.
+	ResponseTimeout time.Duration
+	IdleTimeout     time.Duration
 	// CardRefresh replaces --contact-refresh, the time between refreshes
 	// of the cards of contacts and peers, when set.
 	CardRefresh time.Duration
@@ -117,6 +117,6 @@ func (t Timings) withDefaults() Timings {
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	t.DownloadTimeout = cmp.Or(t.DownloadTimeout, 10*time.Minute)
 	t.ResponseTimeout = cmp.Or(t.ResponseTimeout, 10*time.Minute)
-	t.StreamIdleTimeout = cmp.Or(t.StreamIdleTimeout, time.Minute)
+	t.IdleTimeout = cmp.Or(t.IdleTimeout, time.Minute)
 	return t
 }

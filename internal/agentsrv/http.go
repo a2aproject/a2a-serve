@@ -211,7 +211,7 @@ func newRoleShares() *httpserver.Shares {
 // writeTimeout bounds how long a caller that doesn't read the responses of
 // next holds its requests.
 func (s *Server) writeTimeout(next http.Handler) http.Handler {
-	return httpserver.WriteTimeout(s.timings.ResponseTimeout, s.timings.StreamIdleTimeout, next)
+	return httpserver.WriteTimeout(s.timings.ResponseTimeout, s.timings.IdleTimeout, next)
 }
 
 // authenticate resolves the principal of a request with the auth chain: 401

@@ -653,10 +653,10 @@ func writeRPC(t *testing.T, conn net.Conn, body string, header http.Header) {
 	}
 }
 
-func TestUnreadResponsesEndAfterTheResponseTimeout(t *testing.T) {
+func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
 	t.Parallel()
 	const timeout = time.Second
-	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.ResponseTimeout = timeout }})
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.IdleTimeout = timeout }})
 	token := ts.pair("anna", auth.RoleMember)
 	task := send(t, ts.client(token), userText("big 8000000", "", ""))
 	conn := dialRaw(t, ts.localURL())
@@ -678,7 +678,7 @@ func TestUnreadResponsesEndAfterTheResponseTimeout(t *testing.T) {
 		_, err = io.Copy(io.Discard, resp.Body)
 	}
 	if !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("reading GetTask of a large task %s after the response timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
+		t.Fatalf("reading GetTask of a large task %s after the idle timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
 	}
 }
 
