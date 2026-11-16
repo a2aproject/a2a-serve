@@ -39,6 +39,25 @@ def start_fake(cwd):
     return parent.detach()
 
 
+def start_recording_fake(cwd, methods):
+    """Starts fakeacp like start_fake and appends the method of every
+    request the agent is sent to methods."""
+    parent, child = socket.socketpair()
+    proc = subprocess.Popen([FAKEACP], cwd=cwd, stdin=subprocess.PIPE, stdout=child)
+
+    def relay():
+        with child.makefile("rb") as r:
+            for line in r:
+                methods.append(json.loads(line).get("method", ""))
+                proc.stdin.write(line)
+                proc.stdin.flush()
+        proc.stdin.close()
+
+    threading.Thread(target=relay, daemon=True).start()
+    threading.Thread(target=proc.wait, daemon=True).start()
+    return parent.detach()
+
+
 def message(text):
     from google.genai import types
 
@@ -105,6 +124,32 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("blue", got[0])
         self.assertNotIn("green", got[0])
+
+    async def test_abandoned_run_cancels_agent_turn(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+        from google.adk.runners import InMemoryRunner
+
+        from a2a_serve.adk import AcpAgent
+
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        methods = []
+        agent = AcpAgent(name="coder", start=lambda key: start_recording_fake(d, methods), session_cwd=d)
+        self.addCleanup(agent.close)
+        runner = InMemoryRunner(agent=agent, app_name="test")
+        session = await self.session(runner)
+
+        events = runner.run_async(user_id="u", session_id=session.id, new_message=message("slow 60s"), run_config=RunConfig(streaming_mode=StreamingMode.SSE))
+        async for ev in events:
+            if ev.partial:
+                break
+        await events.aclose()
+
+        for _ in range(500):
+            if "session/cancel" in methods:
+                break
+            await asyncio.sleep(0.01)
+        self.assertIn("session/cancel", methods)
 
     async def test_permissions(self):
         tests = [
