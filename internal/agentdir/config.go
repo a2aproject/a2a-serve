@@ -337,9 +337,8 @@ func (n NetworkConfig) URL() string {
 	return ""
 }
 
-// dropProviderWithoutURL clears the provider when the network URL it
-// joined, had, is gone, so that leaving the network doesn't also take
-// unsetting the provider.
+// dropProviderWithoutURL clears the provider once the agent had a network
+// URL and has none left, so leaving the network also drops its provider.
 func (n *NetworkConfig) dropProviderWithoutURL(had string) {
 	if had != "" && n.URL() == "" {
 		n.Provider = ""
