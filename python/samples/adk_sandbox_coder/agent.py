@@ -267,6 +267,9 @@ class SessionInterceptor:
             return False
         try:
             with self._lock:
+                if self.guard_calls >= MAX_GUARD_CALLS:
+                    self._note(f"guard budget of {MAX_GUARD_CALLS} spent; denying")
+                    return False
                 self.guard_calls += 1
             prompt = (
                 "You guard the network of a sandbox where a coding agent fixes a small Python project. "

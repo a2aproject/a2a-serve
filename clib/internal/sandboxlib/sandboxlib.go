@@ -159,6 +159,9 @@ func (l *Library) open(spec Spec) (int64, sandbox.Info, error) {
 		spec.Launcher = abs
 	}
 	for i, m := range spec.Mounts {
+		if m.Src == "" || m.Dst == "" {
+			return 0, sandbox.Info{}, errors.New("a mount needs src and dst")
+		}
 		abs, err := filepath.Abs(m.Src)
 		if err != nil {
 			return 0, sandbox.Info{}, err

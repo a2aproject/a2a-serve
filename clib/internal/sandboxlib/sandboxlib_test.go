@@ -164,6 +164,7 @@ func TestLibraryRefusesBadCalls(t *testing.T) {
 		"spec":     l.Open(`{`),
 		"name":     l.Open(`{"image": "x"}`),
 		"backend":  l.Open(`{"name": "x", "backend": "vm"}`),
+		"mount":    l.Open(`{"name": "x", "mounts": [{"dst": "/data"}]}`),
 		"start":    l.Start(42),
 		"files":    l.ReadFile(42, "a"),
 		"reply":    l.Reply(1, `{}`),
