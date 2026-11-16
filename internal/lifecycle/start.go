@@ -73,6 +73,9 @@ type StartOptions struct {
 	Ready func()
 	// Services is the service manager, which a start as a service needs.
 	Services ServiceManager
+	// BusyWait is how long a start waits for a server that is starting or
+	// stopping. Zero means 2 minutes.
+	BusyWait time.Duration
 }
 
 // Start runs the agent of dir. In the foreground it runs until ctx ends;
@@ -83,7 +86,7 @@ func Start(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
 	if opts.Mode == Foreground {
 		return foreground(ctx, dir, opts)
 	}
-	return background(ctx, dir, opts.Services, opts.Mode == Service, opts.Quiet, opts.Out)
+	return background(ctx, dir, opts)
 }
 
 // foreground logs to state/server.log, and also to stderr when verbose.
@@ -104,13 +107,11 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	}
 	// A second start must stop before it touches the running agent's log.
 	// One whose agent serves succeeds, as a detached start does.
-	if err := checkNotRunning(dir); err != nil {
-		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-		defer cancel()
-		st, serr := controlapi.NewClient(dir).Status(pctx)
-		if serr != nil {
-			return err
-		}
+	st, err := settle(ctx, dir, cmp.Or(opts.BusyWait, busyWait))
+	if err != nil {
+		return err
+	}
+	if st != nil {
 		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
 		return err
 	}
@@ -154,6 +155,39 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	return nil
 }
 
+// busyWait is how long a start waits for a server that is starting or
+// stopping by default.
+const busyWait = 2 * time.Minute
+
+// settle waits while a server holds the lock of dir without answering, as
+// one does while it starts or stops. It returns the status of a server that
+// answers, nil once no server holds the lock, or the error of
+// [checkNotRunning] after wait.
+func settle(ctx context.Context, dir agentdir.Dir, wait time.Duration) (*controlapi.Status, error) {
+	deadline := time.Now().Add(wait)
+	client := controlapi.NewClient(dir)
+	for {
+		sctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		st, err := client.Status(sctx)
+		cancel()
+		if err == nil {
+			return st, nil
+		}
+		err = checkNotRunning(dir)
+		if err == nil {
+			return nil, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+}
+
 // checkNotRunning fails if a server holds the lock of dir. The lock
 // is released at once: the server takes it again when it starts. Callers
 // ask the control socket first, so a server that holds the lock without
@@ -184,7 +218,8 @@ func CheckServiceStart(dir agentdir.Dir, services ServiceManager, name string) e
 // background starts the agent detached from the terminal, or as a user
 // service of services when asService, and relays its progress to out until
 // it serves.
-func background(ctx context.Context, dir agentdir.Dir, services ServiceManager, asService, quiet bool, out io.Writer) error {
+func background(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
+	services, asService, quiet, out := opts.Services, opts.Mode == Service, opts.Quiet, opts.Out
 	cfg, err := dir.LoadConfig()
 	if err != nil {
 		return err
@@ -203,16 +238,17 @@ func background(ctx context.Context, dir agentdir.Dir, services ServiceManager, 
 	if err != nil {
 		return err
 	}
-	if st, err := controlapi.NewClient(dir).Status(ctx); err == nil {
+	st, err := settle(ctx, dir, cmp.Or(opts.BusyWait, busyWait))
+	if err != nil {
+		return err
+	}
+	if st != nil {
 		if asService {
 			if err := CheckServiceStart(dir, services, cfg.Name); err != nil {
 				return err
 			}
 		}
 		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
-		return err
-	}
-	if err := checkNotRunning(dir); err != nil {
 		return err
 	}
 	// The child's stdout is the log, so it is rotated before the child opens it.
