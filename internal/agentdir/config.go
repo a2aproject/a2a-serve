@@ -337,6 +337,14 @@ func (n NetworkConfig) URL() string {
 	return ""
 }
 
+// dropProviderWithoutURL clears the provider once the agent had a network
+// URL and has none left, so leaving the network also drops its provider.
+func (n *NetworkConfig) dropProviderWithoutURL(had string) {
+	if had != "" && n.URL() == "" {
+		n.Provider = ""
+	}
+}
+
 // ProviderSpec returns the --network-provider of the network URLs: the
 // setting, or Agent Mesh by default. It is empty without a network URL.
 func (n NetworkConfig) ProviderSpec() string {

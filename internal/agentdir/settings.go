@@ -154,6 +154,7 @@ const (
 // the secrets to store. It doesn't validate the result.
 func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	secrets := Secrets{}
+	hadNetwork := cfg.Network.URL()
 	for _, f := range fields {
 		entries := f.entries(&s)
 		if len(entries) == 0 {
@@ -168,6 +169,9 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if s.NetworkProvider == "" {
+		cfg.Network.dropProviderWithoutURL(hadNetwork)
 	}
 	if cfg.Name == "" {
 		cfg.Name = d.DefaultName()
