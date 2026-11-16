@@ -131,6 +131,8 @@ func TestMessageCheck(t *testing.T) {
 	}{
 		{name: "message over the limits", payload: &a2a.SendMessageRequest{Message: tooMany}, wantErr: a2a.ErrInvalidParams},
 		{name: "message within the limits", payload: &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("a"))}},
+		{name: "message of the agent role", payload: &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("a"))}, wantErr: a2a.ErrInvalidParams},
+		{name: "message of an unknown role", payload: &a2a.SendMessageRequest{Message: a2a.NewMessage("ROLE_SYSTEM", a2a.NewTextPart("a"))}, wantErr: a2a.ErrInvalidParams},
 		{name: "request without a message", payload: &a2a.SendMessageRequest{}},
 		{name: "other request", payload: &a2a.GetTaskRequest{ID: "t1"}},
 	}

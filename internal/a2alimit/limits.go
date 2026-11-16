@@ -161,7 +161,9 @@ func metadataSize(m map[string]any) (int, error) {
 	return len(data), err
 }
 
-// MessageCheck is a call interceptor that refuses messages over the limits.
+// MessageCheck is a call interceptor that refuses messages over the limits,
+// and messages whose role isn't the user's, which the agent would take as
+// the caller's words.
 // Add it before the interceptors that admit a message, so that a refused
 // message takes none of the caller's quota.
 type MessageCheck struct {
@@ -181,6 +183,9 @@ func (c *MessageCheck) Before(ctx context.Context, _ *a2asrv.CallContext, req *a
 	send, ok := req.Payload.(*a2a.SendMessageRequest)
 	if !ok || send.Message == nil {
 		return ctx, nil, nil
+	}
+	if send.Message.Role != a2a.MessageRoleUser {
+		return ctx, nil, a2a.NewError(a2a.ErrInvalidParams, fmt.Sprintf("a message must have the role %s, got %s", a2a.MessageRoleUser, send.Message.Role))
 	}
 	return ctx, nil, c.limits.Check(send.Message)
 }
