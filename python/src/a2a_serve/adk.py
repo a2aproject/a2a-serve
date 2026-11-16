@@ -15,38 +15,61 @@
 """An ADK agent backed by an ACP coding agent, such as `opencode acp`.
 
 `AcpAgent` runs the coding agent through the a2aacp library. Each ADK
-session gets its own ACP session and, with `start`, its own agent process,
-such as one in a `Sandbox`. The agent's reply streams into the ADK session
-as the agent's events.
+session gets its own ACP session and its own agent process: a local
+command with `argv`, one that `start` starts, or one in a Docker sandbox of
+its own with `sandbox`, whose workspace lives in memory. The agent's reply
+streams into the ADK session as the agent's events.
 
-`tools` gives the coding agent ADK tools over MCP. The library has no HTTP
-server: `mcp_url` names a host that the sandbox's interceptor answers by
-calling `handle_mcp`, with the session of the sandbox. A tool runs in the
-ADK invocation in progress in that session, and its call and response are
-events of the invocation, so its state changes are saved as those of any
-other tool.
+`model` makes an ADK model the coding agent's model. The agent sends its
+model calls, in the OpenAI chat completions format, to `model_url`;
+AcpAgent turns each into an LlmRequest and runs it with the model in the
+invocation in progress, with `before_model_callback` and
+`after_model_callback` as an LlmAgent runs them.
+
+`tools` gives the coding agent ADK tools over MCP at `mcp_url`. A tool runs
+in the invocation in progress in its session, and its call and response
+are events of the invocation, so its state changes are saved as those of
+any other tool.
+
+Nothing listens on the host for either: the sandbox's boundary hands the
+requests to the hosts of `model_url` and `mcp_url` to `handle_model` and
+`handle_mcp`, and `SandboxConfig.egress` decides the rest. With `start`,
+an interceptor of the caller does the same.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import logging
 import threading
+import time
+import urllib.parse
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from google.adk.agents.base_agent import BaseAgent
+from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.run_config import StreamingMode
 from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.adk.models.registry import LLMRegistry
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
-from pydantic import ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from . import openai_chat
 from .acp import Executor
+from .sandbox import Interceptor, Request, Sandbox, deny, respond, short_name
+
+logger = logging.getLogger(__name__)
 
 MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
@@ -55,10 +78,49 @@ MAX_SESSIONS = 10000
 """Bounds the sessions whose delivered history and pending question the
 agent remembers."""
 
+MODEL_TIMEOUT = 280.0
+"""Bounds a model call of the coding agent, in seconds, below the time the
+sandbox library waits for an answer to a request (5 minutes)."""
+
 TOOL_TIMEOUT = 240.0
 """Bounds a tool call of the coding agent, in seconds. It stays below the
 time the sandbox library waits for an answer to a request (5 minutes), so
 that the agent never sees a failure for a tool that went on to run."""
+
+
+class SandboxConfig(BaseModel):
+    """A Docker sandbox per ADK session, whose workspace lives in memory and
+    whose only network path is the egress boundary.
+
+    The boundary sends the requests to the hosts of `AcpAgent.model_url` and
+    `AcpAgent.mcp_url` to the agent's model and tools, in process; `egress`
+    decides every other connection, and denies them all when it is None.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    image: str
+    """The image of the containers."""
+    command: list[str]
+    """The agent's command in the image, such as ["opencode", "acp"]."""
+    workspace: str = "/workspace"
+    """Where the file system in memory is mounted, and the agent works."""
+    files: dict[str, bytes | str] = Field(default_factory=dict)
+    """The files each session's workspace starts with, by relative path."""
+    workspace_size: str = "256m"
+    """Bounds each workspace."""
+    env: dict[str, str] = Field(default_factory=dict)
+    """The agent's environment, such as its configuration."""
+    egress: Any = None
+    """An Interceptor, with connect and request methods, that decides the
+    connections to other hosts and the requests of those it inspects."""
+    inspect_tls: list[str] = Field(default_factory=list)
+    """The hosts whose TLS an inspected connection terminates."""
+    labels: dict[str, str] = Field(default_factory=dict)
+    """The labels of the containers."""
+    idle_timeout: float = 1800
+    """Removes the sandbox of a session without traffic or a turn for so
+    many seconds, at least a minute past the agent's own idle stop."""
 
 
 class AcpAgent(BaseAgent):
@@ -85,12 +147,34 @@ class AcpAgent(BaseAgent):
     """ADK tools the agent may call over MCP; see the module documentation."""
     mcp_url: str = "http://adk-tools.internal/mcp"
     """The URL of the tools, which an interceptor answers with handle_mcp."""
+    sandbox: SandboxConfig | None = None
+    """Runs the agent of each ADK session in a sandbox of its own. Set
+    exactly one of argv, start and sandbox."""
+    model: BaseLlm | str | None = None
+    """The ADK model that answers the agent's model calls: the requests in
+    the OpenAI chat completions format that it sends to model_url. The
+    agent's configuration has to name model_url as its provider."""
+    model_url: str = "http://llm.internal/v1"
+    """The base URL of the model, which an interceptor answers with
+    handle_model."""
+    before_model_callback: Callable | list[Callable] | None = None
+    """Called with (callback_context, llm_request) before each model call,
+    as for an LlmAgent; a returned LlmResponse skips the model."""
+    after_model_callback: Callable | list[Callable] | None = None
+    """Called with (callback_context, llm_response) after each model call;
+    a returned LlmResponse replaces the model's."""
     idle_timeout: float = 600
     """Stops the agent of an idle session after so many seconds."""
     inactivity_timeout: float = 900
     """Fails a turn whose agent is silent so long."""
 
     _executor: Executor | None = PrivateAttr(default=None)
+    _llm: BaseLlm | None = PrivateAttr(default=None)
+    # The sandboxes and their routers, by session, with sandbox.
+    _sandboxes: dict[str, Sandbox] = PrivateAttr(default_factory=dict)
+    _routers: dict[str, "_SessionRouter"] = PrivateAttr(default_factory=dict)
+    _reaper: threading.Thread | None = PrivateAttr(default=None)
+    _closed: threading.Event = PrivateAttr(default_factory=threading.Event)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _runs: dict[str, "_Run"] = PrivateAttr(default_factory=dict)
     # The task waiting for an answer, by session.
@@ -100,8 +184,14 @@ class AcpAgent(BaseAgent):
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
-        if bool(self.argv) == (self.start is not None):
-            raise ValueError("AcpAgent needs either argv or start")
+        if [bool(self.argv), self.start is not None, self.sandbox is not None].count(True) != 1:
+            raise ValueError("AcpAgent needs exactly one of argv, start and sandbox")
+        if self.argv and (self.tools or self.model is not None):
+            raise ValueError("AcpAgent serves tools and a model only to an agent in a sandbox, or one that start runs behind an interceptor")
+        if isinstance(self.model, BaseLlm):
+            self._llm = self.model
+        elif isinstance(self.model, str):
+            self._llm = LLMRegistry.new_llm(self.model)
         for t in self.tools:
             if t._get_declaration() is None:  # pylint: disable=protected-access
                 raise ValueError(f"AcpAgent tool {t.name!r} has no function declaration to serve over MCP")
@@ -161,7 +251,7 @@ class AcpAgent(BaseAgent):
                     argv=self.argv or None,
                     cwd=self.cwd,
                     env=self.env,
-                    start=self.start,
+                    start=self._start_sandboxed if self.sandbox is not None else self.start,
                     per_context=True,
                     idle_timeout=self.idle_timeout,
                     session_cwd=self.session_cwd,
@@ -178,11 +268,121 @@ class AcpAgent(BaseAgent):
             return set(self._runs)
 
     def close(self) -> None:
-        """Stops the agents; runs in progress fail."""
+        """Stops the agents and removes their sandboxes; runs in progress
+        fail."""
+        self._closed.set()
         with self._lock:
-            if self._executor is not None:
-                self._executor.close()
-                self._executor = None
+            executor, self._executor = self._executor, None
+            boxes = list(self._sandboxes.values())
+            self._sandboxes.clear()
+            self._routers.clear()
+        if executor is not None:
+            executor.close()
+        for sb in boxes:
+            sb.close()
+
+    def sandbox_of(self, session_id: str) -> Sandbox | None:
+        """Returns the sandbox of an ADK session, with sandbox, to read and
+        write its workspace."""
+        with self._lock:
+            return self._sandboxes.get(session_id)
+
+    def _start_sandboxed(self, session_id: str) -> int:
+        """Starts the agent of a session in its sandbox, made on first use."""
+        assert self.sandbox is not None
+        with self._lock:
+            sb = self._sandboxes.get(session_id)
+            router = self._routers.get(session_id)
+            if router is not None:
+                router.touch()
+            if self._reaper is None:
+                self._reaper = threading.Thread(target=self._reap, name="acp-sandbox-reaper", daemon=True)
+                self._reaper.start()
+        if sb is None:
+            cfg = self.sandbox
+            router = _SessionRouter(self, session_id)
+            sb = Sandbox(
+                short_name("a2a-acp-" + self.name.replace("_", "-")),
+                cfg.image,
+                cfg.command,
+                cwd=cfg.workspace,
+                env=cfg.env,
+                memory_dir=cfg.workspace,
+                memory_size=cfg.workspace_size,
+                files=cfg.files,
+                network="allowlist",
+                interceptor=router,
+                inspect_tls=cfg.inspect_tls,
+                labels=cfg.labels,
+            )
+            with self._lock:
+                self._sandboxes[session_id] = sb
+                self._routers[session_id] = router
+        return sb.start_fd()
+
+    def _reap(self) -> None:
+        """Removes the sandboxes of idle sessions."""
+        assert self.sandbox is not None
+        # The agent stops its idle process first, so that a turn which
+        # starts as the reaper works asks for a sandbox under the lock.
+        limit = max(self.sandbox.idle_timeout, self.idle_timeout + 60)
+        was_busy: set[str] = set()
+        while not self._closed.wait(min(60.0, limit)):
+            busy = self.busy_sessions()
+            now = time.monotonic()
+            with self._lock:
+                # The agent's idle time starts when a turn ends.
+                for k in was_busy - busy:
+                    if k in self._routers:
+                        self._routers[k].touch()
+                idle = [k for k, r in self._routers.items() if now - r.last_used > limit and k not in busy]
+                boxes = [self._sandboxes.pop(k) for k in idle]
+                for k in idle:
+                    del self._routers[k]
+            was_busy = busy
+            for sb in boxes:
+                try:
+                    sb.close()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.warning("removing the sandbox of an idle session: %s", e)
+
+    def handle_model(self, session_id: str, method: str, path: str, body: bytes) -> tuple[int, dict[str, str], bytes]:
+        """Answers a request of the agent of the ADK session to its model,
+        in the OpenAI chat completions API, with the ADK model.
+
+        The call runs in the invocation in progress in the session, with
+        the model callbacks. Call it from a worker thread, such as the one
+        an interceptor runs on.
+        """
+        json_headers = {"Content-Type": "application/json"}
+        if self._llm is None:
+            return 404, json_headers, openai_chat.error_body("the agent has no model", "not_found")
+        if method == "GET" and path.endswith("/models"):
+            listing = {"object": "list", "data": [{"id": self._llm.model, "object": "model", "owned_by": "adk"}]}
+            return 200, json_headers, json.dumps(listing).encode()
+        if method != "POST" or not path.endswith("/chat/completions"):
+            return 404, json_headers, openai_chat.error_body(f"no route {method} {path}", "not_found")
+        try:
+            req = json.loads(body)
+            llm_request = openai_chat.to_llm_request(req, self._llm.model)
+        except (json.JSONDecodeError, openai_chat.BadRequest) as e:
+            return 400, json_headers, openai_chat.error_body(str(e), "invalid_request_error")
+        with self._lock:
+            run = self._runs.get(session_id)
+        if run is None:
+            return 409, json_headers, openai_chat.error_body("no ADK invocation of this session is in progress", "conflict")
+        future = asyncio.run_coroutine_threadsafe(run.call_model(self._llm, llm_request), run.loop)
+        try:
+            response = future.result(timeout=MODEL_TIMEOUT)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            future.cancel()
+            return 502, json_headers, openai_chat.error_body(f"{type(e).__name__}: {e}")
+        if response.error_code:
+            status = 429 if response.error_code in ("429", "RESOURCE_EXHAUSTED") else 502
+            return status, json_headers, openai_chat.error_body(response.error_message or response.error_code, response.error_code)
+        if req.get("stream"):
+            return 200, {"Content-Type": "text/event-stream"}, openai_chat.to_stream(response, self._llm.model)
+        return 200, json_headers, json.dumps(openai_chat.to_completion(response, self._llm.model)).encode()
 
     async def _run_async_impl(
         self, ctx: InvocationContext
@@ -479,6 +679,26 @@ class _Run:
             if not f.done():
                 f.set_exception(RuntimeError("the ADK invocation ended"))
 
+    async def call_model(self, llm: BaseLlm, llm_request: LlmRequest) -> LlmResponse:
+        """Runs a model call in the invocation, with the agent's model
+        callbacks; the state they change is saved with an event."""
+        actions = EventActions()
+        callback_context = CallbackContext(self.ctx, event_actions=actions)
+        response = await _first_response(self.agent.before_model_callback, callback_context, llm_request)
+        if response is None:
+            async for r in llm.generate_content_async(llm_request, stream=False):
+                response = r
+        if response is None:
+            response = LlmResponse(error_code="EMPTY_RESPONSE", error_message="the model returned nothing")
+        changed = await _first_response(self.agent.after_model_callback, callback_context, response)
+        if changed is not None:
+            response = changed
+        if actions.state_delta or actions.artifact_delta:
+            ev = self.agent._event(self.ctx)
+            ev.actions = actions
+            await self.emit(ev)
+        return response
+
     async def call_tool(self, tool: BaseTool, args: dict) -> tuple[Any, bool]:
         """Runs tool in the invocation, and reports whether it failed."""
         call_id = "acp-" + Event.new_id()
@@ -518,6 +738,57 @@ class _Run:
         resp.actions = actions
         await self.emit(resp)
         return result, failed
+
+
+async def _first_response(callbacks: Callable | list[Callable] | None, *args: Any) -> Any:
+    """Calls callbacks in turn, as ADK calls an LlmAgent's model callbacks,
+    and returns the first answer that isn't None."""
+    if callbacks is None:
+        return None
+    for cb in callbacks if isinstance(callbacks, list) else [callbacks]:
+        result = cb(*args)
+        if inspect.isawaitable(result):
+            result = await result
+        if result is not None:
+            return result
+    return None
+
+
+class _SessionRouter:
+    """Decides the connections of the sandbox of one session: the model and
+    tool hosts are answered in process, the rest by the egress policy."""
+
+    def __init__(self, agent: AcpAgent, session_id: str):
+        self.agent = agent
+        self.session_id = session_id
+        self.last_used = time.monotonic()
+        self.model_host = urllib.parse.urlsplit(agent.model_url).hostname
+        self.tools_host = urllib.parse.urlsplit(agent.mcp_url).hostname
+
+    def touch(self) -> None:
+        self.last_used = time.monotonic()
+
+    def _egress(self) -> Interceptor | None:
+        return self.agent.sandbox.egress if self.agent.sandbox is not None else None
+
+    def connect(self, host: str, port: int) -> str:
+        self.touch()
+        if host in (self.model_host, self.tools_host):
+            return "inspect"
+        egress = self._egress()
+        return egress.connect(host, port) if egress is not None else "deny"
+
+    def request(self, req: Request) -> dict:
+        self.touch()
+        url = urllib.parse.urlsplit(req.url)
+        if url.hostname == self.model_host:
+            status, headers, body = self.agent.handle_model(self.session_id, req.method, url.path, req.body)
+            return respond(status, body, headers)
+        if url.hostname == self.tools_host:
+            status, headers, body = self.agent.handle_mcp(self.session_id, req.method, req.body)
+            return respond(status, body, headers)
+        egress = self._egress()
+        return egress.request(req) if egress is not None else deny("the sandbox reaches no other host")
 
 
 def _answered(ev: dict) -> bool:

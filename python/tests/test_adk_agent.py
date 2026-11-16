@@ -20,12 +20,23 @@ import asyncio
 import json
 import os
 import shutil
+import socket
+import subprocess
 import tempfile
 import threading
 import types as pytypes
 import unittest
 
 FAKEACP = os.environ.get("FAKEACP", "")
+
+
+def start_fake(cwd):
+    """Starts fakeacp on one end of a socket pair and returns the other."""
+    parent, child = socket.socketpair()
+    proc = subprocess.Popen([FAKEACP], cwd=cwd, stdin=child, stdout=child)
+    child.close()
+    threading.Thread(target=proc.wait, daemon=True).start()
+    return parent.detach()
 
 
 def message(text):
@@ -43,7 +54,12 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
 
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
-        agent = AcpAgent(name="coder", argv=[FAKEACP], session_cwd=d, **kwargs)
+        if kwargs.get("tools") or kwargs.get("model") is not None:
+            # A test stands in for the interceptor that would route the
+            # agent's requests, so the agent starts through start.
+            agent = AcpAgent(name="coder", start=lambda key: start_fake(d), session_cwd=d, **kwargs)
+        else:
+            agent = AcpAgent(name="coder", argv=[FAKEACP], session_cwd=d, **kwargs)
         self.addCleanup(agent.close)
         return agent, InMemoryRunner(agent=agent, app_name="test")
 
@@ -320,6 +336,7 @@ class ValidationTest(unittest.TestCase):
         for name, kwargs in [
             ("neither argv nor start", {}),
             ("both argv and start", {"argv": ["agent"], "start": lambda key: 0}),
+            ("tools without an interceptor", {"argv": ["agent"], "tools": [FunctionTool(tool)]}),
             (
                 "duplicate tools",
                 {"argv": ["agent"], "tools": [FunctionTool(tool), FunctionTool(tool)]},

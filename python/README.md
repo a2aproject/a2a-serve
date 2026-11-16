@@ -4,7 +4,7 @@ The `a2a_serve` package wraps the [C libraries](../clib) of the a2a-serve sandbo
 
 - `a2a_serve.Sandbox` runs a command in a Docker container. Its working directory can live in memory, and an interceptor in Python can decide each of its connections.
 - `a2a_serve.Executor` runs an ACP agent, such as `opencode acp`, and returns the A2A events of each message.
-- `a2a_serve.adk.AcpAgent` is an ADK agent backed by an `Executor`, with a sandbox per ADK session when you give it a `start` function. It gives the coding agent ADK tools over MCP.
+- `a2a_serve.adk.AcpAgent` is an ADK agent backed by an `Executor`. With `sandbox`, each ADK session gets its own sandbox with a workspace in memory; with `model`, an ADK model answers the coding agent's model calls, with the model callbacks; with `tools`, it calls ADK tools over MCP.
 
 ## Setup
 

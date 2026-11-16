@@ -161,7 +161,7 @@ class McpTest(unittest.TestCase):
             """Adds two numbers."""
             return a + b
 
-        self.agent = AcpAgent(name="coder", argv=["unused"], tools=[FunctionTool(add)])
+        self.agent = AcpAgent(name="coder", start=lambda key: -1, tools=[FunctionTool(add)])
 
     def call(self, msg):
         status, headers, body = self.agent.handle_mcp("s1", "POST", json.dumps(msg).encode())

@@ -57,7 +57,7 @@ async def main(prompt: str) -> None:
             if tool:
                 print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
 
-        sandbox = agent.coder.sandboxes[session.id]
+        sandbox = agent.root_agent.sandbox_of(session.id)
         print("\nWorkspace in memory:")
         for name in sandbox.list_files():
             print(f"  {name}")
@@ -65,12 +65,13 @@ async def main(prompt: str) -> None:
         result = sandbox.exec(["python3", "-m", "unittest", "-q"])
         print(f"Tests in the sandbox: exit {result.exit_code}\n{result.stderr.decode().strip()}\n")
         final = await runner.session_service.get_session(app_name="adk_sandbox_coder", user_id="user", session_id=session.id)
-        print(f"Tickets in the session state: {final.state.get('tickets')}\n")
-        print("Interceptor log:")
-        for line in agent.coder.log[session.id]:
+        print(f"Tickets in the session state: {final.state.get('tickets')}")
+        print(f"Model calls in the session state: {final.state.get('model_calls')}\n")
+        print("Guard log:")
+        for line in agent.guard.log:
             print(f"  {line}")
     finally:
-        agent.coder.close()
+        agent.root_agent.close()
 
 
 if __name__ == "__main__":
