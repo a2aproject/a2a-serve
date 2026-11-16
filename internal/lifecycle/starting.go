@@ -31,7 +31,7 @@ import (
 // crash left behind, and other holders of the lock remove such a file when
 // they take it. Anything unreadable means that no server is starting.
 func findStarting(dir agentdir.Dir) (int, bool) {
-	if !serverRunning(dir) {
+	if !ServerRunning(dir) {
 		return 0, false
 	}
 	data, err := os.ReadFile(dir.PIDPath())
@@ -47,9 +47,9 @@ func findStarting(dir agentdir.Dir) (int, bool) {
 	return pid, true
 }
 
-// serverRunning reports whether a server holds the lock of dir, as one
+// ServerRunning reports whether a server holds the lock of dir, as one
 // does from its start until it has shut down.
-func serverRunning(dir agentdir.Dir) bool {
+func ServerRunning(dir agentdir.Dir) bool {
 	release, err := dir.Lock()
 	if errors.Is(err, fsutil.ErrLocked) {
 		return true

@@ -46,6 +46,22 @@ func logStop(l *slog.Logger, pid int, err error) {
 	l.Error(stopMsg, "error", err, "pid", pid)
 }
 
+// cleanStopMsg is the message of the record the server logs when it stops
+// without an error, such as when `a2a-serve stop` asks it to.
+const cleanStopMsg = "the server stopped"
+
+// logCleanStop logs the record of the server with pid that stopped without
+// an error.
+func logCleanStop(l *slog.Logger, pid int) {
+	l.Info(cleanStopMsg, "pid", pid)
+}
+
+// isCleanStop reports whether a log line is the record of a server that
+// stopped without an error.
+func isCleanStop(line string) bool {
+	return !isProgress(line) && strings.Contains(line, " msg="+strconv.Quote(cleanStopMsg))
+}
+
 // isStop reports whether a log line is the record of a server that stopped
 // with an error.
 func isStop(line string) bool {
@@ -123,7 +139,7 @@ func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out, n
 	if !follow {
 		return nil
 	}
-	if !serverRunning(dir) {
+	if !ServerRunning(dir) {
 		if _, err := fmt.Fprintln(notes, "note: the agent is not running; waiting for it to write to its log (Ctrl-C to stop)"); err != nil {
 			return err
 		}

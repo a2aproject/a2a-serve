@@ -117,7 +117,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	}
 	// A server that is shutting down removes its PID file before it
 	// releases the lock.
-	if opts.Wait == NoWait || !res.Running && !serverRunning(dir) {
+	if opts.Wait == NoWait || !res.Running && !ServerRunning(dir) {
 		return res, nil
 	}
 	kill := func() error { return nil }
@@ -134,7 +134,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 // a hint at `a2a-serve stop` when the call timed out while a server holds
 // dir: that server is stuck, and stop ends it by its PID.
 func Unanswered(dir agentdir.Dir, err error) error {
-	if !errors.Is(err, context.DeadlineExceeded) || !serverRunning(dir) {
+	if !errors.Is(err, context.DeadlineExceeded) || !ServerRunning(dir) {
 		return err
 	}
 	return agenterr.WithHint(err, agenterr.HintStopUnanswered, "")
