@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -390,6 +391,35 @@ func TestStatusAfterConfigDeleted(t *testing.T) {
 	}
 	want := "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml\n"
 	if !strings.Contains(out, want) || strings.Contains(out, "start --detach") {
+		t.Fatalf("a2a-serve status = %q, want %q", out, want)
+	}
+}
+
+func TestStatusOfAServerStartingOrStopping(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("advisory locks are no-ops on this platform")
+	}
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	release, err := d.Lock()
+	if err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("release() error = %v", err)
+		}
+	})
+
+	out, err := runCMD(t, "status", "--dir", d.Root)
+
+	if err != nil {
+		t.Fatalf("a2a-serve status error = %v", err)
+	}
+	if want := "coder (opencode) in " + d.Root + " is starting or stopping; check again in a moment, or see `a2a-serve logs`\n"; out != want {
 		t.Fatalf("a2a-serve status = %q, want %q", out, want)
 	}
 }

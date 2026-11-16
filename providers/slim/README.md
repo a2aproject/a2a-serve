@@ -55,9 +55,7 @@ res, err := t.SendMessage(ctx, nil, &a2a.SendMessageRequest{Message: msg})
 The integration tests need a SLIM node at `$SLIM_ENDPOINT` (default `http://127.0.0.1:46357`) that runs without TLS, and skip without one:
 
 ```sh
-docker run -d --name slimnode -p 127.0.0.1:46357:46357 \
-  -v "$PWD/../../examples/07-slim-network/slim-node.yaml:/config.yaml:ro" \
-  ghcr.io/agntcy/slim:latest /slim --config /config.yaml
+(cd ../../examples/07-slim-network && docker compose up -d --wait slim)
 go test -race ./...
 ```
 

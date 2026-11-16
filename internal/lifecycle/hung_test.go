@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -140,5 +142,65 @@ func TestStopErrorOfServerThatDoesNotAnswer(t *testing.T) {
 	_, err := Stop(t.Context(), dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), StopOptions{})
 	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "http://") {
 		t.Fatalf("Stop() error = %v, want a timeout without the internal URL", err)
+	}
+}
+
+func TestRestartOfServerThatDoesNotAnswerPointsToStop(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	serveControl(t, dir, hangingControl{})
+	hungServer(t, dir)
+
+	err := Restart(t.Context(), dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), fakeServices{}, false, io.Discard)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Restart() error = %v, want a timeout", err)
+	}
+	if got, want := agenterr.HintText(err), "the server doesn't answer; stop it with `a2a-serve stop`, then start it with `a2a-serve restart`"; got != want {
+		t.Fatalf("agenterr.HintText() = %q, want %q", got, want)
+	}
+}
+
+func TestUnanswered(t *testing.T) {
+	t.Parallel()
+	timeout := fmt.Errorf("status: %w", context.DeadlineExceeded)
+	tests := []struct {
+		name     string
+		locked   bool
+		err      error
+		wantHint string
+	}{
+		{name: "server holds the directory", locked: true, err: timeout, wantHint: "the server doesn't answer; stop it with `a2a-serve stop`, then start it with `a2a-serve restart`"},
+		{name: "no server", err: timeout},
+		{name: "other error", locked: true, err: errors.New("broken")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if tc.locked {
+				release, err := dir.Lock()
+				if err != nil {
+					t.Fatalf("Lock() error = %v", err)
+				}
+				t.Cleanup(func() {
+					if err := release(); err != nil {
+						t.Errorf("release() error = %v", err)
+					}
+				})
+			}
+
+			got := Unanswered(dir, tc.err)
+
+			if !errors.Is(got, tc.err) {
+				t.Fatalf("Unanswered() = %v, want it to wrap %v", got, tc.err)
+			}
+			if hint := agenterr.HintText(got); hint != tc.wantHint {
+				t.Fatalf("agenterr.HintText(Unanswered()) = %q, want %q", hint, tc.wantHint)
+			}
+		})
 	}
 }

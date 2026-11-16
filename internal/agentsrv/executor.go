@@ -452,6 +452,7 @@ func (s *Server) acpConfig() *a2aacp.Config {
 		SessionStore: s.sessions,
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
+		Prompt:       s.queued.prompt,
 		Turn:         s.stalls.turn(s.claims.turn),
 		Converter:    s.stalls,
 		Abandoned:    s.abandoned,
@@ -640,6 +641,9 @@ type observedExecutor struct {
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
+	// queued fails the new tasks that wait behind a question in their
+	// conversation; nil runs them as they come.
+	queued *queuedTurns
 }
 
 var (
@@ -670,6 +674,9 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 	if q := approvals.FromStatus(task.Status); q != nil && !askedBefore(execCtx.StoredTask, q) {
 		e.approvals.OnQuestion(ctx, execCtx, q)
 	}
+	if state == a2a.TaskStateInputRequired {
+		e.queued.refuseIn(execCtx.ContextID)
+	}
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -683,7 +690,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	// rejects the tool call without saying so.
 	q := pendingApproval(execCtx.StoredTask)
 	if q == nil {
-		return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
+		return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.queued.run(ctx, execCtx, e.turn)))
 	}
 	opt, chosen := replyOption(execCtx.Message, q)
 	_, ownOptions := q.AgentOption(a2aacp.OptionOnce)
@@ -929,8 +936,11 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 	}
 }
 
+// maxLoggedReason bounds the reason a failed task logs.
+const maxLoggedReason = 300
+
 // logTransition logs a task reaching a state where it stops: it finished or
-// waits for input.
+// waits for input. A failed or rejected task logs the reason callers got.
 func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	state, ok := eventState(ev)
 	if !ok {
@@ -939,7 +949,22 @@ func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
 		return
 	}
-	slog.Info("task "+a2atext.StateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
+	attrs := []any{"task", id, "duration", time.Since(start).Round(time.Millisecond)}
+	if msg := eventMessage(ev); msg != nil && (state == a2a.TaskStateFailed || state == a2a.TaskStateRejected) {
+		attrs = append(attrs, "reason", a2atext.Snippet(a2atext.Message(msg), maxLoggedReason))
+	}
+	slog.Info("task "+a2atext.StateName(state), attrs...)
+}
+
+// eventMessage returns the status message an event reports, if any.
+func eventMessage(ev a2a.Event) *a2a.Message {
+	switch e := ev.(type) {
+	case *a2a.Task:
+		return e.Status.Message
+	case *a2a.TaskStatusUpdateEvent:
+		return e.Status.Message
+	}
+	return nil
 }
 
 // eventState returns the task state an event reports, if it reports one.
@@ -960,6 +985,7 @@ type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
 	tasks     *store.TaskStore
+	waiting   waitingTasks
 	budget    *guestBudget
 	keys      *agentKeys
 	users     *userAgents
@@ -970,7 +996,35 @@ type callerInterceptor struct {
 	removeHome func(home string)
 }
 
+// newTaskKey marks the context of a request that starts a task.
+type newTaskKey struct{}
+
+// Before admits a request, and logs the refusal of a new task, so that the
+// owner sees why callers' messages don't run.
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
+	ctx, res, err := i.admit(ctx, callCtx, req)
+	msg, ok := req.Payload.(*a2a.SendMessageRequest)
+	if !ok || msg.Message == nil || msg.Message.TaskID != "" {
+		return ctx, res, err
+	}
+	if err != nil {
+		logRefused(ctx, err)
+		return ctx, res, err
+	}
+	return context.WithValue(ctx, newTaskKey{}, true), res, nil
+}
+
+// logRefused logs that the server refused a new task of the caller with
+// err.
+func logRefused(ctx context.Context, err error) {
+	from := ""
+	if p, ok := auth.Caller(ctx); ok {
+		from = p.ID
+	}
+	slog.Info("task refused", "from", from, "error", err)
+}
+
+func (i *callerInterceptor) admit(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
 	p, ok := auth.Caller(ctx)
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
@@ -1029,7 +1083,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		if errors.Is(headerErr, a2a.ErrTaskNotFound) {
 			return ctx, nil, headerErr
 		}
-		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
+		if err := i.tasks.CheckNotFailed(ctx, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
@@ -1084,7 +1138,12 @@ func lastQuestion(task *a2a.Task) *approvals.Question {
 // After names the task, and what to do next with the a2a CLI, in the error
 // of a reply that the task refused since it already runs an execution.
 // In-process senders, such as chats, render the outcome themselves.
+// It also logs the refusal of a new task by the handler, such as at the
+// limit of running tasks.
 func (i *callerInterceptor) After(ctx context.Context, _ *a2asrv.CallContext, resp *a2asrv.Response) error {
+	if newTask, _ := ctx.Value(newTaskKey{}).(bool); newTask && resp.Err != nil {
+		logRefused(ctx, resp.Err)
+	}
 	r, ok := ctx.Value(replyKey{}).(reply)
 	if !ok || auth.IsInProcess(ctx) || !a2aerr.ExecutionInProgress(resp.Err) {
 		return nil
@@ -1149,41 +1208,17 @@ func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Princi
 // checkWaiting refuses a new task in a conversation with a task that waits
 // for an answer to a question of the agent, since the new task would wait
 // behind it without a word. Messages from chats and schedules still wait.
-// Questions of other agents don't hold the conversation.
+// [queuedTurns] fails the tasks that a question catches while they wait.
 func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, contextID string) error {
 	if contextID == "" || auth.IsInProcess(ctx) {
 		return nil
 	}
-	history := 0
-	waiting, err := i.tasks.List(auth.WithPrincipal(ctx, auth.Owner()), &a2a.ListTasksRequest{
-		ContextID: contextID, Status: a2a.TaskStateInputRequired, HistoryLength: &history,
-	})
+	refusal, err := i.waiting.refusal(ctx, p, contextID)
 	if err != nil {
-		return fmt.Errorf("checking conversation %s: %w", contextID, err)
+		return err
 	}
-	for _, t := range waiting.Tasks {
-		q := approvals.FromStatus(t.Status)
-		if q == nil || asksCallerQuestion(t) {
-			continue
-		}
-		err := i.approvals.CheckAnswer(ctx, p, t.ID)
-		if errors.Is(err, a2a.ErrTaskNotFound) || errors.Is(err, a2a.ErrUnauthorized) {
-			return fmt.Errorf("%w: conversation %s waits for the agent's owner to answer %q; send the message again after they answer, or leave out the context ID to start a new conversation",
-				a2a.ErrInvalidRequest, contextID, q.Title)
-		}
-		if err != nil {
-			return err
-		}
-		ids := make([]string, len(q.Options))
-		for i, o := range q.Options {
-			ids[i] = o.ID
-		}
-		answer := "with " + a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" <answer>")
-		if len(ids) > 0 {
-			answer = fmt.Sprintf("with one of %s, as in %s", strings.Join(ids, ", "), a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" "+ids[0]))
-		}
-		return fmt.Errorf("%w: task %s in conversation %s waits for an answer to %q; answer it first %s, or leave out the context ID to start a new conversation",
-			a2a.ErrInvalidRequest, t.ID, contextID, q.Title, answer)
+	if refusal != "" {
+		return fmt.Errorf("%w: %s", a2a.ErrInvalidRequest, refusal)
 	}
 	return nil
 }

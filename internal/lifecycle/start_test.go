@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -95,9 +96,9 @@ func TestStartForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = Start(context.Background(), dir, StartOptions{Out: io.Discard, Quiet: true})
-	if err == nil || !strings.Contains(err.Error(), "already running") {
-		t.Fatalf("Start() error = %v, want an already running error", err)
+	err = Start(context.Background(), dir, StartOptions{Out: io.Discard, Quiet: true, BusyWait: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "is starting or stopping") {
+		t.Fatalf("Start() error = %v, want a starting or stopping error", err)
 	}
 	data, err := os.ReadFile(dir.LogPath())
 	if err != nil {
@@ -196,6 +197,15 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 			},
 		},
 		{
+			name: "stopped while starting",
+			log:  "pulling the harness image\n" + cleanStopRecord(42),
+			want: result{
+				Out:     "pulling the harness image\n",
+				Message: "the server was stopped before it was ready",
+				Hint:    "start it again with `a2a-serve start --detach`",
+			},
+		},
+		{
 			name: "stop record only",
 			log:  "pulling the harness image\n" + stopRecord(42, "pulling the image: exit status 1"),
 			want: result{
@@ -229,20 +239,40 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 	}
 }
 
-func TestStartDetachedWhileRunning(t *testing.T) {
+func TestStartWhileRunningNamesTheRunningAgent(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("unix sockets are not used on this platform")
 	}
-	dir := newAgent(t)
-	serveControl(t, dir, &fakeControl{})
+	for name, mode := range map[string]Mode{"foreground": Foreground, "detached": Detached} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if err := dir.SaveConfig(&agentdir.Config{Name: "other", Harness: "opencode"}); err != nil {
+				t.Fatalf("SaveConfig() error = %v", err)
+			}
+			if mode == Foreground {
+				release, err := dir.Lock()
+				if err != nil {
+					t.Fatalf("Lock() error = %v", err)
+				}
+				t.Cleanup(func() {
+					if err := release(); err != nil {
+						t.Errorf("release() error = %v", err)
+					}
+				})
+			}
+			serveControl(t, dir, &fakeControl{})
 
-	var out strings.Builder
-	if err := Start(context.Background(), dir, StartOptions{Mode: Detached, Quiet: true, Out: &out}); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
-		t.Fatalf("Start() output = %q, want %q", out.String(), want)
+			var out strings.Builder
+			if err := Start(t.Context(), dir, StartOptions{Mode: mode, Quiet: true, Out: &out}); err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+
+			if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+				t.Fatalf("Start() output = %q, want %q", out.String(), want)
+			}
+		})
 	}
 }
 
@@ -321,6 +351,12 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 }
 
 // stopRecord is the record a server with pid logs when it stops with err.
+func cleanStopRecord(pid int) string {
+	var b bytes.Buffer
+	logCleanStop(slog.New(slog.NewTextHandler(&b, nil)), pid)
+	return b.String()
+}
+
 func stopRecord(pid int, err string) string {
 	var b bytes.Buffer
 	logStop(slog.New(slog.NewTextHandler(&b, nil)), pid, errors.New(err))
@@ -348,4 +384,90 @@ func exitedProcess() <-chan struct{} {
 	c := make(chan struct{})
 	close(c)
 	return c
+}
+
+func TestStartForegroundWhileRunning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	release, err := dir.Lock()
+	if err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("release() error = %v", err)
+		}
+	})
+	serveControl(t, dir, &fakeControl{})
+
+	var out strings.Builder
+	if err := Start(t.Context(), dir, StartOptions{Mode: Foreground, Quiet: true, Out: &out}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+		t.Fatalf("Start() output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestStartWaitsForAServerStartingOrStopping(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("advisory locks are no-ops on this platform")
+	}
+	tests := []struct {
+		name string
+		// serves makes the server answer, as one that finished starting;
+		// otherwise it releases the lock, as one that finished stopping.
+		serves  bool
+		wantRun bool
+	}{
+		{name: "server finishes stopping"},
+		{name: "server finishes starting", serves: true, wantRun: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			release, err := dir.Lock()
+			if err != nil {
+				t.Fatalf("Lock() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if !tc.serves {
+					return
+				}
+				if err := release(); err != nil {
+					t.Errorf("release() error = %v", err)
+				}
+			})
+			type result struct {
+				st  *controlapi.Status
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				st, err := settle(t.Context(), dir, time.Minute)
+				done <- result{st, err}
+			}()
+			time.Sleep(500 * time.Millisecond)
+			if tc.serves {
+				serveControl(t, dir, &fakeControl{})
+			} else if err := release(); err != nil {
+				t.Fatalf("release() error = %v", err)
+			}
+
+			r := <-done
+			st, err := r.st, r.err
+
+			if err != nil {
+				t.Fatalf("settle() error = %v", err)
+			}
+			if got := st != nil; got != tc.wantRun {
+				t.Fatalf("settle() found a running server = %v, want %v", got, tc.wantRun)
+			}
+		})
+	}
 }

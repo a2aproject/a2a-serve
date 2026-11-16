@@ -147,6 +147,9 @@ const (
 	HintConfigUnset Hint = "config-unset"
 	// HintConfigEdit fixes config.yaml in the editor.
 	HintConfigEdit Hint = "config-edit"
+	// HintStopUnanswered stops a server that holds its directory but
+	// doesn't answer.
+	HintStopUnanswered Hint = "stop-unanswered"
 	// HintMessengerList lists the messengers.
 	HintMessengerList Hint = "messenger-list"
 )

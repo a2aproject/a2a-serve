@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
@@ -75,6 +76,7 @@ stopped, once its first start picked its port.`,
 			}
 			client := sf.controlClient(d)
 			st, err := client.Status(cmd.Context())
+			err = lifecycle.Unanswered(d, err)
 			if scope != "" {
 				return printStatusURL(cfg, d, st, err, scope)
 			}
@@ -125,6 +127,12 @@ func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
 	sb.WriteString(name)
 	if agent != "" {
 		fmt.Fprintf(&sb, " (%s)", agent)
+	}
+	if lifecycle.ServerRunning(d) {
+		fmt.Fprintf(&sb, " in %s is starting or stopping; check again in a moment, or see `a2a-serve logs`\n", d.Root)
+		writeConfigProblem(&sb, problem)
+		_, err := fmt.Fprint(cfg.Out, sb.String())
+		return err
 	}
 	start := "start it with `a2a-serve start --detach`"
 	if !d.Exists() {

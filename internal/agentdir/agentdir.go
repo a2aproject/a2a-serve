@@ -52,6 +52,12 @@ func NotFoundIn(root string) error {
 	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"})
 }
 
+// NotFoundWith returns an error, matching [ErrNotFound], with the message
+// msg, for a command that says its own way to create the agent.
+func NotFoundWith(msg string) error {
+	return clierr.NoAgent(&notFoundError{msg: msg})
+}
+
 // relayNotAgent returns an error, matching [ErrNotFound], for a root that
 // holds a relay.
 func relayNotAgent(root string) error {
@@ -479,6 +485,22 @@ func (d Dir) DefaultName() string {
 // SanitizeName turns s into a lowercase DNS label, usable as a tailnet
 // hostname and in container names.
 func SanitizeName(s string) string {
+	out := labelOf(s)
+	if len(out) > maxNameLen {
+		out = strings.TrimSuffix(out[:maxNameLen], "-")
+	}
+	if out == "" {
+		return "agent"
+	}
+	return out
+}
+
+// maxNameLen is the length of a DNS label, which a name is.
+const maxNameLen = 63
+
+// labelOf returns s in lowercase letters, digits and single dashes, of
+// any length.
+func labelOf(s string) string {
 	var sb strings.Builder
 	dash := false
 	for _, r := range strings.ToLower(s) {
@@ -491,12 +513,20 @@ func SanitizeName(s string) string {
 			dash = true
 		}
 	}
-	out := strings.TrimSuffix(sb.String(), "-")
-	if len(out) > 63 {
-		out = strings.TrimSuffix(out[:63], "-")
+	return strings.TrimSuffix(sb.String(), "-")
+}
+
+// NameNote returns a note for the name given, which [SanitizeName] changes
+// in a way users may not expect: a name without letters or digits, which
+// becomes "agent", or one cut to the 63 characters a name can have. It
+// returns "" otherwise.
+func NameNote(given string) string {
+	label := labelOf(given)
+	switch {
+	case given != "" && label == "":
+		return fmt.Sprintf("the name %q has no letters a-z or digits, so the agent is called %q; pick another with `a2a-serve config set --name <name>`", given, SanitizeName(given))
+	case len(label) > maxNameLen:
+		return fmt.Sprintf("the name is cut to %d characters, so the agent is called %q", maxNameLen, SanitizeName(given))
 	}
-	if out == "" {
-		return "agent"
-	}
-	return out
+	return ""
 }

@@ -111,6 +111,65 @@ func TestUnset(t *testing.T) {
 	}
 }
 
+func TestUnsetNetworkURLDropsProvider(t *testing.T) {
+	t.Parallel()
+	const url = "http://127.0.0.1:46357?namespace=demo"
+	tests := []struct {
+		name    string
+		network NetworkConfig
+		setting string
+		want    NetworkConfig
+	}{
+		{name: "private", network: NetworkConfig{Private: url, Provider: "slim"}, setting: "private"},
+		{name: "public", network: NetworkConfig{Public: url, Provider: "slim"}, setting: "public"},
+		{name: "private next to a public URL", network: NetworkConfig{Private: url, Public: url, Provider: "slim"}, setting: "private", want: NetworkConfig{Public: url, Provider: "slim"}},
+		{name: "private tailscale", network: NetworkConfig{Private: NetworkTailscale, Public: url, Provider: "slim"}, setting: "private", want: NetworkConfig{Public: url, Provider: "slim"}},
+		{name: "provider alone", network: NetworkConfig{Private: url, Provider: "slim"}, setting: "network-provider", want: NetworkConfig{Private: url}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{Network: tc.network}
+			if _, err := (Dir{}).Unset(cfg, tc.setting, nil); err != nil {
+				t.Fatalf("Dir.Unset() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(tc.want, cfg.Network); diff != "" {
+				t.Fatalf("Dir.Unset() wrong network (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestApplyNetworkNoneDropsProvider(t *testing.T) {
+	t.Parallel()
+	const url = "http://127.0.0.1:46357?namespace=demo"
+	tests := []struct {
+		name     string
+		network  NetworkConfig
+		settings Settings
+		want     NetworkConfig
+	}{
+		{name: "private none", network: NetworkConfig{Private: url, Provider: "slim"}, settings: Settings{Private: "none"}},
+		{name: "public none", network: NetworkConfig{Public: url, Provider: "slim"}, settings: Settings{Public: "none"}},
+		{name: "private tailscale", network: NetworkConfig{Private: url, Provider: "slim"}, settings: Settings{Private: "tailscale"}, want: NetworkConfig{Private: "tailscale"}},
+		{name: "other URL", network: NetworkConfig{Private: url, Provider: "slim"}, settings: Settings{Private: "http://127.0.0.1:1?x=y"}, want: NetworkConfig{Private: "http://127.0.0.1:1?x=y", Provider: "slim"}},
+		{name: "provider given", network: NetworkConfig{Private: url, Provider: "slim"}, settings: Settings{Private: "none", NetworkProvider: "loopnet"}, want: NetworkConfig{Provider: "loopnet"}},
+		{name: "no network", network: NetworkConfig{Provider: "slim"}, settings: Settings{Sandbox: "local"}, want: NetworkConfig{Provider: "slim"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{Network: tc.network}
+			if _, err := tc.settings.Apply(cfg, Dir{Root: "/src/app"}); err != nil {
+				t.Fatalf("Settings.Apply() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(tc.want, cfg.Network); diff != "" {
+				t.Fatalf("Settings.Apply() wrong network (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestUnsetVoiceClearsKeyAndName(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Voice: VoiceConfig{Service: "openai", Key: SecretPrefix + SecretVoiceKey, Name: "nova"}}
@@ -441,6 +500,8 @@ func TestUnsetEntriesOfScalar(t *testing.T) {
 		{name: "entry", setting: "memory", entries: []string{"1g"}, wantErr: "memory is not a list: run `a2a-serve config unset memory` to reset it"},
 		{name: "settings", setting: "memory", entries: []string{"cpus"}, wantErr: "memory is not a list, and unset takes one setting: run `a2a-serve config unset memory` and `a2a-serve config unset cpus`"},
 		{name: "secret settings", setting: "tailscale-authkey", entries: []string{"port", "cpus"}, wantErr: "tailscale-authkey takes no entries, and unset takes one setting: run `a2a-serve config unset tailscale-authkey`, `a2a-serve config unset port` and `a2a-serve config unset cpus`"},
+		{name: "list settings", setting: "allow-tools", entries: []string{"deny-tools"}, wantErr: "allow-tools has no entry deny-tools, and unset takes one setting: run `a2a-serve config unset allow-tools` and `a2a-serve config unset deny-tools`"},
+		{name: "list entry and setting", setting: "allow-tools", entries: []string{"bash", "deny-tools"}, wantErr: "allow-tools bash is not set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

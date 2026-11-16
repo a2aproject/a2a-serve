@@ -171,6 +171,27 @@ func TestEditReportsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestEditRemovingAnUnknownKey(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nsandbx: local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(path string) error { return os.WriteFile(path, []byte("name: coder\nagent: opencode\n"), 0o600) }
+
+	res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"sandbx"}, res.RemovedKeys); diff != "" {
+		t.Fatalf("Edit() removed keys wrong result (-want +got) diff = %s", diff)
+	}
+	if res.Empty() {
+		t.Fatalf("Edit().Empty() = true, want false")
+	}
+}
+
 func TestEditRepairsFileThatDoesNotParse(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)

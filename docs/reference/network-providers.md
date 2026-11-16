@@ -24,7 +24,7 @@ Stdin and stdout carry [JSON-RPC 2.0](https://www.jsonrpc.org/specification) mes
 | `member` | `{"node"}` | `{"node", "email", "machine"}` |
 | `peers` | none | `{"peers": [{"name", "url", "description", "node"}]}` |
 
-- **`describe`**: `name` is lower-case letters, digits and dashes. `hosts` are the hosts of the URLs the provider gives agents, such as `agentmesh.local`. The server sends requests for them through the CONNECT tunnel.
+- **`describe`**: `name` is lower-case letters, digits and dashes. `hosts` are the hosts of the URLs the provider gives agents, such as `agentmesh.local`. The server sends requests for them through the CONNECT tunnel. The server also calls `describe` periodically to check that the provider still answers, and reports a provider that stops answering as disconnected. [Limits](limits.md#network-providers) has the interval.
 - **`join`**: joins the network at `url`, the value of `--private` or `--public`, with provider settings in its query. `token` is the `--network-token`, empty without one. `state_dir` keeps the agent's identity across restarts. `private` and `public` say which URLs the agent wants. `node` identifies this agent the way `node` identifies callers. `owner` is the verified email the agent signed in with, or empty.
 - **`listen`**: starts forwarding connections to the sockets the server named, and serves the CONNECT tunnel on `connect_socket`. An empty socket means the agent doesn't want that URL. `private_note` says where the private URL works, when that isn't obvious.
 - **`member`**: returns the machine `node` as the provider would identify it now.

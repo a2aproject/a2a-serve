@@ -310,6 +310,8 @@ type Options struct {
 	// Workspace is the project directory, whose MCP servers and skills are
 	// shown. Empty skips them.
 	Workspace string
+	// Mode is how the agent runs when a flag already says so; empty asks.
+	Mode string
 }
 
 // Run asks for the settings of a new agent.
@@ -354,8 +356,11 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	if s.Telegram, err = p.Secret("Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)"); err != nil {
 		return res, err
 	}
-	if res.Mode, err = p.Choose("Run", []string{ModeForeground, ModeDetach, ModeService}, ModeForeground); err != nil {
-		return res, err
+	res.Mode = opts.Mode
+	if res.Mode == "" {
+		if res.Mode, err = p.Choose("Run", []string{ModeForeground, ModeDetach, ModeService}, ModeForeground); err != nil {
+			return res, err
+		}
 	}
 	if opts.Command == nil {
 		return res, nil

@@ -171,14 +171,14 @@ func TestCutPart(t *testing.T) {
 		want *a2a.Part
 	}{
 		{name: "short text", part: a2a.NewTextPart("abcd"), want: a2a.NewTextPart("abcd")},
-		{name: "long text", part: a2a.NewTextPart("abcdef"), want: a2a.NewTextPart("abcd\n[cut: 4 of 6 bytes shown; get task t1 for the whole text]")},
-		{name: "text cut in a rune", part: a2a.NewTextPart("abcéd"), want: a2a.NewTextPart("abc\n[cut: 3 of 6 bytes shown; get task t1 for the whole text]")},
+		{name: "long text", part: a2a.NewTextPart("abcdef"), want: a2a.NewTextPart("abcd\n[cut: 4 of 6 bytes shown; run `a2a task get -a <agent-url> t1` for the whole text]")},
+		{name: "text cut in a rune", part: a2a.NewTextPart("abcéd"), want: a2a.NewTextPart("abc\n[cut: 3 of 6 bytes shown; run `a2a task get -a <agent-url> t1` for the whole text]")},
 		{
 			name: "long file",
 			part: &a2a.Part{Content: a2a.Raw("12345"), Filename: "f.bin", MediaType: "application/octet-stream"},
-			want: &a2a.Part{Content: a2a.Text("[file of 5 bytes left out of the list; get task t1 for it]"), Filename: "f.bin"},
+			want: &a2a.Part{Content: a2a.Text("[file of 5 bytes left out of the list; run `a2a task get -a <agent-url> t1` for it]"), Filename: "f.bin"},
 		},
-		{name: "long data", part: a2a.NewDataPart(map[string]any{"k": "v"}), want: a2a.NewTextPart("[data of 9 bytes left out of the list; get task t1 for it]")},
+		{name: "long data", part: a2a.NewDataPart(map[string]any{"k": "v"}), want: a2a.NewTextPart("[data of 9 bytes left out of the list; run `a2a task get -a <agent-url> t1` for it]")},
 		{name: "file URL", part: a2a.NewFileURLPart("https://example.com/long", "text/plain"), want: a2a.NewFileURLPart("https://example.com/long", "text/plain")},
 	}
 	for _, tt := range tests {

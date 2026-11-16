@@ -844,3 +844,26 @@ func TestLockWithin(t *testing.T) {
 		})
 	}
 }
+
+func TestNameNote(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("a", 70)
+	tests := []struct {
+		name  string
+		given string
+		want  string
+	}{
+		{name: "valid", given: "coder"},
+		{name: "spaces and case", given: "My Agent"},
+		{name: "no letters", given: "日本語", want: `the name "日本語" has no letters a-z or digits, so the agent is called "agent"; pick another with ` + "`a2a-serve config set --name <name>`"},
+		{name: "too long", given: long, want: "the name is cut to 63 characters, so the agent is called \"" + long[:63] + "\""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := NameNote(tc.given); got != tc.want {
+				t.Fatalf("NameNote(%q) = %q, want %q", tc.given, got, tc.want)
+			}
+		})
+	}
+}

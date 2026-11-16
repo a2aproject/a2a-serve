@@ -43,6 +43,7 @@ func TestRun(t *testing.T) {
 		input      string
 		dockerErr  error
 		secret     string
+		mode       string
 		want       Result
 		wantOut    []string
 		wantNotOut string
@@ -67,12 +68,22 @@ func TestRun(t *testing.T) {
 			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a-serve start claude --name coder --service\n  a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN\n"},
 			wantNotOut: "123:telegram-token",
 		},
+		{
+			name:  "mode from flags",
+			input: "\n\n\n\n\n\n\n\n",
+			mode:  ModeDetach,
+			want: Result{Mode: ModeDetach, Settings: agentdir.Settings{
+				Harness: "opencode", Name: "app", Secrets: []string{"OPENROUTER_API_KEY"}, Private: "none", Public: "none",
+			}},
+			wantOut:    []string{"  a2a-serve start opencode --name app --detach\n"},
+			wantNotOut: "Run (",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var out strings.Builder
-			opts := Options{DefaultName: "app", Harnesses: []string{"claude", "opencode"}, Getenv: getenv, DockerErr: tc.dockerErr, Command: command}
+			opts := Options{DefaultName: "app", Harnesses: []string{"claude", "opencode"}, Getenv: getenv, DockerErr: tc.dockerErr, Command: command, Mode: tc.mode}
 			if tc.secret != "" {
 				opts.ReadSecret = func(prompt string) (string, error) {
 					out.WriteString(prompt + ": ")

@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -784,5 +785,54 @@ func TestAccessWordAliases(t *testing.T) {
 				t.Fatalf("ParseConfig() wrong policy (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestParseConfigWordsTypeErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		data    string
+		wantErr string
+	}{
+		{name: "text for a section", data: "agent: opencode\negress: nowhere\n", wantErr: `line 2: egress wants a mapping of keys, got "nowhere"`},
+		{name: "text for a number", data: "agent: opencode\nport: abc\n", wantErr: `line 2: port wants a number, got "abc"`},
+		{name: "text for a list", data: "agent: opencode\nenv: DEBUG\n", wantErr: `line 2: env wants a list, got "DEBUG"`},
+		{name: "mapping for a list", data: "agent: opencode\nmounts:\n  a: b\n", wantErr: "line 3: mounts wants a list, got a mapping"},
+		{name: "nested key", data: "agent: opencode\negress:\n  allow: x.example.com\n", wantErr: `line 3: egress.allow wants a list, got "x.example.com"`},
+		{name: "list for text", data: "agent: [opencode]\n", wantErr: "line 1: agent wants text, got a list"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseConfig([]byte(tc.data))
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("ParseConfig() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseConfigRefusesExcessiveAliasingAtOnce(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("x-m: &m [a")
+	for range 3000 {
+		b.WriteString(", a")
+	}
+	b.WriteString("]\nx-r: &r {match: *m}\npolicy:\n  sandbox: [*r")
+	for range 3000 {
+		b.WriteString(", *r")
+	}
+	b.WriteString("]\n")
+	start := time.Now()
+
+	_, err := ParseConfig([]byte(b.String()))
+
+	if err == nil || !strings.Contains(err.Error(), "excessive aliasing") {
+		t.Fatalf("ParseConfig() error = %v, want excessive aliasing", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("ParseConfig() of %d bytes with aliases took %v, want it refused at once", b.Len(), took)
 	}
 }

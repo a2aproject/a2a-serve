@@ -72,6 +72,7 @@ type external struct {
 	mu         sync.Mutex
 	proc       *host.Process
 	transport  *http.Transport
+	streams    *http.Transport
 	runDir     string
 	hosts      []string
 	owner      string
@@ -83,16 +84,43 @@ type external struct {
 	note       string
 	closed     bool
 
-	// healthMu guards health apart from mu, which calls to the provider
-	// hold: the provider reports its health while it answers them.
+	pingInterval, pingTimeout time.Duration
+	streamStart               time.Duration
+
+	// healthMu guards the health apart from mu, which calls to the
+	// provider hold: the provider reports its health while it answers them.
 	healthMu sync.Mutex
-	health   Health
+	// reported is the health the provider reported last, or its exit.
+	reported Health
+	// stalled is set while the provider doesn't answer.
+	stalled bool
+	health  Health
+}
+
+// ExternalOption changes the bounds of a provider that [NewExternal]
+// returns.
+type ExternalOption func(*external)
+
+// WithPing sets how often the server asks the provider whether it still
+// answers, and how long it waits for each answer.
+func WithPing(interval, timeout time.Duration) ExternalOption {
+	return func(e *external) { e.pingInterval, e.pingTimeout = interval, timeout }
+}
+
+// WithStreamStart sets how long a peer has to start answering a request
+// for a stream.
+func WithStreamStart(d time.Duration) ExternalOption {
+	return func(e *external) { e.streamStart = d }
 }
 
 // NewExternal returns a provider that runs cfg.Binary. It starts the
 // process when the server joins or listens.
-func NewExternal(cfg ExternalConfig) Provider {
-	return &external{cfg: cfg, cards: newCardCache()}
+func NewExternal(cfg ExternalConfig, opts ...ExternalOption) Provider {
+	e := &external{cfg: cfg, cards: newCardCache(), pingInterval: pingInterval, pingTimeout: pingTimeout, streamStart: streamStartTimeout}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 func (e *external) Name() string { return e.cfg.Name }
@@ -109,6 +137,21 @@ const (
 	callTimeout   = 30 * time.Second
 	listenTimeout = 2 * time.Minute
 )
+
+// Health checks of a provider that joined: the server asks it to describe
+// itself every pingInterval, and reports it lost after pingMisses answers
+// in a row that don't come within pingTimeout.
+const (
+	pingInterval = 10 * time.Second
+	pingTimeout  = 5 * time.Second
+	pingMisses   = 3
+)
+
+// streamStartTimeout bounds how long a peer takes to start answering a
+// request for a stream. The server and the SLIM provider start theirs
+// within seconds and then send keep-alives, so a peer that takes longer
+// is unreachable, such as one whose provider stopped answering.
+const streamStartTimeout = time.Minute
 
 // maxNoticeText bounds a notice the provider shows the user, such as a
 // sign-in link.
@@ -147,13 +190,16 @@ func (e *external) startLocked(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(fmt.Errorf("network provider %s: %w", e.cfg.Name, providerError(err)), proc.Close(), os.RemoveAll(dir))
 	}
-	e.proc, e.transport, e.runDir, e.hosts = proc, proc.Transport(), dir, nil
+	streams := proc.Transport()
+	streams.ResponseHeaderTimeout = e.streamStart
+	e.proc, e.transport, e.streams, e.runDir, e.hosts = proc, proc.Transport(), streams, dir, nil
 	for _, h := range d.Hosts {
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" && !strings.ContainsAny(h, ":/ ") {
 			e.hosts = append(e.hosts, h)
 		}
 	}
 	go e.watchExit(proc)
+	go e.watchAnswers(proc)
 	slog.Info("started the network provider", "provider", e.cfg.Name, "name", d.Name, "version", d.Version, "binary", e.cfg.Binary)
 	return nil
 }
@@ -170,8 +216,51 @@ func (e *external) watchExit(proc *host.Process) {
 	e.setHealth(netprovider.Health{
 		State:   netprovider.HealthDisconnected,
 		Problem: Sanitize(proc.Err().Error(), maxProviderText),
-		Fix:     "run `a2a-serve restart`",
+		Fix:     fixRestart,
 	})
+	e.setStalled(false)
+}
+
+const fixRestart = "run `a2a-serve restart`"
+
+// stalledHealth is the health of a provider that doesn't answer.
+var stalledHealth = Health{State: HealthDisconnected, Problem: "the network provider stopped answering", Fix: fixRestart}
+
+// ErrProviderStalled is returned for a request to the network while the
+// network provider doesn't answer.
+var ErrProviderStalled = stalledHealth.Err()
+
+// watchAnswers asks the provider to describe itself until it exits, and
+// reports it stalled while it misses pingMisses answers in a row.
+func (e *external) watchAnswers(proc *host.Process) {
+	misses := 0
+	timer := time.NewTimer(e.pingInterval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-proc.Done():
+			return
+		case <-timer.C:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), e.pingTimeout)
+		err := proc.Call(ctx, netprovider.MethodDescribe, nil, nil)
+		cancel()
+		e.mu.Lock()
+		closed := e.closed
+		e.mu.Unlock()
+		if closed {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			if misses++; misses >= pingMisses {
+				e.setStalled(true)
+			}
+		} else {
+			misses = 0
+			e.setStalled(false)
+		}
+		timer.Reset(e.pingInterval)
+	}
 }
 
 func (e *external) setHealth(h netprovider.Health) {
@@ -186,7 +275,27 @@ func (e *external) setHealth(h netprovider.Health) {
 		health.Problem = cmpOr(Sanitize(h.Problem, maxProviderText), "the network doesn't reach the agent")
 		health.Fix = Sanitize(h.Fix, maxProviderText)
 	}
+	e.updateHealth(func() { e.reported = health })
+}
+
+func (e *external) setStalled(stalled bool) {
+	e.updateHealth(func() { e.stalled = stalled })
+}
+
+func (e *external) isStalled() bool {
 	e.healthMu.Lock()
+	defer e.healthMu.Unlock()
+	return e.stalled
+}
+
+// updateHealth applies change and tells the user when the health changed.
+func (e *external) updateHealth(change func()) {
+	e.healthMu.Lock()
+	change()
+	health := e.reported
+	if e.stalled {
+		health = stalledHealth
+	}
 	changed := e.health != health
 	e.health = health
 	e.healthMu.Unlock()
@@ -425,20 +534,14 @@ func (e *external) ClientKey(remoteAddr string, public bool) string {
 	return "net:" + c.ClientKey
 }
 
+// process returns the process once the agent joined, and nil before.
 func (e *external) process() *host.Process {
-	proc, _ := e.session()
-	return proc
-}
-
-// session returns the process and the transport through its tunnel once
-// the agent joined, and nil before.
-func (e *external) session() (*host.Process, *http.Transport) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.joined {
-		return nil, nil
+		return nil
 	}
-	return e.proc, e.transport
+	return e.proc
 }
 
 func (e *external) Member(ctx context.Context, node string) (*Peer, error) {
@@ -513,12 +616,48 @@ func (e *external) HTTPClient() *http.Client {
 		if r.URL == nil || !e.routed(r.URL.String()) {
 			return http.DefaultTransport.RoundTrip(r)
 		}
-		_, tr := e.session()
+		tr := e.tunnel(wantsStream(r))
 		if tr == nil {
 			return nil, errors.New("not connected to the network")
 		}
-		return checkPeerResponse(tr.RoundTrip(r))
+		if e.isStalled() {
+			return nil, ErrProviderStalled
+		}
+		resp, err := tr.RoundTrip(r)
+		if err != nil && r.Context().Err() == nil && isTimeout(err) {
+			if e.isStalled() {
+				return nil, ErrProviderStalled
+			}
+			return nil, ErrPeerUnavailable
+		}
+		return checkPeerResponse(resp, err)
 	})}
+}
+
+// tunnel returns the transport through the provider's tunnel once the
+// agent joined, the one that bounds the start of a stream when stream is
+// set, and nil before.
+func (e *external) tunnel(stream bool) *http.Transport {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch {
+	case !e.joined:
+		return nil
+	case stream:
+		return e.streams
+	}
+	return e.transport
+}
+
+// wantsStream reports whether r asks for an event stream, whose response
+// starts before the peer has the result.
+func wantsStream(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 func (e *external) Close() error {
@@ -528,8 +667,9 @@ func (e *external) Close() error {
 	var errs []error
 	if e.proc != nil {
 		e.transport.CloseIdleConnections()
+		e.streams.CloseIdleConnections()
 		errs = append(errs, e.proc.Close())
-		e.proc, e.transport = nil, nil
+		e.proc, e.transport, e.streams = nil, nil, nil
 	}
 	if e.runDir != "" {
 		errs = append(errs, os.RemoveAll(e.runDir))

@@ -28,8 +28,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -257,7 +259,7 @@ func TestCustomProviderTrust(t *testing.T) {
 		t.Fatalf("Installer.Fetch() again = %+v, %v, want trusted", c, err)
 	}
 
-	testutil.WriteExecutable(t, src, append(data, 0))
+	testutil.WriteExecutable(t, src, append(slices.Clip(data), 0))
 	if c, err := inst.Fetch(ctx, src); err != nil || !c.Changed {
 		t.Fatalf("Installer.Fetch() after a change = %+v, %v, want changed", c, err)
 	}
@@ -270,18 +272,100 @@ func TestCustomProviderTrust(t *testing.T) {
 	if c, err := inst.Fetch(ctx, src); err != nil || c.Trusted || c.Changed {
 		t.Fatalf("Installer.Fetch() of a trusted source with a tampered copy = %+v, %v, want it installed again without a change", c, err)
 	}
+}
 
-	upgrade := filepath.Join(t.TempDir(), "loopnet")
-	testutil.WriteExecutable(t, upgrade, data)
-	c, err = inst.Fetch(ctx, upgrade)
+func TestTrustKeepsRecordsOfOtherSources(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	inst := newInstaller(t)
+	data, err := os.ReadFile(loopnet)
 	if err != nil {
-		t.Fatalf("Installer.Fetch(upgrade) error = %v", err)
+		t.Fatalf("os.ReadFile() error = %v", err)
 	}
-	if _, _, err := inst.Trust(ctx, c); err != nil {
-		t.Fatalf("Installer.Trust(upgrade) error = %v, want it to replace the provider of the same name", err)
+	dir := t.TempDir()
+	first := filepath.Join(dir, "bin", "loopnet")
+	second := filepath.Join(dir, "bin2", "loopnet")
+	for _, src := range []string{first, second} {
+		if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error = %v", err)
+		}
 	}
-	if _, err := inst.Resolve(ctx, src); !errors.Is(err, ErrNotTrusted) {
-		t.Fatalf("Installer.Resolve(old source) error = %v, want %v after the upgrade", err, ErrNotTrusted)
+	testutil.WriteExecutable(t, first, data)
+	testutil.WriteExecutable(t, second, data)
+	for _, src := range []string{first, second} {
+		c, err := inst.Fetch(ctx, src)
+		if err != nil {
+			t.Fatalf("Installer.Fetch(%s) error = %v", src, err)
+		}
+		if _, _, err := inst.Trust(ctx, c); err != nil {
+			t.Fatalf("Installer.Trust(%s) error = %v", src, err)
+		}
+	}
+	for _, src := range []string{first, second} {
+		got, err := inst.Resolve(ctx, src)
+		if err != nil || got.Name != "loopnet" {
+			t.Fatalf("Installer.Resolve(%s) = %+v, %v, want loopnet after installing from another path too", src, got, err)
+		}
+	}
+}
+
+func TestTrustRemovesTheBinaryItSupersedes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	data, err := os.ReadFile(loopnet)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	tests := []struct {
+		name        string
+		otherSource bool
+		wantOld     bool
+	}{
+		{name: "unused by other sources"},
+		{name: "used by another source", otherSource: true, wantOld: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inst := newInstaller(t)
+			src := filepath.Join(t.TempDir(), "loopnet")
+			testutil.WriteExecutable(t, src, data)
+			c, err := inst.Fetch(ctx, src)
+			if err != nil {
+				t.Fatalf("Installer.Fetch() error = %v", err)
+			}
+			old, _, err := inst.Trust(ctx, c)
+			if err != nil {
+				t.Fatalf("Installer.Trust() error = %v", err)
+			}
+			if tc.otherSource {
+				other := filepath.Join(t.TempDir(), "loopnet")
+				testutil.WriteExecutable(t, other, data)
+				c, err := inst.Fetch(ctx, other)
+				if err != nil {
+					t.Fatalf("Installer.Fetch(other) error = %v", err)
+				}
+				if _, _, err := inst.Trust(ctx, c); err != nil {
+					t.Fatalf("Installer.Trust(other) error = %v", err)
+				}
+			}
+			testutil.WriteExecutable(t, src, append(slices.Clip(data), 0))
+			c, err = inst.Fetch(ctx, src)
+			if err != nil {
+				t.Fatalf("Installer.Fetch(changed) error = %v", err)
+			}
+			updated, _, err := inst.Trust(ctx, c)
+			if err != nil {
+				t.Fatalf("Installer.Trust(changed) error = %v", err)
+			}
+			if updated.Path == old.Path {
+				t.Fatalf("Installer.Trust(changed) path = %s, want a new binary", updated.Path)
+			}
+			_, err = os.Stat(old.Path)
+			if got := err == nil; got != tc.wantOld {
+				t.Fatalf("old binary exists = %v (%v), want %v", got, err, tc.wantOld)
+			}
+		})
 	}
 }
 
@@ -292,5 +376,25 @@ func TestBundledNextToTheSymlink(t *testing.T) {
 	got := inst.Bundled(WellKnown[0])
 	if want := filepath.Join(filepath.Dir(inst.Link), "netprovider-agentmesh"); got[0] != want {
 		t.Fatalf("Installer.Bundled() = %v, want %s first", got, want)
+	}
+}
+
+func TestTrustOfAProviderThatDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "provider")
+	testutil.WriteExecutable(t, src, []byte("#!/bin/sh\ncat >/dev/null\n"))
+	inst := &Installer{Dir: t.TempDir(), Executable: filepath.Join(t.TempDir(), "a2a-serve"), GOOS: "linux", GOARCH: "amd64", DescribeTimeout: 100 * time.Millisecond}
+	c, err := inst.Fetch(t.Context(), src)
+	if err != nil {
+		t.Fatalf("Installer.Fetch() error = %v", err)
+	}
+
+	_, _, err = inst.Trust(t.Context(), c)
+
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Installer.Trust() error = %v, want an error that isn't a deadline of the command", err)
+	}
+	if want := "didn't say what it is"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("Installer.Trust() error = %v, want %q", err, want)
 	}
 }

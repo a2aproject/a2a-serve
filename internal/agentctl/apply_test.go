@@ -15,6 +15,7 @@
 package agentctl
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -452,6 +453,62 @@ func TestSetVoiceGemini(t *testing.T) {
 	}
 }
 
+func TestSetNotesNormalizedName(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+
+	got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Name: "日本語"}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	want := []string{agentdir.NameNote("日本語")}
+	if diff := cmp.Diff(want, got.Warnings); diff != "" {
+		t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSetToolRuleOfAnMCPServerWarns(t *testing.T) {
+	t.Parallel()
+	const mcp = `{"mcpServers": {"gmail": {"command": "gmail-mcp"}}}`
+	tests := []struct {
+		name     string
+		settings agentdir.Settings
+		want     []string
+	}{
+		{
+			name:     "deny the server",
+			settings: agentdir.Settings{DenyTools: []string{"tool:gmail"}},
+			want:     []string{"--deny-tools tool:gmail matches no tool of the MCP server gmail; tool:gmail.* matches all its tools"},
+		},
+		{
+			name:     "allow the server",
+			settings: agentdir.Settings{AllowTools: []string{"tool:gmail"}},
+			want:     []string{"--allow-tools tool:gmail matches no tool of the MCP server gmail; tool:gmail.* matches all its tools"},
+		},
+		{name: "all its tools", settings: agentdir.Settings{DenyTools: []string{"tool:gmail.*"}}},
+		{name: "a tool of the agent", settings: agentdir.Settings{DenyTools: []string{"tool:webfetch"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Model: "openrouter/a/b", Secrets: []string{"OPENROUTER_API_KEY"}}, agentdir.Secrets{"OPENROUTER_API_KEY": "k"})
+			if err := os.WriteFile(filepath.Join(d.Root, ".mcp.json"), []byte(mcp), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), tc.settings, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+
+			if diff := cmp.Diff(tc.want, got.Warnings); diff != "" {
+				t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`
@@ -516,6 +573,130 @@ func TestUnsetSecret(t *testing.T) {
 	}
 }
 
+func TestLeavingTheNetworkOfAProvider(t *testing.T) {
+	t.Parallel()
+	const slimURL = "http://127.0.0.1:46357?namespace=demo&peers=reviewer"
+	tests := []struct {
+		name    string
+		cfg     agentdir.NetworkConfig
+		leave   func(context.Context, agentdir.Dir, *controlapi.Client) (*Result, error)
+		want    agentdir.NetworkConfig
+		wantCh  []agentdir.Change
+		wantErr bool
+	}{
+		{
+			name: "set private none",
+			cfg:  agentdir.NetworkConfig{Private: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Private: "none"}, false)
+			},
+			wantCh: []agentdir.Change{{Setting: "private", Old: slimURL}, {Setting: "network-provider", Old: "slim"}},
+		},
+		{
+			name: "set public none",
+			cfg:  agentdir.NetworkConfig{Public: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Public: "none"}, false)
+			},
+			wantCh: []agentdir.Change{{Setting: "public", Old: slimURL}, {Setting: "network-provider", Old: "slim"}},
+		},
+		{
+			name: "unset private",
+			cfg:  agentdir.NetworkConfig{Private: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Unset(ctx, d, c, "private", nil, false)
+			},
+			wantCh: []agentdir.Change{{Setting: "private", Old: slimURL}, {Setting: "network-provider", Old: "slim"}},
+		},
+		{
+			name: "unset public",
+			cfg:  agentdir.NetworkConfig{Public: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Unset(ctx, d, c, "public", nil, false)
+			},
+			wantCh: []agentdir.Change{{Setting: "public", Old: slimURL}, {Setting: "network-provider", Old: "slim"}},
+		},
+		{
+			name: "set private tailscale",
+			cfg:  agentdir.NetworkConfig{Private: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Private: "tailscale"}, false)
+			},
+			want:   agentdir.NetworkConfig{Private: "tailscale"},
+			wantCh: []agentdir.Change{{Setting: "private", Old: slimURL, New: "tailscale"}, {Setting: "network-provider", Old: "slim"}},
+		},
+		{
+			name: "set private none with a provider",
+			cfg:  agentdir.NetworkConfig{Private: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Private: "none", NetworkProvider: "loopnet"}, false)
+			},
+			wantErr: true,
+		},
+		{
+			name: "unset private keeps the provider of the public URL",
+			cfg:  agentdir.NetworkConfig{Private: "tailscale", Public: slimURL, Provider: "slim"},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Unset(ctx, d, c, "private", nil, false)
+			},
+			want:   agentdir.NetworkConfig{Public: slimURL, Provider: "slim"},
+			wantCh: []agentdir.Change{{Setting: "private", Old: "tailscale"}},
+		},
+	}
+	for _, running := range []bool{false, true} {
+		for _, tc := range tests {
+			t.Run(fmt.Sprintf("%s running=%v", tc.name, running), func(t *testing.T) {
+				t.Parallel()
+				d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: tc.cfg}, nil)
+				if running {
+					serveFake(t, d, &fakeServer{})
+				}
+				got, err := tc.leave(t.Context(), d, controlapi.NewClient(d))
+				if tc.wantErr {
+					if err == nil {
+						t.Fatalf("leave error = nil, want an error")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("leave error = %v, want nil", err)
+				}
+				if diff := cmp.Diff(tc.wantCh, got.Changes); diff != "" {
+					t.Fatalf("leave wrong changes (-want +got) diff = %s", diff)
+				}
+				if got.Running != running {
+					t.Fatalf("leave Running = %v, want %v", got.Running, running)
+				}
+				if diff := cmp.Diff(tc.want, loadConfig(t, d).Network); diff != "" {
+					t.Fatalf("saved network wrong result (-want +got) diff = %s", diff)
+				}
+			})
+		}
+	}
+}
+
+func TestUnsetHintOfCombinedUnsetWorks(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: agentdir.NetworkConfig{
+		Private: "http://127.0.0.1:46357?namespace=demo", Provider: "slim",
+	}}, nil)
+	_, err := Unset(t.Context(), d, controlapi.NewClient(d), "private", []string{"network-provider"}, false)
+	if err == nil {
+		t.Fatalf("Unset() error = nil, want the hint")
+	}
+	for _, setting := range []string{"private", "network-provider"} {
+		if !strings.Contains(err.Error(), "`a2a-serve config unset "+setting+"`") {
+			t.Fatalf("Unset() error = %v, want the hint to name unset %s", err, setting)
+		}
+		if _, err := Unset(t.Context(), d, controlapi.NewClient(d), setting, nil, false); err != nil {
+			t.Fatalf("Unset(%s) error = %v, want nil", setting, err)
+		}
+	}
+	if diff := cmp.Diff(agentdir.NetworkConfig{}, loadConfig(t, d).Network); diff != "" {
+		t.Fatalf("saved network wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSetRunning(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -527,14 +708,14 @@ func TestSetRunning(t *testing.T) {
 	}{
 		{
 			name:        "live settings applied",
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /config", "GET /status"},
 			wantApplied: []string{"telegram", "description"},
 			wantRestart: []string{"sandbox"},
 		},
 		{
 			name:        "server without reload",
 			noReload:    true,
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /config", "GET /status"},
 			wantApplied: []string{"telegram"},
 			wantRestart: []string{"sandbox", "description"},
 		},
@@ -672,6 +853,36 @@ func TestSetPublicAllowIncomingWaitsForAPublicURLThatWaits(t *testing.T) {
 			if diff := cmp.Diff(tc.wantApplied, got.Applied); diff != "" {
 				t.Fatalf("Set().Applied wrong result (-want +got) diff = %s", diff)
 			}
+			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
+				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestSetBackToTheRunningSettingWaitsForNothing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		running     *agentdir.Config
+		noConfig    bool
+		wantRestart []string
+	}{
+		{name: "running setting", running: &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local"}},
+		{name: "other running setting", running: &agentdir.Config{Name: "coder", Harness: "opencode"}, wantRestart: []string{"sandbox"}},
+		{name: "running config unknown", noConfig: true, wantRestart: []string{"sandbox"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "docker"}, nil)
+			serveFake(t, d, &fakeServer{running: tc.running, noConfig: tc.noConfig})
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+
 			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
 				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
 			}

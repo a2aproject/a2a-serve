@@ -21,6 +21,7 @@
 //	ask twice        two permission requests in one turn
 //	ask slow         a permission request, then chunks until canceled
 //	ask big          a permission request with a 20 KiB tool input
+//	ask <d>          a permission request after duration d
 //	slow [<d>]       chunks for duration d, or until canceled
 //	stall            nothing until canceled, like opencode retrying a model
 //	                 that refuses requests
@@ -547,6 +548,14 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			end("end_turn")
 			return
 		}
+		if d, err := time.ParseDuration(arg); err == nil {
+			select {
+			case <-canceled:
+				end("cancelled")
+				return
+			case <-time.After(d):
+			}
+		}
 		var option string
 		var ok bool
 		if arg == "big" {
@@ -687,6 +696,21 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		end("end_turn")
 	case "markdown":
 		a.chunk(sid, markdownSample)
+		end("end_turn")
+	case "big":
+		n, err := strconv.Atoi(arg)
+		if err != nil {
+			a.chunk(sid, "big error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		// The server handles parts of 1 MiB between tool calls much faster
+		// than one long chunk.
+		for i, part := 0, strings.Repeat("x", 1<<20); n > 0; i, n = i+1, n-len(part) {
+			id := "t" + strconv.Itoa(i)
+			a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": id, "title": "list files", "kind": "read", "status": "completed"})
+			a.chunk(sid, part[:min(n, len(part))])
+		}
 		end("end_turn")
 	case "line":
 		if lined {

@@ -52,6 +52,9 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	if spec := os.Getenv(envInstallProvider); spec != "" {
+		os.Exit(runInstallProvider(spec))
+	}
 	code := m.Run()
 	if fakeACPDir != "" {
 		if err := os.RemoveAll(fakeACPDir); err != nil {

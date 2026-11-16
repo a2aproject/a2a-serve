@@ -60,6 +60,38 @@ func isUsage(err error) bool {
 	return errors.As(clierr.Classify(err), &ce) && ce.Code == clierr.CodeUsage
 }
 
+func TestConfigLeavesTheNetworkOfAProvider(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"config", "set", "--private", "none"},
+		{"config", "unset", "private"},
+		{"config", "unset", "private", "--restart"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: agentdir.NetworkConfig{
+				Private: "http://127.0.0.1:46357?namespace=demo", Provider: "slim",
+			}})
+			out, err := runCMD(t, append(args, "--dir", d.Root)...)
+			if err != nil {
+				t.Fatalf("a2a-serve %s error = %v", strings.Join(args, " "), err)
+			}
+			for _, want := range []string{"private", "network-provider", "✓ saved"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("a2a-serve %s output = %q, want %q", strings.Join(args, " "), out, want)
+				}
+			}
+			got, err := d.ReadConfig()
+			if err != nil {
+				t.Fatalf("ReadConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(agentdir.NetworkConfig{}, got.Network); diff != "" {
+				t.Fatalf("saved network wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestConfigCommands(t *testing.T) {
 	t.Parallel()
 	base := func() *agentdir.Config {
@@ -791,6 +823,20 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 				t.Fatalf("printConfigResult() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestPrintConfigResultRemovedKeys(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+
+	if err := printConfigResult(cfg, &agentctl.Result{Name: "coder", Path: "/a/.a2a/config.yaml", RemovedKeys: []string{"sandbx"}}, false); err != nil {
+		t.Fatalf("printConfigResult() error = %v", err)
+	}
+
+	if want := "  sandbx       removed (unknown key)\n✓ saved /a/.a2a/config.yaml\n"; buf.String() != want {
+		t.Fatalf("printConfigResult() = %q, want %q", buf.String(), want)
 	}
 }
 

@@ -5,7 +5,7 @@ Every tool call that changes something waits for approval, unless a rule or an e
 The task pauses in `input-required` and shows the tool call with three options: `once`, `always` and `reject`. Answer on the same task:
 
 ```sh
-a2a send --task-id <task-id> once          # or: always, reject, deny
+a2a send -a "$(a2a-serve status --url=local)" --task-id <task-id> once   # or: always, reject, deny
 ```
 
 In a chat, the options are buttons:
@@ -28,7 +28,14 @@ To give the agent other instructions, answer `reject` first. When you send an an
 | A shell command | the program and the next word, such as `kubectl get *` for `kubectl get pods -n prod` |
 | A call of another kind, such as an edit | that kind, such as `edit` |
 
-Commands with several parts (`;`, `&`, `|`) and programs that run other commands, such as `sudo` or `xargs`, have no `always` option. A new conversation asks again.
+Some commands have no `always` option, because a rule of their first words would allow too much:
+
+- commands with several parts or a redirection (`;`, `&`, `|`, `<`, `>`), such as `echo hello > out.txt`
+- commands that start with a path, or whose next word is a flag, a path, a URL or a quoted string, such as `ls -la`
+- programs that run other commands, such as `sudo`, `xargs` or `find`
+- shells, interpreters, `git`, `docker` and `kubectl` without a subcommand or script
+
+A new conversation asks again.
 
 ## Allowed in all your conversations
 
@@ -73,6 +80,8 @@ When several entries match a call, the most specific one decides: a tool or comm
 | --- | --- |
 | `--deny-tools execute --allow-tools 'command:kubectl get *'` | `kubectl get` runs. Other commands are denied. |
 | `--allow-tools 'command:git *' --deny-tools 'command:git push *'` | Git commands run. `git push` is denied. |
+
+A new entry also decides the approvals that already wait, and the task's history shows which list answered, such as `Allow once by allow-tools`.
 
 `a2a-serve status` lists the rules, and `a2a-serve config unset allow-tools '<entry>'` removes one.
 

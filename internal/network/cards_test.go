@@ -95,6 +95,53 @@ func TestCardCacheFetchesOnlyNewAndExpiredCards(t *testing.T) {
 	}
 }
 
+func TestCardCacheRefetchesMissesWhenAsked(t *testing.T) {
+	t.Parallel()
+	var started atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !started.Load() {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{"name": "reviewer"}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	candidates := []PeerInfo{{Name: "laptop", URL: srv.URL, Online: true, Node: "n1"}}
+	cache := newCardCache()
+	if got := cache.ProbeAgents(t.Context(), testHTTP, candidates, nil); len(got) != 0 {
+		t.Fatalf("CardCache.ProbeAgents() before the agent started = %v, want no agents", peerNames(got))
+	}
+	started.Store(true)
+
+	if got := cache.ProbeAgents(t.Context(), testHTTP, candidates, nil); len(got) != 0 {
+		t.Fatalf("CardCache.ProbeAgents() within the miss TTL = %v, want the cached miss", peerNames(got))
+	}
+	got := cache.ProbeAgents(WithRefetchMisses(t.Context()), testHTTP, candidates, nil)
+
+	if diff := cmp.Diff([]string{"reviewer"}, peerNames(got)); diff != "" {
+		t.Fatalf("CardCache.ProbeAgents() asked to refetch misses wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCardCacheKeepsCardsWhenRefetchingMisses(t *testing.T) {
+	t.Parallel()
+	agentURL, agentFetches := countingServer(t, "coder")
+	candidates := []PeerInfo{{Name: "laptop", URL: agentURL, Online: true, Node: "n1"}}
+	cache := newCardCache()
+	cache.ProbeAgents(t.Context(), testHTTP, candidates, nil)
+
+	got := cache.ProbeAgents(WithRefetchMisses(t.Context()), testHTTP, candidates, nil)
+
+	if diff := cmp.Diff([]string{"coder"}, peerNames(got)); diff != "" {
+		t.Fatalf("CardCache.ProbeAgents() wrong result (-want +got) diff = %s", diff)
+	}
+	if n := agentFetches.Load(); n != 1 {
+		t.Fatalf("card fetches of the agent = %d, want 1", n)
+	}
+}
+
 func TestCardCacheDoesNotCacheCanceledProbes(t *testing.T) {
 	t.Parallel()
 	agentURL, _ := countingServer(t, "coder")

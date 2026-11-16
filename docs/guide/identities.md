@@ -4,7 +4,7 @@ The server recognizes each caller and gives it one of three roles: owner, member
 
 ## Roles
 
-- **Owner**: you. Your local token, your own devices on the private network and your linked chat accounts are owners. Pairings made with `--owner` add more owners. Owners see every task and answer every approval.
+- **Owner**: you. Your local token, your own devices on the private network and your linked chat accounts are owners. Pairings made with `--owner` add more owners. Owners see every task and answer every approval. An owner can post in a member's conversation with its context ID. The agent then remembers the owner's message as part of that conversation, and the member doesn't see the owner's task. Start a new conversation to keep them apart.
 - **Member**: a caller you let in. Other pairings, everyone else on the private network, people whose email matches `--allow-email` and webhook nodes are members. Members start tasks, and see and approve their own.
 - **Guest**: a caller nobody vouched for. With `--public-allow-incoming anyone`, anyone on the public URL and strangers in direct chats are guests. See [Guests](#guests).
 

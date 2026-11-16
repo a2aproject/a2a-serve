@@ -332,6 +332,53 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 	}
 }
 
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestFailedTaskLogsItsReason(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("crash", "", ""))
+
+	want := `msg="task failed" task=` + string(task.ID)
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, want) {
+			if !strings.Contains(line, `reason="the agent stopped unexpectedly; send the message again"`) {
+				t.Fatalf("task failed log line = %q, want the reason of the failure", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("logs = %q, want a line with %q", logs.String(), want)
+}
+
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestRefusedTaskIsLogged(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	for range maxCallerExecutions {
+		send(t, anna, userText("ask", "", ""))
+	}
+
+	if _, err := anna.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")}); err == nil {
+		t.Fatalf("SendMessage() over the limit error = nil, want a refusal")
+	}
+
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, `msg="task refused"`) && strings.Contains(line, "from=pair:anna") && strings.Contains(line, "unfinished tasks") {
+			return
+		}
+	}
+	t.Fatalf("logs = %q, want a task refused line from pair:anna that names the limit", logs.String())
+}
+
 // Not parallel: it changes PATH.
 func TestStartReportsOutdatedA2AOnce(t *testing.T) {
 	bin := t.TempDir()
@@ -455,8 +502,8 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
-	if err == nil || !strings.Contains(err.Error(), "terminal state") {
-		t.Fatalf("SendMessage() answering the failed task error = %v, want a terminal state error", err)
+	if want := "failed; send the message again without the task ID"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("SendMessage() answering the failed task error = %v, want %q", err, want)
 	}
 }
 
@@ -1084,7 +1131,7 @@ func TestExplainFailure(t *testing.T) {
 		},
 		{
 			name: "provider without a key", cfg: &agentdir.Config{Harness: "opencode", Model: "google/gemini-old"}, reported: "model not found: google/gemini-old",
-			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`; the agent reported: model not found: google/gemini-old",
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`; the agent reported: model not found: google/gemini-old",
 		},
 		{name: "agent that takes its model in its command", cfg: &agentdir.Config{Harness: "acp"}, reported: "model not found: x", want: "model not found: x"},
 		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},

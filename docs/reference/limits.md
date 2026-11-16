@@ -29,10 +29,23 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | --- | --- |
 | A message on the provider's stdin or stdout | 1 MiB |
 | Answer to `describe` or `member` | 30 seconds; `listen` 2 minutes, `peers` 15 seconds, `join` no limit |
+| Health check of a running provider | `describe` every 10 seconds, answered within 5 seconds; reported as not answering after 3 missed answers in a row |
+| Start of a streamed response from an agent on the network | 1 minute, then the call fails as unreachable |
 | Header of a connection from the provider | 4096 bytes, sent within 10 seconds |
 | Connections from the provider waiting for their header | 256 |
 | Exit after the server closes the provider's stdin | 10 seconds, then the server kills it |
 | Release archive of a provider | 512 MiB |
+
+## Messages
+
+| Limit | Value |
+| --- | --- |
+| Parts of a message | 1000 |
+| Text and data of a message | 1 MiB in all. A data part counts with its JSON. |
+| Metadata of a message and its parts | 64 KiB of JSON in all |
+| `extensions` of a message | 32, each at most 1 KiB |
+| `referenceTaskIds` of a message | 32, each at most 1 KiB |
+| Files of a message | The largest request body ([HTTP Routes](http-routes.md#request-limits)) |
 
 ## Approvals
 
@@ -55,6 +68,13 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | Watch of an `--async` task | 7 days, or 24 hours without a change of state while it isn't waiting for an approval |
 | Unfinished tasks of one caller | 8 |
 | Refresh of contact and peer cards | Every hour. `--contact-refresh` changes it. |
+
+## Requests
+
+| Limit | Value |
+| --- | --- |
+| Open requests and streams of one member | 32 on each URL of the agent. Past that, a request fails with 429. You have no limit. |
+| Writing a response | 1 minute without progress, and 10 minutes in all. A stream stays open while its client reads it. |
 
 ## Schedules
 

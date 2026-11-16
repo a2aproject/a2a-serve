@@ -36,6 +36,7 @@ var hintTexts = map[Hint]string{
 	HintPortInUse:         "another process uses the port; pick another with `a2a-serve config set --port <port>`, or a free one with `a2a-serve config unset port`",
 	HintConfigUnset:       "fix it with `a2a-serve config unset %s`",
 	HintConfigEdit:        "fix it with `a2a-serve config edit`",
+	HintStopUnanswered:    "the server doesn't answer; stop it with `a2a-serve stop`, then start it with `a2a-serve restart`",
 	HintMessengerList:     "run `a2a-serve messenger list` to see the messengers",
 }
 

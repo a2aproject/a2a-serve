@@ -117,6 +117,9 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool)
 			fmt.Fprintf(&sb, "  %-12s %s %s\n", "secret value", s.Name, secretAction(s.Action))
 		}
 	}
+	for _, k := range res.RemovedKeys {
+		fmt.Fprintf(&sb, "  %-12s removed (unknown key)\n", k)
+	}
 	rel := res.Path
 	if wd, err := filepath.Abs("."); err == nil {
 		if r, err := filepath.Rel(wd, res.Path); err == nil && !strings.HasPrefix(r, "..") {
@@ -160,6 +163,14 @@ func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
 		return err
 	}
 	_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
+	return err
+}
+
+// printWarnings prints warnings, each on its own line.
+func printWarnings(cfg *globalConfig, warnings []string) error {
+	var sb strings.Builder
+	writeWarnings(&sb, warnings)
+	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
 }
 

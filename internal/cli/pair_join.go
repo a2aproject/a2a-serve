@@ -38,9 +38,11 @@ The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
 sends it with later requests to the same agent, such as a2a send, through the
 credential helper that a2a-serve doctor --fix configures.
 
-Joining an agent you joined before replaces your saved token, so you lose
-access to what you did with it. The command refuses that without --replace.
-A code for a webhook node replaces nothing, so --replace is safe with it.
+Joining an agent you joined before replaces your saved token. With a code
+for another pairing, you lose access to what you did with the old one. The
+command refuses that without --replace. A code from ` + "`a2a-serve pair set --rotate`" + `
+keeps your conversations and tasks, and a code for a webhook node replaces
+nothing, so --replace is safe with both.
 
 A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
 instead, which the a2a-serve mailbox commands use.`,
@@ -96,8 +98,8 @@ func checkNotJoined(store *credstore.Store, agentURL string) error {
 	if c.Agent != "" {
 		who = c.Agent + " as " + who
 	}
-	e := clierr.Usage(fmt.Sprintf("you already joined %s; joining again replaces that token in %s, and you lose access to the conversations and tasks of %s", who, store.Path, c.Principal))
-	e.Hint = "pass --replace to join anyway; a code for a webhook node replaces nothing"
+	e := clierr.Usage(fmt.Sprintf("you already joined %s; joining again replaces that token in %s, and with a code for another pairing you lose access to the conversations and tasks of %s", who, store.Path, c.Principal))
+	e.Hint = "pass --replace to join anyway; a code from `a2a-serve pair set --rotate` keeps the conversations and tasks, and a code for a webhook node replaces nothing"
 	return e
 }
 

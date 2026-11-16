@@ -4,7 +4,8 @@ An a2a-serve agent serves these routes on every listener, and a relay serves the
 
 | Route | |
 | --- | --- |
-| `GET /`, `GET /.well-known/agent-card.json` | the agent card, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-allow-incoming paired`, and on the public URL unless `--public-allow-incoming anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
+| `GET /`, `GET /.well-known/agent-card.json`, `GET /.well-known/agent.json` | the agent card, without a token, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-allow-incoming paired`, and on the public URL unless `--public-allow-incoming anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
+| `GET /healthz` | `{"status": "ok"}`, without a token |
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
@@ -15,6 +16,8 @@ An a2a-serve agent serves these routes on every listener, and a relay serves the
 | `/mailbox/api/…` | the node API used by `a2a-serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
+
+The A2A routes serve A2A protocol version 1.0. Clients send `A2A-Version: 1.0` with each request. A request without the header asks for version 0.3 and fails with `requested "0.3", served "1.0"`.
 
 ## Sign-in schemes
 
@@ -46,7 +49,7 @@ Each listener handles at most 1024 requests at once, including open streams. It 
 
 `/pair`, `/oauth/…`, `/hitl/<token>`, `/download/…` and `/gossip…` on the private listener serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts. Callers that the relay doesn't identify count only toward the 256 shared slots, and the relay limits each of their addresses to 8 open requests to these routes ([relay routes](#relay-routes)). A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`. A download from `/download/…` must finish within 10 minutes. The server then closes the connection.
 
-On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of its caller's role once the caller authenticates, before the server reads the body. Members share 512 slots of each listener, and guests share 128. The owner's requests count only toward the listener's limit, so members and guests always leave the owner at least 128 slots. A request over its role's slots gets 503 with `Retry-After` and the error `the server is busy; try again later`, which the A2A routes and `/n/…` send as an A2A error.
+On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of its caller's role once the caller authenticates, before the server reads the body. Members share 512 slots of each listener, and guests share 128. The owner's requests count only toward the listener's limit, so members and guests always leave the owner at least 128 slots. A request over its role's slots gets 503 with `Retry-After` and the error `the server is busy; try again later`, which the A2A routes and `/n/…` send as an A2A error. One member may hold only part of the members' slots ([limits](limits.md#requests)). A request over that part gets 429 with `Retry-After` and the error `you have too many requests open at once; close one or try again later`.
 
 | Route | Largest body | Time to send the body |
 | --- | --- | --- |
@@ -54,11 +57,11 @@ On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of it
 | `POST /oauth/token` | 64 KiB | 10 seconds in total |
 | A2A routes, `/n/…`, `POST /mailbox/api/tasks/<id>/events` | 32 MiB | 30 seconds without progress |
 
-A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
+A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open. On the A2A routes, `/n/…` and `/mailbox/api/…`, the server also limits the time to write a response ([limits](limits.md#requests)). A stream has no limit in total and stays open while the client reads it. When the time runs out, the server closes the connection.
 
 ## Message and response limits
 
-The A2A routes and `/n/…` take a message with at most 1000 parts. File and data parts count too. The text parts of a message may have at most 1 MiB of text together. The metadata of a message and its parts may have at most 64 KiB of JSON together. A message over a limit gets an invalid params error (JSON-RPC `-32602`) that names the limit.
+The A2A routes and `/n/…` limit the parts of a message, its text and data, its metadata, and its `extensions` and `referenceTaskIds`. File and data parts count toward the parts. The text parts and the JSON of the data parts count together, and the metadata of the message and its parts counts together. The largest request body bounds the files. [Limits](limits.md#messages) lists the values. A message over a limit gets an invalid params error (JSON-RPC `-32602`, REST 400) that names the limit. A message with a null part gets the same error.
 
 A node's reply to a task has the same limits. Its text, parts and artifacts count as one message. A reply over a limit gets 400 with an error that names the limit.
 
@@ -82,6 +85,8 @@ The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show
 | 401 | -31401 | `UNAUTHENTICATED` | `UNAUTHENTICATED` |
 | 403 | -31403 | `PERMISSION_DENIED` | `UNAUTHORIZED` |
 | 413 | -32600 | `INVALID_ARGUMENT` | `INVALID_REQUEST` |
+
+The other routes answer errors with a JSON body `{"error": "<message>"}`. Two errors come from Go's HTTP server and have a plain text body: 404 for a path that no route serves, and 403 for a cross-site request.
 
 ## Signatures and headers
 
