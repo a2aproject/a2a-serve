@@ -67,6 +67,11 @@ func Parse(s string) (Entry, error) {
 		if p == "" || strings.ContainsFunc(p, isSpace) {
 			return Entry{}, errors.New("want tool:<server>.<tool>, such as tool:grafana.*")
 		}
+		// MCP tools are named <server>.<tool>, so a pattern without a dot
+		// or a * matches none, and a deny rule of it protects nothing.
+		if !strings.ContainsAny(p, ".*") {
+			return Entry{}, fmt.Errorf("%s names no tool; %s.* matches all the tools of the MCP server %s", s, s, p)
+		}
 		return Entry{form: formTool, pattern: p}, nil
 	case strings.HasPrefix(s, PrefixCommand):
 		p := normalizeSpace(strings.TrimPrefix(s, PrefixCommand))
