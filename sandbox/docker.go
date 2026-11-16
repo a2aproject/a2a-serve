@@ -499,10 +499,17 @@ func RemoveContainer(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerStopTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "-v", name).CombinedOutput()
-	if err != nil && !bytes.Contains(out, []byte("No such container")) {
+	if err != nil && !gone(out) {
 		return fmt.Errorf("docker rm -f %s: %w: %s", name, err, bytes.TrimSpace(out))
 	}
 	return nil
+}
+
+// gone reports whether the output of a failed docker rm says that the
+// container is gone or on its way: one that ran with --rm is removed by
+// Docker once it exits, which docker rm can race.
+func gone(out []byte) bool {
+	return bytes.Contains(out, []byte("No such container")) || bytes.Contains(out, []byte("is already in progress"))
 }
 
 // containerStopTimeout bounds removing a container, which gets its own
@@ -515,7 +522,7 @@ func (r *DockerRunner) Stop(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerStopTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", r.Name).CombinedOutput()
-	if err != nil && !bytes.Contains(out, []byte("No such container")) {
+	if err != nil && !gone(out) {
 		errs = append(errs, fmt.Errorf("docker rm -f %s: %w: %s", r.Name, err, bytes.TrimSpace(out)))
 	}
 	for _, f := range r.envFiles {

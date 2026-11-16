@@ -28,3 +28,16 @@ func TestCappedKeepsTheStart(t *testing.T) {
 		t.Fatalf("capped = %q, truncated %v, want %q, true", got, c.truncated, "abcde")
 	}
 }
+
+func TestGone(t *testing.T) {
+	t.Parallel()
+	for out, want := range map[string]bool{
+		"Error response from daemon: No such container: a2a-x":                                        true,
+		"Error response from daemon: removal of container a2a-x is already in progress":                true,
+		"Error response from daemon: cannot remove container a2a-x: could not kill: permission denied": false,
+	} {
+		if got := gone([]byte(out)); got != want {
+			t.Errorf("gone(%q) = %v, want %v", out, got, want)
+		}
+	}
+}
