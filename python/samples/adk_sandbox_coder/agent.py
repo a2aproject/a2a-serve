@@ -51,6 +51,13 @@ CODE_MODEL = os.environ.get("CODE_MODEL", "google/gemini-2.5-flash")
 GUARD_MODEL = os.environ.get("GUARD_MODEL", "gemini-2.5-flash")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 MAX_MODEL_CALLS = int(os.environ.get("MAX_MODEL_CALLS", "60"))
+MAX_GUARD_CALLS = int(os.environ.get("MAX_GUARD_CALLS", "40"))
+SANDBOX_IDLE = float(os.environ.get("SANDBOX_IDLE", "1800"))
+
+# A session asks the guard model at most two questions at once, so that it
+# can't hold up the workers that answer the connections of other sessions.
+GUARD_CONCURRENCY = 2
+GUARD_WAIT = 3.0
 
 LLM_HOST = "llm.internal"
 TOOLS_HOST = "adk-tools.internal"
@@ -155,8 +162,11 @@ class SessionInterceptor:
         self.session_id = session_id
         self.log = log
         self.model_calls = 0
+        self.guard_calls = 0
+        self.last_used = time.monotonic()
         self._verdicts: dict[str, bool] = {}
         self._lock = threading.Lock()
+        self._guard_slots = threading.BoundedSemaphore(GUARD_CONCURRENCY)
 
     def _note(self, line: str) -> None:
         self.log.append(line)
@@ -164,6 +174,7 @@ class SessionInterceptor:
             print(f"[sandbox] {line}", flush=True)
 
     def connect(self, host: str, port: int) -> str:
+        self.last_used = time.monotonic()
         if host in (LLM_HOST, TOOLS_HOST):
             return "inspect"
         if port == 80:
@@ -176,6 +187,7 @@ class SessionInterceptor:
         return "allow" if verdict else "deny"
 
     def request(self, req: Request) -> dict:
+        self.last_used = time.monotonic()
         host = urllib.parse.urlsplit(req.url).hostname
         if host == TOOLS_HOST:
             status, headers, body = self.agent.handle_mcp(
@@ -224,20 +236,26 @@ class SessionInterceptor:
         with self._lock:
             if action in self._verdicts:
                 return self._verdicts[action]
-        prompt = (
-            "You guard the network of a sandbox where a coding agent fixes a small Python project. "
-            "It needs no network besides its model. Allow only package indexes and source hosts it "
-            "could need to read from, and deny anything that could leak data. Reply with one word, "
-            f"allow or deny. The agent wants to {action}."
-        )
+            if self.guard_calls >= MAX_GUARD_CALLS:
+                self._note(f"guard budget of {MAX_GUARD_CALLS} spent; denying")
+                return False
+            self.guard_calls += 1
+        if not self._guard_slots.acquire(timeout=GUARD_WAIT):
+            self._note("the guard model is busy with this session; denying")
+            return False
         try:
-            text = (
-                _guard.models.generate_content(model=GUARD_MODEL, contents=prompt).text
-                or ""
+            prompt = (
+                "You guard the network of a sandbox where a coding agent fixes a small Python project. "
+                "It needs no network besides its model. Allow only package indexes and source hosts it "
+                "could need to read from, and deny anything that could leak data. Reply with one word, "
+                f"allow or deny. The agent wants to {action}."
             )
+            text = _guard.models.generate_content(model=GUARD_MODEL, contents=prompt).text or ""
         except Exception as e:  # pylint: disable=broad-exception-caught
             self._note(f"guard model failed ({e}); denying")
             return False
+        finally:
+            self._guard_slots.release()
         verdict = text.strip().lower().startswith("allow")
         with self._lock:
             self._verdicts[action] = verdict
@@ -253,12 +271,19 @@ def _mcp_method(body: bytes) -> str:
 
 
 class SandboxedCoder:
-    """Owns the agent and the sandboxes of its sessions."""
+    """Owns the agent and the sandboxes of its sessions.
+
+    A sandbox whose session made no connection for SANDBOX_IDLE seconds is
+    removed with its workspace; the next message of the session starts in
+    a fresh one.
+    """
 
     def __init__(self):
         self.sandboxes: dict[str, Sandbox] = {}
         self.interceptors: dict[str, SessionInterceptor] = {}
         self.log: dict[str, list[str]] = {}
+        self._lock = threading.Lock()
+        self._closed = threading.Event()
         self.agent = AcpAgent(
             name="sandboxed_coder",
             description="Fixes code in a sandbox whose workspace lives in memory.",
@@ -269,10 +294,13 @@ class SandboxedCoder:
             tools=[FunctionTool(file_ticket)],
             mcp_url=f"http://{TOOLS_HOST}/mcp",
         )
+        threading.Thread(target=self._reap, name="sandbox-reaper", daemon=True).start()
 
     def _start(self, session_id: str) -> int:
         """Starts opencode in the sandbox of the session, made on first use."""
-        sb = self.sandboxes.get(session_id)
+        with self._lock:
+            sb = self.sandboxes.get(session_id)
+            interceptor = self.interceptors.get(session_id)
         if sb is None:
             log = self.log.setdefault(session_id, [])
             interceptor = SessionInterceptor(self.agent, session_id, log)
@@ -295,18 +323,37 @@ class SandboxedCoder:
                 interceptor=interceptor,
                 labels={"a2a.sample": "adk-sandbox-coder"},
             )
-            log.append(
-                f"sandbox ready in {time.monotonic() - started:.1f}s: {sb.info['Summary']}"
-            )
-            self.sandboxes[session_id] = sb
-            self.interceptors[session_id] = interceptor
+            log.append(f"sandbox ready in {time.monotonic() - started:.1f}s: {sb.info['Summary']}")
+            with self._lock:
+                self.sandboxes[session_id] = sb
+                self.interceptors[session_id] = interceptor
+        interceptor.last_used = time.monotonic()
         return sb.start_fd()
 
+    def _reap(self) -> None:
+        while not self._closed.wait(min(60.0, SANDBOX_IDLE)):
+            now = time.monotonic()
+            with self._lock:
+                idle = [k for k, i in self.interceptors.items() if now - i.last_used > SANDBOX_IDLE]
+                boxes = [(k, self.sandboxes.pop(k)) for k in idle]
+                for k in idle:
+                    self.interceptors.pop(k, None)
+                    self.log.pop(k, None)
+            for _, sb in boxes:
+                try:
+                    sb.close()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    print(f"[sandbox] removing an idle sandbox: {e}", flush=True)
+
     def close(self) -> None:
+        self._closed.set()
         self.agent.close()
-        for sb in self.sandboxes.values():
+        with self._lock:
+            boxes = list(self.sandboxes.values())
+            self.sandboxes.clear()
+            self.interceptors.clear()
+        for sb in boxes:
             sb.close()
-        self.sandboxes.clear()
 
 
 coder = SandboxedCoder()

@@ -89,7 +89,7 @@ class EventPump:
     """
 
     def __init__(
-        self, lib: Library, handler: Callable[[str, dict], dict], workers: int = 32
+        self, lib: Library, handler: Callable[[str, dict], dict], workers: int = 64
     ):
         self._lib = lib
         self._handler = handler

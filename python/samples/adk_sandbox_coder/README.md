@@ -27,6 +27,8 @@ python main.py
 | `CODE_MODEL` | `google/gemini-2.5-flash` | The model behind `llm.internal` |
 | `GUARD_MODEL` | `gemini-2.5-flash` | The model that decides other traffic |
 | `MAX_MODEL_CALLS` | `60` | The budget of model calls per session |
+| `MAX_GUARD_CALLS` | `40` | The budget of guard-model questions per session; past it, other traffic is denied |
+| `SANDBOX_IDLE` | `1800` | Seconds without traffic after which a session's sandbox and workspace are removed |
 | `SANDBOX_LOG` | unset | `1` prints each decision as it happens |
 
 `adk web` and `adk run` load the agent from `agent.py` as `root_agent` too.
@@ -78,6 +80,6 @@ opencode tried to reach the npm registry while it edited, and the guard model re
 
 ## Notes
 
-- **One container per ADK session.** opencode stops after 10 idle minutes and starts again in the same container on the next message, so the workspace survives. Closing the agent removes the containers and the workspaces.
+- **One container per ADK session.** opencode stops after 10 idle minutes and starts again in the same container on the next message, so the workspace survives. After `SANDBOX_IDLE`, the sandbox and its workspace are removed, and the next message starts in a fresh one. Closing the agent removes them all.
 - **Tool callbacks, plugins and confirmation don't apply** to the tools that the coding agent calls, as in adk-go.
 - **HTTPS to other hosts isn't inspected.** The guard model sees only the host and port. List hosts in the sandbox's `inspect_tls` to see their requests too, for clients that trust the sandbox's CA.

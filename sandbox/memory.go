@@ -67,8 +67,31 @@ type Files interface {
 
 // ExecResult is the result of [Files.Exec].
 type ExecResult struct {
+	// Stdout and Stderr hold up to [MaxExecOutput] bytes each, and
+	// Truncated is set when a stream had more.
 	Stdout, Stderr []byte
 	ExitCode       int
+	Truncated      bool
+}
+
+// MaxExecOutput bounds each output stream that [Files.Exec] keeps.
+const MaxExecOutput = 8 << 20
+
+// capped keeps the first max bytes written to it, and takes the rest
+// without keeping it, so that the command doesn't block.
+type capped struct {
+	max       int
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room < len(p) {
+		c.truncated = true
+		c.buf.Write(p[:max(room, 0)])
+		return len(p), nil
+	}
+	return c.buf.Write(p)
 }
 
 // memoryVolume returns the name of the volume of the sandbox name.
@@ -303,10 +326,10 @@ func (f *memoryFiles) Exec(ctx context.Context, argv []string, stdin []byte) (Ex
 	}
 	cmd := exec.CommandContext(runCtx, "docker", append(args, argv...)...)
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	stdout, stderr := &capped{max: MaxExecOutput}, &capped{max: MaxExecOutput}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
-	res := ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	res := ExecResult{Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes(), Truncated: stdout.truncated || stderr.truncated}
 	if runCtx.Err() != nil {
 		res.ExitCode = -1
 		if f.launcher == "" {
@@ -318,10 +341,10 @@ func (f *memoryFiles) Exec(ctx context.Context, argv []string, stdin []byte) (Ex
 		res.ExitCode = ee.ExitCode()
 		// docker exec fails with 1 when the container doesn't run, and 125
 		// to 127 when the command can't start.
-		if (res.ExitCode == 1 || res.ExitCode >= 125) && bytes.HasPrefix(stderr.Bytes(), []byte("Error response from daemon")) {
-			return res, fmt.Errorf("docker exec: %s", bytes.TrimSpace(stderr.Bytes()))
+		if (res.ExitCode == 1 || res.ExitCode >= 125) && bytes.HasPrefix(res.Stderr, []byte("Error response from daemon")) {
+			return res, fmt.Errorf("docker exec: %s", bytes.TrimSpace(res.Stderr))
 		}
-		if f.launcher != "" && timed && res.ExitCode == sandboxnet.ExecTimedOutExit && bytes.Contains(stderr.Bytes(), []byte("a2a-init: ")) {
+		if f.launcher != "" && timed && res.ExitCode == sandboxnet.ExecTimedOutExit && bytes.Contains(res.Stderr, []byte("a2a-init: ")) {
 			return res, errors.New("the command ran out of time, and the sandbox stopped it")
 		}
 		return res, nil

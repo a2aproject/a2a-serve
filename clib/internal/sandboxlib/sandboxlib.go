@@ -423,7 +423,8 @@ func (l *Library) List(h int64, dir string) string {
 }
 
 // Exec runs {"argv", "stdin", "timeout_ms"} in the sandbox and returns
-// {"stdout", "stderr", "exit_code"}, with base64 streams.
+// {"stdout", "stderr", "exit_code", "truncated"}, with base64 streams of
+// up to [sandbox.MaxExecOutput] bytes each.
 func (l *Library) Exec(h int64, reqJSON string) string {
 	f, err := l.files(h)
 	if err != nil {
@@ -440,7 +441,7 @@ func (l *Library) Exec(h int64, reqJSON string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cmp.Or(req.TimeoutMS, 120_000))*time.Millisecond)
 	defer cancel()
 	res, err := f.Exec(ctx, req.Argv, req.Stdin)
-	return result(map[string]any{"stdout": res.Stdout, "stderr": res.Stderr, "exit_code": res.ExitCode}, err)
+	return result(map[string]any{"stdout": res.Stdout, "stderr": res.Stderr, "exit_code": res.ExitCode, "truncated": res.Truncated}, err)
 }
 
 // NextEvent returns the next question, waiting up to timeout, or {} when

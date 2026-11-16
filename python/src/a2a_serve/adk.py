@@ -49,8 +49,10 @@ from .acp import Executor
 MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
 
-TOOL_TIMEOUT = 600.0
-"""Bounds a tool call of the coding agent, in seconds."""
+TOOL_TIMEOUT = 240.0
+"""Bounds a tool call of the coding agent, in seconds. It stays below the
+time the sandbox library waits for an answer to a request (5 minutes), so
+that the agent never sees a failure for a tool that went on to run."""
 
 
 class AcpAgent(BaseAgent):

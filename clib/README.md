@@ -31,7 +31,7 @@ A library asks its caller questions through a queue. `*_next_event(timeout_ms)` 
 | `a2a_sandbox_read_file(h, name)` | `{"data"}` |
 | `a2a_sandbox_write_file(h, name, b64)` | `{}` |
 | `a2a_sandbox_list(h, dir)` | `{"files"}`: the paths of the files under `dir` |
-| `a2a_sandbox_exec(h, req)` | `{"stdout", "stderr", "exit_code"}` for `{"argv", "stdin", "timeout_ms"}`. It runs next to the command, with its user, capabilities and network. |
+| `a2a_sandbox_exec(h, req)` | `{"stdout", "stderr", "exit_code", "truncated"}` for `{"argv", "stdin", "timeout_ms"}`. It runs next to the command, with its user, capabilities and network, and keeps up to 8 MiB of each stream. |
 | `a2a_sandbox_stderr(h)` | `{"stderr"}`: the end of the command's stderr |
 | `a2a_sandbox_close(h)` | `{}`: removes the containers and the file system in memory |
 

@@ -158,6 +158,8 @@ class ExecResult:
     stdout: bytes
     stderr: bytes
     exit_code: int
+    truncated: bool = False
+    """Set when a stream had more output than the library keeps."""
 
 
 class Sandbox:
@@ -286,6 +288,7 @@ class Sandbox:
             base64.b64decode(r["stdout"] or ""),
             base64.b64decode(r["stderr"] or ""),
             r["exit_code"],
+            r.get("truncated", False),
         )
 
     def close(self) -> None:
