@@ -29,9 +29,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -106,5 +108,31 @@ func TestNetworkProviderRefusedTokenFailsBeforeAgentStarts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir.NetworkStateDir("loopnet"), "token-problem.json")); err != nil {
 		t.Fatalf("token problem file: %v", err)
+	}
+}
+
+func TestPairInviteOnProviderOnlyPrivateURLNamesLocalURL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	net := "loopnet://" + testutil.ShortTempDir(t) + "?owner=ben@example.com"
+	coder := startServer(t, serverOpts{name: "coder", resolveNetwork: findLoopnet, configure: onLoopnet(net)})
+
+	code, err := controlapi.NewClient(coder.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "ben"})
+	if err != nil {
+		t.Fatalf("ctl.Pair() error = %v", err)
+	}
+	want := "a2a-serve pair join " + coder.localURL() + " " + code.Code
+	if code.PairCommand != want {
+		t.Fatalf("ctl.Pair() PairCommand = %q, want %q", code.PairCommand, want)
+	}
+	if code.URL != coder.localURL() {
+		t.Fatalf("ctl.Pair() URL = %q, want %q", code.URL, coder.localURL())
+	}
+	cred, err := credstore.Pair(ctx, testHTTP, code.URL, code.Code, pairapi.PairingPerson)
+	if err != nil {
+		t.Fatalf("credstore.Pair(%s) error = %v, want nil", code.URL, err)
+	}
+	if cred.URL != coder.localURL() {
+		t.Fatalf("credstore.Pair() URL = %q, want %q", cred.URL, coder.localURL())
 	}
 }
