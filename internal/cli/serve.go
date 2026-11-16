@@ -36,9 +36,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // serverFlags holds the agent directory and control timeout of the commands

@@ -30,9 +30,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxtest"
 )
 
 func TestDockerProbeOnce(t *testing.T) {

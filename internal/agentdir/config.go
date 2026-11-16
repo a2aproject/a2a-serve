@@ -30,7 +30,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // Config is the agent definition in .a2a/config.yaml. It holds no secrets:

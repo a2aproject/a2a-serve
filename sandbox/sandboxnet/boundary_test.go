@@ -36,8 +36,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // fakeNetwork is a host with the addresses and links of local, whose

@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // UnrestrictedEffect says what a sandbox without the egress boundary reaches.

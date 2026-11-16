@@ -26,8 +26,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // secretEnv returns the secrets that a container with sb gets from stored

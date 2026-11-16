@@ -21,7 +21,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 //go:embed images/*/Dockerfile

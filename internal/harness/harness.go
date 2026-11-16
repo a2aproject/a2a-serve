@@ -30,7 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 	"github.com/tailscale/hujson"
 )
 

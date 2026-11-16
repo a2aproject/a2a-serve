@@ -34,7 +34,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 const injectHost = "api.test"

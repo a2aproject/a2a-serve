@@ -27,11 +27,11 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
+	"github.com/a2aproject/a2a-serve/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // HarnessACP is the harness which runs any ACP agent given as a command.

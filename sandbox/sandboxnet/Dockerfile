@@ -2,7 +2,7 @@
 # to relay its sockets to the server, and whose binary the agent's
 # container runs as its launcher. Build it from the repository root:
 #
-#   docker build -f internal/sandboxnet/Dockerfile .
+#   docker build -f sandbox/sandboxnet/Dockerfile .
 #
 # The legacy builder, which Docker without buildx uses, sets no platform
 # arguments, so the binary is for the platform the build runs on. buildx

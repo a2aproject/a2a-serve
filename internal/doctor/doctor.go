@@ -38,9 +38,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 	"github.com/a2aproject/a2a-serve/internal/service"
+	"github.com/a2aproject/a2a-serve/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // Status is the outcome of a check.

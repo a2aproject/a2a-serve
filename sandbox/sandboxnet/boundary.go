@@ -35,7 +35,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // Limits of one boundary, which serves one container.

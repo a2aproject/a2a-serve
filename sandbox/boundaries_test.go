@@ -24,8 +24,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // TestLauncherCopyRunsAsAnotherUser checks the modes that let container

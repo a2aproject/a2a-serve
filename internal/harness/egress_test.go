@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 func TestDecideEgress(t *testing.T) {

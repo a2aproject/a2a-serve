@@ -34,7 +34,7 @@ import (
 
 	"golang.org/x/mod/module"
 
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // With Docker Desktop, which can't mount the server's sockets, a relay
@@ -60,7 +60,7 @@ const (
 	relaySource  = "https://github.com/a2aproject/a2a-serve.git"
 	relayCommits = "https://api.github.com/repos/a2aproject/a2a-serve/commits/"
 	// relayDockerfile is the Dockerfile of the relay image in the repository.
-	relayDockerfile = "internal/sandboxnet/Dockerfile"
+	relayDockerfile = "sandbox/sandboxnet/Dockerfile"
 	// relayServerDir and RelayEgressDir are where a relay on Linux gets
 	// the server's sockets.
 	relayServerDir = "/run/a2a-server"
