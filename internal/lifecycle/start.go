@@ -17,6 +17,7 @@
 package lifecycle
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -106,10 +107,11 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if err := checkNotRunning(dir); err != nil {
 		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 		defer cancel()
-		if _, serr := controlapi.NewClient(dir).Status(pctx); serr != nil {
+		st, serr := controlapi.NewClient(dir).Status(pctx)
+		if serr != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cfg.Name)
+		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
 		return err
 	}
 	if err := logfile.Rotate(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
@@ -196,13 +198,13 @@ func background(ctx context.Context, dir agentdir.Dir, services ServiceManager, 
 	if err != nil {
 		return err
 	}
-	if _, err := controlapi.NewClient(dir).Status(ctx); err == nil {
+	if st, err := controlapi.NewClient(dir).Status(ctx); err == nil {
 		if asService {
 			if err := CheckServiceStart(dir, services, cfg.Name); err != nil {
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cfg.Name)
+		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
 		return err
 	}
 	if err := checkNotRunning(dir); err != nil {
