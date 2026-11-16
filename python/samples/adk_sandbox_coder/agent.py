@@ -365,9 +365,17 @@ class SandboxedCoder:
         # starts as the reaper works asks _start for a sandbox, which takes
         # the lock, rather than talking to an agent in a removed sandbox.
         limit = max(SANDBOX_IDLE, self.agent.idle_timeout + 60)
+        was_busy: set[str] = set()
         while not self._closed.wait(min(60.0, limit)):
             now = time.monotonic()
             busy = self.agent.busy_sessions()
+            with self._lock:
+                # The agent's idle time starts when a turn ends, which can be
+                # long after the turn's last request.
+                for k in was_busy - busy:
+                    if k in self.interceptors:
+                        self.interceptors[k].last_used = now
+            was_busy = busy
             with self._lock:
                 idle = [k for k, i in self.interceptors.items() if now - i.last_used > limit and k not in busy]
                 boxes = [(k, self.sandboxes.pop(k)) for k in idle]

@@ -29,6 +29,7 @@
 #include <dlfcn.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,15 +81,24 @@ static long long json_int(const char *s, const char *key) {
   return p == NULL ? -1 : atoll(p + strlen(pat));
 }
 
-// close_sandbox removes the sandbox at exit, also after an error.
+// interrupted is set once a signal starts removing the sandbox, and closed
+// once the sandbox was removed.
+static atomic_int interrupted, closed;
+
+// close_sandbox removes the sandbox at exit, also after an error, once.
 static void close_sandbox(void) {
-  if (sandbox_handle != 0) {
+  if (sandbox_handle != 0 && atomic_exchange(&closed, 1) == 0) {
     sb.free(sb.close(sandbox_handle));
   }
 }
 
 static void fail_on_error(const char *what, const char *res) {
   if (strncmp(res, "{\"error\"", 8) == 0) {
+    // Closing the sandbox after a signal fails the calls in flight; the
+    // signal's thread exits once it is done.
+    while (atomic_load(&interrupted)) {
+      pause();
+    }
     fprintf(stderr, "%s: %s\n", what, res);
     exit(1);
   }
@@ -111,6 +121,19 @@ static void append_json_string(char *out, size_t size, const char *s) {
   }
   if (n + 1 < size) out[n++] = '"';
   out[n] = '\0';
+}
+
+// on_signal removes the sandbox when SIGINT or SIGTERM comes, which atexit
+// doesn't see, then exits as the signal would.
+static void *on_signal(void *arg) {
+  sigset_t *set = arg;
+  int sig;
+  if (sigwait(set, &sig) == 0) {
+    atomic_store(&interrupted, 1);
+    close_sandbox();
+    _exit(128 + sig);
+  }
+  return NULL;
 }
 
 // pump answers the questions of the ACP library: each "start" starts the
@@ -143,6 +166,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: %s <lib dir> <image> <agent command> <prompt> [--env NAME=VALUE]... [--allow RULE]...\n", argv[0]);
     return 2;
   }
+  // Every thread, those of the libraries included, inherits the blocked
+  // signals, which on_signal then takes.
+  static sigset_t signals;
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGINT);
+  sigaddset(&signals, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &signals, NULL);
   char path[1024];
   snprintf(path, sizeof path, "%s/liba2asandbox.so", argv[1]);
   void *lsb = dlopen(path, RTLD_NOW | RTLD_LOCAL);
@@ -203,7 +233,9 @@ int main(int argc, char **argv) {
   sandbox_handle = json_int(res, "handle");
   sb.free(res);
 
-  pthread_t t;
+  pthread_t t, st;
+  pthread_create(&st, NULL, on_signal, &signals);
+  pthread_detach(st);
   pthread_create(&t, NULL, pump, NULL);
 
   res = acp.new_("{\"id\": \"c\", \"external\": true, \"per_context\": true, \"session\": {\"cwd\": \"/workspace\"}}");
@@ -211,8 +243,9 @@ int main(int argc, char **argv) {
   int64_t exec = json_int(res, "handle");
   acp.free(res);
 
-  char req[2048];
-  snprintf(req, sizeof req, "{\"message\": {\"contextId\": \"c1\", \"parts\": [{\"text\": \"%s\"}]}}", argv[4]);
+  char prompt[16384] = "", req[20480];
+  append_json_string(prompt, sizeof prompt, argv[4]);
+  snprintf(req, sizeof req, "{\"message\": {\"contextId\": \"c1\", \"parts\": [{\"text\": %s}]}}", prompt);
   res = acp.send(exec, req);
   fail_on_error("a2a_acp_send", res);
   int64_t stream = json_int(res, "stream");
@@ -238,10 +271,14 @@ int main(int argc, char **argv) {
   acp.free(res);
   atomic_store(&stopping, 1);
   pthread_join(t, NULL);
-  res = sb.close(sandbox_handle);
-  sandbox_handle = 0;
-  fail_on_error("a2a_sandbox_close", res);
-  sb.free(res);
+  if (atomic_exchange(&closed, 1) == 0) {
+    res = sb.close(sandbox_handle);
+    fail_on_error("a2a_sandbox_close", res);
+    sb.free(res);
+  }
+  while (atomic_load(&interrupted)) {
+    pause();
+  }
   printf("done\n");
   return 0;
 }
