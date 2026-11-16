@@ -178,6 +178,10 @@ class AcpAgent(BaseAgent):
     after_model_callback: Callable | list[Callable] | None = None
     """Called with (callback_context, llm_response) after each model call;
     a returned LlmResponse replaces the model's."""
+    process_per_session: bool = True
+    """Runs an agent process per ADK session. With argv, False runs one
+    process for all sessions, as acpagent does; a sandbox or start always
+    gets one per session."""
     idle_timeout: float = 600
     """Stops the agent of an idle session after so many seconds."""
     inactivity_timeout: float = 900
@@ -204,6 +208,8 @@ class AcpAgent(BaseAgent):
         super().model_post_init(context)
         if [bool(self.argv), self.start is not None, self.sandbox is not None].count(True) != 1:
             raise ValueError("AcpAgent needs exactly one of argv, start and sandbox")
+        if not self.process_per_session and not self.argv:
+            raise ValueError("AcpAgent shares one process only with argv")
         if self.argv and self.model is not None:
             raise ValueError("AcpAgent serves a model only to an agent in a sandbox, or one that start runs behind an interceptor")
         if isinstance(self.model, BaseLlm):
@@ -274,7 +280,7 @@ class AcpAgent(BaseAgent):
                     cwd=self.cwd,
                     env=self.env,
                     start=self._start_sandboxed if self.sandbox is not None else self.start,
-                    per_context=True,
+                    per_context=self.process_per_session,
                     idle_timeout=self.idle_timeout,
                     session_cwd=self.session_cwd,
                     mcp_servers=mcp,

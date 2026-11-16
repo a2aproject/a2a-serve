@@ -321,6 +321,25 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         _, _, out = agent.handle_mcp(session_id, "POST", body.encode())
         return json.loads(out)["result"]
 
+    async def test_process_per_session(self):
+        from google.adk.runners import InMemoryRunner
+
+        from a2a_serve.adk import AcpAgent
+
+        tests = [("own process", True, 2), ("shared process", False, 1)]
+        for name, per_session, want in tests:
+            with self.subTest(name):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d)
+                agent = AcpAgent(name="coder", argv=[FAKEACP], session_cwd=d, process_per_session=per_session)
+                self.addCleanup(agent.close)
+                runner = InMemoryRunner(agent=agent, app_name="test")
+                first, second = await self.session(runner), await self.session(runner)
+
+                pids = {self.texts(await self.turn(runner, s, "pid"))[0] for s in (first, second)}
+
+                self.assertEqual(len(pids), want, pids)
+
     async def test_tools_for_local_command(self):
         import urllib.error
         import urllib.request
@@ -477,6 +496,7 @@ class ValidationTest(unittest.TestCase):
             ("neither argv nor start", {}),
             ("both argv and start", {"argv": ["agent"], "start": lambda key: 0}),
             ("model without an interceptor", {"argv": ["agent"], "model": "gemini-2.5-flash"}),
+            ("shared process without argv", {"start": lambda key: 0, "process_per_session": False}),
             (
                 "duplicate tools",
                 {"argv": ["agent"], "tools": [FunctionTool(tool), FunctionTool(tool)]},

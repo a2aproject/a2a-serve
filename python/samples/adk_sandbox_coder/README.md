@@ -68,7 +68,7 @@ sequenceDiagram
 | Other questions end the invocation, and the user's next message answers them | The same; the question is the invocation's last event, with `acp_input_required` in its metadata |
 | `Tools` served over MCP on a loopback port, also to a local `Command`; calls and responses are events of the invocation | `tools` served over MCP at `mcp_url`, which the sandbox's interceptor answers in process, so nothing listens on the host; calls and responses are events of the invocation. A local `argv` gets them on 127.0.0.1, at a URL with a random token per session |
 | An abandoned run cancels the agent's work | The same, also when the run ends before its first event |
-| One agent process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message |
+| One agent process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message. A local `argv` shares one with `process_per_session=False` |
 | The agent uses the model of its own configuration | `model` answers the agent's model calls with an ADK model, with the model callbacks, once the agent's configuration names `model_url` as its provider, as `agent.py` does for opencode |
 
 The tests in [`python/tests/test_adk_agent.py`](../../tests/test_adk_agent.py) follow those of acpagent: conversation, permissions, answers in a later invocation, tools, tools after an abandoned run, tools per session, and the config checks.
