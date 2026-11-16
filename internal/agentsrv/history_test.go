@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
@@ -45,5 +47,34 @@ func TestRejectedToolCallShowsAsRejectedInHistory(t *testing.T) {
 	history := strings.Join(texts, "\n")
 	if !strings.Contains(history, "Rejected git push") || strings.Contains(history, "Failed git push") {
 		t.Fatalf("agent messages of the task:\n%s\nwant the rejected call shown as Rejected", history)
+	}
+}
+
+func TestRuleAnswerShowsWhoDecidedInHistory(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+	if err := ts.srv.rt.Update(func(c *agentdir.Config) error { c.Approvals.Allow = []string{"execute"}; return nil }); err != nil {
+		t.Fatalf("Runtime.Update() error = %v", err)
+	}
+
+	if err := ts.srv.answerWaiting(context.Background(), nil); err != nil {
+		t.Fatalf("answerWaiting() error = %v", err)
+	}
+
+	waitState(t, c, asked.ID, a2a.TaskStateCompleted)
+	task, err := c.GetTask(context.Background(), &a2a.GetTaskRequest{ID: asked.ID})
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	var texts []string
+	for _, m := range task.History {
+		if m.Role == a2a.MessageRoleUser {
+			texts = append(texts, a2atext.Message(m))
+		}
+	}
+	if diff := cmp.Diff([]string{"ask", "Allow once by allow-tools"}, texts); diff != "" {
+		t.Fatalf("user messages of the task wrong result (-want +got) diff = %s", diff)
 	}
 }

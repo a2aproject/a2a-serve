@@ -273,13 +273,27 @@ type answer struct {
 }
 
 // AnswerMessage is the reply which selects an option of q, as structured
-// input.
-func AnswerMessage(taskID a2a.TaskID, contextID string, q *Question, option string) (*a2a.Message, error) {
+// input. A non-empty shown goes before it as text, which the history of
+// the task shows in place of the structured input.
+func AnswerMessage(taskID a2a.TaskID, contextID string, q *Question, option, shown string) (*a2a.Message, error) {
 	part, err := structuredinput.NewResponsePart(q.ID, answer{Option: option, Seq: q.Seq})
 	if err != nil {
 		return nil, fmt.Errorf("building the answer: %w", err)
 	}
-	msg := a2a.NewMessage(a2a.MessageRoleUser, part)
+	parts := []*a2a.Part{part}
+	if shown != "" {
+		parts = []*a2a.Part{a2a.NewTextPart(shown), part}
+	}
+	msg := a2a.NewMessage(a2a.MessageRoleUser, parts...)
 	msg.TaskID, msg.ContextID = taskID, contextID
 	return msg, nil
+}
+
+// ShownAnswer words the answer option of who for the history of a task.
+func ShownAnswer(option Option, who string) string {
+	label := option.Label
+	if label == "" {
+		label = option.ID
+	}
+	return label + " by " + who
 }
