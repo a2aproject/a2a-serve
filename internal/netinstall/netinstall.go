@@ -523,10 +523,28 @@ func (i *Installer) describe(ctx context.Context, c *Candidate) (netprovider.Des
 	return d, nil
 }
 
+// removeUnused removes the installed binary at path once no record refers
+// to it, such as the copy a source replaced with a newer one.
+func (i *Installer) removeUnused(recs map[string]record, path string) {
+	if path == "" {
+		return
+	}
+	for _, r := range recs {
+		if r.Path == path {
+			return
+		}
+	}
+	if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+		i.logf("! removing the replaced network provider at %s: %v", path, err)
+	}
+}
+
 // Trust installs the candidate the user confirmed, asks it what it is, and
-// records its name and fingerprint for its spec. A custom provider can't
-// take the name of a well-known provider, of tailscale, or of another custom
-// provider, whose grants and state it would get.
+// records its name and fingerprint for its spec. Each spec keeps its own
+// record, so installing a provider from a second path leaves agents that
+// use it from the first path working. A custom provider can't take the name
+// of a well-known provider or of tailscale, whose grants and state it would
+// get.
 func (i *Installer) Trust(ctx context.Context, c *Candidate) (Provider, string, error) {
 	d, err := i.describe(ctx, c)
 	if err != nil {
@@ -544,27 +562,23 @@ func (i *Installer) Trust(ctx context.Context, c *Candidate) (Provider, string, 
 		if err != nil {
 			return err
 		}
-		// The user confirmed this binary, so it replaces a provider of the
-		// same name from another source, such as an older release, and
-		// keeps its state and grants.
-		for spec, r := range recs {
-			if r.Name == d.Name && spec != c.Spec {
-				delete(recs, spec)
-				i.logf("! the network provider %s from %s replaces the one from %s", d.Name, c.Source, spec)
-			}
-		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
 		if err := fsutil.WriteAtomic(path, c.data, 0o755); err != nil {
 			return err
 		}
+		superseded := recs[c.Spec].Path
 		recs[c.Spec] = record{Name: d.Name, SHA256: c.SHA256, Path: path}
 		data, err := json.MarshalIndent(recs, "", "  ")
 		if err != nil {
 			return err
 		}
-		return fsutil.WriteAtomic(i.trustFile(), data, 0o600)
+		if err := fsutil.WriteAtomic(i.trustFile(), data, 0o600); err != nil {
+			return err
+		}
+		i.removeUnused(recs, superseded)
+		return nil
 	})
 	if err != nil {
 		return Provider{}, "", fmt.Errorf("installing the network provider from %s: %w", c.Source, err)
