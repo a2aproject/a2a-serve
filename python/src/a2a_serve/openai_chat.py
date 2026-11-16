@@ -38,6 +38,28 @@ class BadRequest(ValueError):
     """A request the translation can't take."""
 
 
+# Gemini 3 needs the thought signature of each function call when the call
+# comes back in the history. A chat completion has no place for it, so it
+# rides in the tool call's ID, which the client sends back as it got it.
+_SIGNATURE = "__sig_"
+
+
+def _call_id(base: str, signature: bytes | None) -> str:
+    if not signature:
+        return base
+    return base + _SIGNATURE + base64.urlsafe_b64encode(signature).decode().rstrip("=")
+
+
+def _split_call_id(call_id: str) -> tuple[str, bytes | None]:
+    base, sep, encoded = call_id.partition(_SIGNATURE)
+    if not sep:
+        return call_id, None
+    try:
+        return base, base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    except ValueError:
+        return call_id, None
+
+
 def to_llm_request(body: dict[str, Any], model: str) -> LlmRequest:
     """Returns the LlmRequest of an OpenAI chat completions request for
     model, the name of the ADK model that answers it."""
@@ -59,14 +81,16 @@ def to_llm_request(body: dict[str, Any], model: str) -> LlmRequest:
             parts = [types.Part(text=t) for t in [_text_of(m.get("content"))] if t]
             for call in m.get("tool_calls") or []:
                 fn = call.get("function") or {}
+                base, signature = _split_call_id(call.get("id", ""))
                 names[call.get("id", "")] = fn.get("name", "")
                 parts.append(
                     types.Part(
                         function_call=types.FunctionCall(
-                            id=call.get("id"),
+                            id=base or None,
                             name=fn.get("name"),
                             args=_arguments(fn.get("arguments")),
-                        )
+                        ),
+                        thought_signature=signature,
                     )
                 )
             if parts:
@@ -75,7 +99,7 @@ def to_llm_request(body: dict[str, Any], model: str) -> LlmRequest:
             call_id = m.get("tool_call_id", "")
             part = types.Part(
                 function_response=types.FunctionResponse(
-                    id=call_id,
+                    id=_split_call_id(call_id)[0] or None,
                     name=names.get(call_id, m.get("name", "")),
                     response={"result": _text_of(m.get("content"))},
                 )
@@ -214,7 +238,7 @@ def _message(response: LlmResponse) -> tuple[str, list[dict[str, Any]]]:
         if p.function_call:
             calls.append(
                 {
-                    "id": p.function_call.id or "call_" + uuid.uuid4().hex[:24],
+                    "id": _call_id(p.function_call.id or "call_" + uuid.uuid4().hex[:24], p.thought_signature),
                     "type": "function",
                     "function": {
                         "name": p.function_call.name,
@@ -225,16 +249,28 @@ def _message(response: LlmResponse) -> tuple[str, list[dict[str, Any]]]:
     return "".join(text), calls
 
 
-def _usage(response: LlmResponse) -> dict[str, int]:
+def _usage(response: LlmResponse) -> dict[str, Any]:
     u = response.usage_metadata
     if u is None:
         return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    prompt, completion = u.prompt_token_count or 0, u.candidates_token_count or 0
-    return {
-        "prompt_tokens": prompt,
-        "completion_tokens": completion,
-        "total_tokens": u.total_token_count or prompt + completion,
-    }
+    prompt = u.prompt_token_count or 0
+    # Thinking counts as completion, as OpenAI counts reasoning tokens.
+    completion = (u.candidates_token_count or 0) + (u.thoughts_token_count or 0)
+    usage: dict[str, Any] = {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": u.total_token_count or prompt + completion}
+    if u.thoughts_token_count:
+        usage["completion_tokens_details"] = {"reasoning_tokens": u.thoughts_token_count}
+    if u.cached_content_token_count:
+        usage["prompt_tokens_details"] = {"cached_tokens": u.cached_content_token_count}
+    return usage
+
+
+def finish_of_error(error_code: str | None) -> str | None:
+    """Returns the finish reason of an error code that ADK sets when the
+    model ended without content, such as SAFETY, or None for other codes."""
+    # FinishReason takes any string, so membership decides.
+    if not error_code or error_code not in types.FinishReason.__members__:
+        return None
+    return _FINISH.get(types.FinishReason[error_code], "stop")
 
 
 def to_completion(response: LlmResponse, model: str) -> dict[str, Any]:
@@ -243,7 +279,7 @@ def to_completion(response: LlmResponse, model: str) -> dict[str, Any]:
     message: dict[str, Any] = {"role": "assistant", "content": text or None}
     if calls:
         message["tool_calls"] = calls
-    finish = "tool_calls" if calls else _FINISH.get(response.finish_reason, "stop")
+    finish = "tool_calls" if calls else (finish_of_error(response.error_code) or _FINISH.get(response.finish_reason, "stop"))
     return {
         "id": "chatcmpl-" + uuid.uuid4().hex,
         "object": "chat.completion",

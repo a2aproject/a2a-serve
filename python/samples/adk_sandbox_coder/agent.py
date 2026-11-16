@@ -105,11 +105,11 @@ def file_ticket(title: str, body: str, tool_context: ToolContext) -> dict:
 
 def model_budget(callback_context: CallbackContext, llm_request: LlmRequest) -> LlmResponse | None:
     """Counts opencode's model calls in the session state, and refuses them
-    past MAX_MODEL_CALLS, which opencode gets as a rate limit."""
+    past MAX_MODEL_CALLS, which ends opencode's turn."""
     calls = callback_context.state.get("model_calls", 0) + 1
     callback_context.state["model_calls"] = calls
     if calls > MAX_MODEL_CALLS:
-        return LlmResponse(error_code="RESOURCE_EXHAUSTED", error_message=f"the session's budget of {MAX_MODEL_CALLS} model calls is spent")
+        return LlmResponse(error_code="BUDGET_SPENT", error_message=f"the session's budget of {MAX_MODEL_CALLS} model calls is spent")
     return None
 
 

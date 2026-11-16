@@ -24,7 +24,12 @@ streams into the ADK session as the agent's events.
 model calls, in the OpenAI chat completions format, to `model_url`;
 AcpAgent turns each into an LlmRequest and runs it with the model in the
 invocation in progress, with `before_model_callback` and
-`after_model_callback` as an LlmAgent runs them.
+`after_model_callback` as an LlmAgent runs them, without plugins and
+on_model_error callbacks. A model error reaches the agent as an HTTP error
+it can retry, such as a rate limit, and a callback's refusal, an
+LlmResponse with an error code of its own, as 403, which ends the agent's
+turn. Calls outside an invocation, after a turn ended, get 409. A streamed
+answer arrives in one piece, once the model is done.
 
 `tools` gives the coding agent ADK tools over MCP at `mcp_url`. A tool runs
 in the invocation in progress in its session, and its call and response
@@ -62,6 +67,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.models.registry import LLMRegistry
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -316,8 +322,13 @@ class AcpAgent(BaseAgent):
                 labels=cfg.labels,
             )
             with self._lock:
-                self._sandboxes[session_id] = sb
-                self._routers[session_id] = router
+                closed = self._closed.is_set()
+                if not closed:
+                    self._sandboxes[session_id] = sb
+                    self._routers[session_id] = router
+            if closed:
+                sb.close()
+                raise RuntimeError("the agent is closed")
         return sb.start_fd()
 
     def _reap(self) -> None:
@@ -377,8 +388,8 @@ class AcpAgent(BaseAgent):
         except Exception as e:  # pylint: disable=broad-exception-caught
             future.cancel()
             return 502, json_headers, openai_chat.error_body(f"{type(e).__name__}: {e}")
-        if response.error_code:
-            status = 429 if response.error_code in ("429", "RESOURCE_EXHAUSTED") else 502
+        if response.error_code and openai_chat.finish_of_error(response.error_code) is None:
+            status = _error_status(response.error_code)
             return status, json_headers, openai_chat.error_body(response.error_message or response.error_code, response.error_code)
         if req.get("stream"):
             return 200, {"Content-Type": "text/event-stream"}, openai_chat.to_stream(response, self._llm.model)
@@ -686,13 +697,18 @@ class _Run:
         callback_context = CallbackContext(self.ctx, event_actions=actions)
         response = await _first_response(self.agent.before_model_callback, callback_context, llm_request)
         if response is None:
-            async for r in llm.generate_content_async(llm_request, stream=False):
-                response = r
-        if response is None:
-            response = LlmResponse(error_code="EMPTY_RESPONSE", error_message="the model returned nothing")
-        changed = await _first_response(self.agent.after_model_callback, callback_context, response)
-        if changed is not None:
-            response = changed
+            try:
+                async for r in llm.generate_content_async(llm_request, stream=False):
+                    response = r
+            except genai_errors.APIError as e:
+                response = LlmResponse(error_code=str(e.code), error_message=e.message or str(e))
+            if response is None:
+                response = LlmResponse(error_code="502", error_message="the model returned nothing")
+            # As for an LlmAgent, an answer of before_model_callback skips
+            # after_model_callback too.
+            changed = await _first_response(self.agent.after_model_callback, callback_context, response)
+            if changed is not None:
+                response = changed
         if actions.state_delta or actions.artifact_delta:
             ev = self.agent._event(self.ctx)
             ev.actions = actions
@@ -752,6 +768,18 @@ async def _first_response(callbacks: Callable | list[Callable] | None, *args: An
         if result is not None:
             return result
     return None
+
+
+def _error_status(error_code: str) -> int:
+    """Returns the HTTP status of a model call that ended with error_code:
+    429 for a rate limit, which the agent retries, the model's own status
+    for another error of the model, and 403 for a refusal of a callback,
+    which the agent doesn't retry."""
+    if error_code in ("429", "RESOURCE_EXHAUSTED"):
+        return 429
+    if error_code.isdigit() and 400 <= int(error_code) < 600:
+        return int(error_code)
+    return 403
 
 
 class _SessionRouter:

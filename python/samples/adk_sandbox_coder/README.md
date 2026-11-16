@@ -28,27 +28,27 @@ sequenceDiagram
     participant ADK as ADK runner
     participant Agent as AcpAgent
     participant Boundary as sandbox boundary
-    participant Harness as opencode (in the sandbox)
+    participant Coder as opencode (in the sandbox)
 
-    Note over Agent,Harness: first message of an ADK session
+    Note over Agent,Coder: first message of an ADK session
     User->>ADK: prompt
     ADK->>Agent: run invocation
     Agent->>Boundary: start opencode, workspace in memory
-    Agent->>Harness: session/new with the MCP server adk, session/prompt
-    Harness->>Boundary: POST http://llm.internal/v1/chat/completions
+    Agent->>Coder: session/new with the MCP server adk, session/prompt
+    Coder->>Boundary: POST http://llm.internal/v1/chat/completions
     Boundary->>Agent: request (interceptor)
     Agent->>Agent: before_model_callback, then the ADK model
     Agent-->>Boundary: chat completion
-    Harness->>Boundary: MCP tools/call file_ticket at adk-tools.internal
+    Coder->>Boundary: MCP tools/call file_ticket at adk-tools.internal
     Boundary->>Agent: request (interceptor)
     Agent->>ADK: function call event
     Agent->>Agent: run file_ticket with the invocation's tool context
     Agent->>ADK: function response event with the state delta
-    Agent-->>Harness: tool result
-    Harness->>Boundary: CONNECT registry.npmjs.org:443
+    Agent-->>Coder: tool result
+    Coder->>Boundary: CONNECT registry.npmjs.org:443
     Boundary->>Agent: connect (interceptor)
     Agent-->>Boundary: deny (guard model)
-    Harness-->>Agent: reply
+    Coder-->>Agent: reply
     Agent-->>User: reply
 ```
 
@@ -58,14 +58,14 @@ sequenceDiagram
 
 | acpagent (Go) | AcpAgent (Python) |
 |---|---|
-| `Command`, `Dir`, `Env`, or `Start` for a harness in a sandbox | `argv`, or `start`, which returns the descriptor of the harness's stdio, here from a `Sandbox` |
-| Each ADK session maps to its own ACP session; the harness gets only the messages it hasn't seen | The same: an ACP session per ADK session, and the messages of others since the agent's last turn, marked with their author |
+| `Command`, `Dir`, `Env`, or `Start` for an agent that runs elsewhere | `argv`, `cwd` and `env`; `start`, which returns the descriptor of the agent's stdio; or `sandbox`, which runs each session's agent in a sandbox of its own |
+| Each ADK session maps to its own ACP session; the agent gets only the messages it hasn't seen | The same: an ACP session per ADK session, and what the agent wasn't sent, with the messages of others marked with their author |
 | `AllowTools`, `DenyTools` answer permission requests by ACP tool kind | `allow_tools`, `deny_tools` |
 | Other questions end the invocation, and the user's next message answers them | The same; the question is the invocation's last event, with `acp_input_required` in its metadata |
 | `Tools` served over MCP on a loopback port; calls and responses are events of the invocation | `tools` served over MCP at `mcp_url`, which the sandbox's interceptor answers in process, so nothing listens on the host; calls and responses are events of the invocation |
-| An abandoned run cancels the harness's work | The same, also when the run ends before its first event |
-| One harness process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message |
-| The harness uses its own model | `model` makes an ADK model the harness's model, with the model callbacks; the harness's own provider config is replaced by `model_url` |
+| An abandoned run cancels the agent's work | The same, also when the run ends before its first event |
+| One agent process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message |
+| The agent uses the model of its own configuration | `model` answers the agent's model calls with an ADK model, with the model callbacks, once the agent's configuration names `model_url` as its provider, as `agent.py` does for opencode |
 
 The tests in [`python/tests/test_adk_agent.py`](../../tests/test_adk_agent.py) follow those of acpagent: conversation, permissions, answers in a later invocation, tools, tools after an abandoned run, tools per session, and the config checks.
 
@@ -136,5 +136,7 @@ The 8 model calls went through ADK's Gemini model, and `model_budget` counted th
 ## Notes
 
 - **One container per ADK session.** opencode stops after 10 idle minutes and starts again in the same container on the next message, so the workspace survives. After `SANDBOX_IDLE`, the sandbox and its workspace are removed, and the next message starts in a fresh one. Closing the agent removes them all.
-- **Tool callbacks, plugins and confirmation don't apply** to the tools that the coding agent calls, as in adk-go.
+- **Tool callbacks, plugins and confirmation don't apply** to the tools that the coding agent calls, as in adk-go. The model callbacks apply to its model calls; plugins and `on_model_error` callbacks don't.
+- **Model answers arrive whole.** A model call that opencode streams gets its answer in one piece once the model is done. Errors of the model reach opencode as HTTP errors it retries when they are transient, such as a rate limit. A refusal of `before_model_callback`, such as the budget's, ends opencode's turn.
+- **Gemini 3 works too.** `MODEL=gemini-3-flash-preview` runs the sample; the thought signatures that Gemini 3 needs back travel in the IDs of the tool calls.
 - **HTTPS to other hosts isn't inspected.** The guard model sees only the host and port. List hosts in the sandbox's `inspect_tls` to see their requests too, for clients that trust the sandbox's CA.

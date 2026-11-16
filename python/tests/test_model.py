@@ -196,6 +196,38 @@ class TranslationTest(unittest.TestCase):
             ],
         )
 
+    def test_thought_signatures_round_trip(self):
+        response = LlmResponse(content=types.Content(role="model", parts=[
+            types.Part(function_call=types.FunctionCall(name="read", args={}), thought_signature=b"\x00sig\xff"),
+        ]))
+        call = openai_chat.to_completion(response, "m")["choices"][0]["message"]["tool_calls"][0]
+        body = {"messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": call["id"], "content": "done"},
+        ]}
+        req = openai_chat.to_llm_request(body, "m")
+
+        part = req.contents[1].parts[0]
+        self.assertEqual(part.thought_signature, b"\x00sig\xff")
+        self.assertEqual(req.contents[2].parts[0].function_response.id, part.function_call.id)
+        self.assertNotIn("__sig_", part.function_call.id)
+
+    def test_usage_counts_thinking(self):
+        response = LlmResponse(content=types.Content(role="model", parts=[types.Part(text="x")]),
+                               usage_metadata=types.GenerateContentResponseUsageMetadata(prompt_token_count=10, candidates_token_count=2, thoughts_token_count=5, total_token_count=17, cached_content_token_count=4))
+        usage = openai_chat.to_completion(response, "m")["usage"]
+
+        self.assertEqual(usage, {"prompt_tokens": 10, "completion_tokens": 7, "total_tokens": 17,
+                                 "completion_tokens_details": {"reasoning_tokens": 5}, "prompt_tokens_details": {"cached_tokens": 4}})
+
+    def test_blocked_response(self):
+        response = LlmResponse(error_code="SAFETY", error_message="blocked")
+        choice = openai_chat.to_completion(response, "m")["choices"][0]
+
+        self.assertEqual((choice["message"]["content"], choice["finish_reason"]), (None, "content_filter"))
+        self.assertIsNone(openai_chat.finish_of_error("BUDGET_SPENT"))
+
     def test_stream(self):
         response = LlmResponse(
             content=types.Content(role="model", parts=[types.Part(text="hi")]),
@@ -233,7 +265,7 @@ class HandleModelTest(unittest.IsolatedAsyncioTestCase):
             self.calls.append(n)
             if n > 2:
                 return LlmResponse(
-                    error_code="RESOURCE_EXHAUSTED", error_message="budget spent"
+                    error_code="BUDGET_SPENT", error_message="budget spent"
                 )
             return None
 
@@ -330,7 +362,7 @@ class HandleModelTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((s2, h2["Content-Type"]), (200, "text/event-stream"))
         self.assertIn('"tool_calls"', b2.decode())
-        self.assertEqual(s3, 429)
+        self.assertEqual(s3, 403)
         self.assertIn("budget spent", b3.decode())
         self.assertEqual(len(FakeLlm.requests), 2)
         self.assertEqual(FakeLlm.requests[0].model, "fake-model")
@@ -360,6 +392,68 @@ class HandleModelTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (status, json.loads(out)["data"][0]["id"]), (200, "fake-model")
         )
+
+
+class ErrorLlm(BaseLlm):
+    """Fails as the model API does, with the status of its model name."""
+
+    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False) -> AsyncGenerator[LlmResponse, None]:
+        from google.genai import errors
+
+        code = int(self.model.removeprefix("error-"))
+        raise errors.ClientError(code, {"error": {"code": code, "message": f"model said {code}", "status": "X"}})
+        yield  # pragma: no cover
+
+
+@unittest.skipUnless(FAKEACP, "set FAKEACP to the path of fakeacp")
+class ModelErrorTest(unittest.IsolatedAsyncioTestCase):
+    async def status_of(self, llm, before=None, after=None):
+        from google.adk.runners import InMemoryRunner
+
+        from a2a_serve.adk import AcpAgent
+
+        from test_adk_agent import start_fake
+
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        agent = AcpAgent(name="coder", start=lambda key: start_fake(d), session_cwd=d, model=llm, before_model_callback=before, after_model_callback=after)
+        self.addCleanup(agent.close)
+        runner = InMemoryRunner(agent=agent, app_name="test")
+        session = await runner.session_service.create_session(app_name="test", user_id="u")
+        out = []
+
+        def send():
+            for _ in range(500):
+                if session.id in agent.busy_sessions():
+                    break
+                threading.Event().wait(0.01)
+            out.append(agent.handle_model(session.id, "POST", "/v1/chat/completions", json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()))
+
+        t = threading.Thread(target=send)
+        t.start()
+        async for _ in runner.run_async(user_id="u", session_id=session.id, new_message=types.Content(role="user", parts=[types.Part(text="slow 1s")])):
+            pass
+        t.join()
+        return out[0]
+
+    async def test_model_errors(self):
+        for code, want in [(429, 429), (400, 400)]:
+            with self.subTest(code):
+                status, _, body = await self.status_of(ErrorLlm(model=f"error-{code}"))
+                self.assertEqual(status, want)
+                self.assertIn(f"model said {code}", body.decode())
+
+    async def test_before_callback_answer_skips_after(self):
+        after_calls = []
+        status, _, body = await self.status_of(
+            FakeLlm(model="fake-model"),
+            before=lambda ctx, req: LlmResponse(content=types.Content(role="model", parts=[types.Part(text="from the callback")])),
+            after=lambda ctx, resp: after_calls.append(resp),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["choices"][0]["message"]["content"], "from the callback")
+        self.assertEqual(after_calls, [])
 
 
 if __name__ == "__main__":
