@@ -29,6 +29,8 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | --- | --- |
 | A message on the provider's stdin or stdout | 1 MiB |
 | Answer to `describe` or `member` | 30 seconds; `listen` 2 minutes, `peers` 15 seconds, `join` no limit |
+| Health check of a running provider | `describe` every 10 seconds, answered within 5 seconds; reported as not answering after 3 missed answers in a row |
+| Start of a streamed response from an agent on the network | 1 minute, then the call fails as unreachable |
 | Header of a connection from the provider | 4096 bytes, sent within 10 seconds |
 | Connections from the provider waiting for their header | 256 |
 | Exit after the server closes the provider's stdin | 10 seconds, then the server kills it |

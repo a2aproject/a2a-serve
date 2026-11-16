@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -272,7 +273,18 @@ func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 		g.record(ctx, task.ID, task.ContextID)
 		g.after(ctx, task)
 	}
-	return res, err
+	return res, g.unreachable(err)
+}
+
+// unreachable names the agent in an error of a network that doesn't reach
+// it, so that the agent process can tell which call failed.
+func (g *guardedHandler) unreachable(err error) error {
+	for _, target := range []error{network.ErrPeerUnavailable, network.ErrProviderStalled} {
+		if errors.Is(err, target) {
+			return fmt.Errorf("%s: %w", g.agent, target)
+		}
+	}
+	return err
 }
 
 // sendStreamed sends a message that waits for the task to settle as a
@@ -327,7 +339,7 @@ func (g *guardedHandler) stream(ctx context.Context, req *a2a.SendMessageRequest
 				g.record(ctx, last.ID, last.ContextID)
 				recorded = true
 			}
-			if !yield(ev, err) {
+			if !yield(ev, g.unreachable(err)) {
 				break
 			}
 		}

@@ -53,11 +53,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func startLoopnet(t *testing.T, url, agent string, public bool) *external {
+func startLoopnet(t *testing.T, url, agent string, public bool, opts ...ExternalOption) *external {
 	t.Helper()
 	e := NewExternal(ExternalConfig{
 		Name: "loopnet", Binary: loopnet, AgentName: agent, URL: url, StateDir: t.TempDir(), Private: true, Public: public, Logf: t.Logf,
-	}).(*external)
+	}, opts...).(*external)
 	t.Cleanup(func() {
 		if err := e.Close(); err != nil {
 			t.Errorf("external.Close() error = %v", err)
@@ -253,6 +253,119 @@ func TestExternalReportsExit(t *testing.T) {
 	}
 	if h := e.Health(); h.State != HealthDisconnected || h.Fix != "run `a2a-serve restart`" {
 		t.Fatalf("Health() = %+v, want disconnected with the restart fix", h)
+	}
+}
+
+func waitForHealth(t *testing.T, e *external, what string, ok func(Health) bool) Health {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		h := e.Health()
+		if ok(h) {
+			return h
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Health() = %+v, want %s", h, what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func freeze(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func thaw(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExternalReportsProviderThatStopsAnswering(t *testing.T) {
+	t.Parallel()
+	dir := testutil.ShortTempDir(t)
+	frozen := filepath.Join(dir, "frozen")
+	e := startLoopnet(t, "loopnet://"+dir+"/net?freeze="+frozen, "coder", false, WithPing(10*time.Millisecond, 200*time.Millisecond))
+	if !e.Health().OK() {
+		t.Fatalf("Health() = %+v, want OK", e.Health())
+	}
+
+	freeze(t, frozen)
+	h := waitForHealth(t, e, "disconnected", func(h Health) bool { return !h.OK() })
+	want := Health{State: HealthDisconnected, Problem: "the network provider stopped answering", Fix: "run `a2a-serve restart`"}
+	if diff := cmp.Diff(want, h); diff != "" {
+		t.Fatalf("Health() of a frozen provider wrong result (-want +got) diff = %s", diff)
+	}
+
+	thaw(t, frozen)
+	waitForHealth(t, e, "OK once the provider answers again", Health.OK)
+}
+
+func TestExternalKeepsReportedHealthWhenProviderAnswersAgain(t *testing.T) {
+	t.Parallel()
+	dir := testutil.ShortTempDir(t)
+	frozen := filepath.Join(dir, "frozen")
+	e := startLoopnet(t, "loopnet://"+dir+"/net?health=disconnected&freeze="+frozen, "coder", false, WithPing(10*time.Millisecond, 200*time.Millisecond))
+	reported := Health{State: HealthDisconnected, Problem: "loopnet reports disconnected"}
+	waitForHealth(t, e, "what the provider reported", func(h Health) bool { return h == reported })
+
+	freeze(t, frozen)
+	waitForHealth(t, e, "the frozen provider", func(h Health) bool { return h.Problem == "the network provider stopped answering" })
+	thaw(t, frozen)
+	waitForHealth(t, e, "what the provider reported", func(h Health) bool { return h == reported })
+}
+
+func TestExternalFailsStreamToPeerThatDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		frozen string
+	}{
+		{name: "provider of the caller", frozen: "reviewer"},
+		{name: "provider of the agent called", frozen: "coder"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := testutil.ShortTempDir(t)
+			frozen := filepath.Join(dir, "frozen")
+			url := func(agent string) string {
+				if agent == tc.frozen {
+					return "loopnet://" + dir + "/net?freeze=" + frozen
+				}
+				return "loopnet://" + dir + "/net"
+			}
+			coder := startLoopnet(t, url("coder"), "coder", false)
+			reviewer := startLoopnet(t, url("reviewer"), "reviewer", false, WithStreamStart(time.Second))
+			serveWhoAmI(t, coder)
+			serveWhoAmI(t, reviewer)
+			c := &http.Client{Transport: reviewer.HTTPClient().Transport, Timeout: 10 * time.Second}
+			stream := func() error {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://loopnet.local/coder/whoami", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Accept", "text/event-stream, application/json")
+				resp, err := c.Do(req)
+				if err != nil {
+					return err
+				}
+				return resp.Body.Close()
+			}
+
+			freeze(t, frozen)
+			if err := stream(); !errors.Is(err, ErrPeerUnavailable) {
+				t.Fatalf("stream through a frozen provider error = %v, want %v", err, ErrPeerUnavailable)
+			}
+			thaw(t, frozen)
+			if err := stream(); err != nil {
+				t.Fatalf("stream once the provider answers again error = %v", err)
+			}
+		})
 	}
 }
 
