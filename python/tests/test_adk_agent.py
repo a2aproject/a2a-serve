@@ -148,6 +148,18 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.texts(rejected), ["Push denied."])
         self.assertEqual(self.texts(after), ["Hello from fakeacp."])
 
+    async def test_failure_keeps_streamed_text(self):
+        _, runner = self.agent()
+        session = await self.session(runner)
+
+        got = await self.turn(runner, session, "crash")
+        after = await self.turn(runner, session, "hello")
+
+        self.assertEqual(self.texts(got), ["about to crash"])
+        self.assertEqual([ev.error_code for ev in got], ["ACP_TASK_FAILED"])
+        self.assertIn("exited", got[0].error_message)
+        self.assertEqual(self.texts(after), ["Hello from fakeacp."])
+
     async def test_streaming_modes(self):
         from google.adk.agents.run_config import RunConfig, StreamingMode
 

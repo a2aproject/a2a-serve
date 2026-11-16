@@ -420,7 +420,7 @@ class AcpAgent(BaseAgent):
                 kind, item, done = await run.queue.get()
                 if kind == "end":
                     if item is not None:
-                        yield self._event(ctx, error=str(item))
+                        yield self._event(ctx, text="".join(reply), error=str(item))
                     return
                 if kind == "tool":
                     yield item
@@ -475,7 +475,7 @@ class AcpAgent(BaseAgent):
                 self._event(ctx, text=text, metadata={"acp_input_required": task_id})
             ]
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
-            return [self._event(ctx, error=message or state)]
+            return [self._event(ctx, text="".join(reply), error=message or state)]
         # A question carries its tool call too, so tool updates come after it.
         for p in parts:
             data = p.get("data")
