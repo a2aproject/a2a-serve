@@ -258,7 +258,7 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 		return ctx, nil, err
 	}
 	if msg, ok := req.Payload.(*a2a.SendMessageRequest); ok && msg.Message != nil && msg.Message.TaskID != "" {
-		return ctx, nil, c.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID)
+		return ctx, nil, c.tasks.CheckNotFailed(ctx, msg.Message.TaskID)
 	}
 	return ctx, nil, nil
 }

@@ -502,8 +502,8 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
-	if err == nil || !strings.Contains(err.Error(), "terminal state") {
-		t.Fatalf("SendMessage() answering the failed task error = %v, want a terminal state error", err)
+	if want := "failed; send the message again without the task ID"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("SendMessage() answering the failed task error = %v, want %q", err, want)
 	}
 }
 

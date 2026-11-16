@@ -236,7 +236,7 @@ func TestFailUnfinished(t *testing.T) {
 	}
 }
 
-func TestCheckNotInterrupted(t *testing.T) {
+func TestCheckNotFailed(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ts := s.Tasks("", testViewer)
@@ -250,13 +250,20 @@ func TestCheckNotInterrupted(t *testing.T) {
 	if _, err := ts.FailUnfinished(context.Background(), "restarted", keep); err != nil {
 		t.Fatalf("FailUnfinished() error = %v", err)
 	}
+	crashed := newTask("crashed", "c")
+	crashed.Status = a2a.TaskStatus{State: a2a.TaskStateFailed, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("the agent stopped unexpectedly"))}
+	if _, err := ts.Create(owner, crashed); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
-		name    string
-		user    context.Context
-		id      a2a.TaskID
-		wantErr error
+		name     string
+		user     context.Context
+		id       a2a.TaskID
+		wantErr  error
+		wantText string
 	}{
-		{name: "interrupted task", user: owner, id: "interrupted", wantErr: a2a.ErrUnsupportedOperation},
+		{name: "interrupted task", user: owner, id: "interrupted", wantErr: a2a.ErrUnsupportedOperation, wantText: "task interrupted failed because the server stopped or restarted before it finished; send the message again without the task ID"},
+		{name: "failed task", user: owner, id: "crashed", wantErr: a2a.ErrUnsupportedOperation, wantText: "task crashed failed; send the message again without the task ID"},
 		{name: "running task", user: owner, id: "running"},
 		{name: "unknown task", user: owner, id: "nope"},
 		{name: "interrupted task of someone else", user: asUser("bob"), id: "interrupted"},
@@ -264,12 +271,12 @@ func TestCheckNotInterrupted(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := ts.CheckNotInterrupted(tc.user, tc.id)
+			err := ts.CheckNotFailed(tc.user, tc.id)
 			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("TaskStore.CheckNotInterrupted() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("TaskStore.CheckNotFailed() error = %v, want %v", err, tc.wantErr)
 			}
-			if tc.wantErr != nil && !strings.Contains(err.Error(), "stopped or restarted") {
-				t.Fatalf("TaskStore.CheckNotInterrupted() error = %v, want it to name the restart", err)
+			if tc.wantErr != nil && !strings.Contains(err.Error(), tc.wantText) {
+				t.Fatalf("TaskStore.CheckNotFailed() error = %v, want %q", err, tc.wantText)
 			}
 		})
 	}
