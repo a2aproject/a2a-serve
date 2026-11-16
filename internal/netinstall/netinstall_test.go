@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -375,5 +376,25 @@ func TestBundledNextToTheSymlink(t *testing.T) {
 	got := inst.Bundled(WellKnown[0])
 	if want := filepath.Join(filepath.Dir(inst.Link), "netprovider-agentmesh"); got[0] != want {
 		t.Fatalf("Installer.Bundled() = %v, want %s first", got, want)
+	}
+}
+
+func TestTrustOfAProviderThatDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "provider")
+	testutil.WriteExecutable(t, src, []byte("#!/bin/sh\ncat >/dev/null\n"))
+	inst := &Installer{Dir: t.TempDir(), Executable: filepath.Join(t.TempDir(), "a2a-serve"), GOOS: "linux", GOARCH: "amd64", DescribeTimeout: 100 * time.Millisecond}
+	c, err := inst.Fetch(t.Context(), src)
+	if err != nil {
+		t.Fatalf("Installer.Fetch() error = %v", err)
+	}
+
+	_, _, err = inst.Trust(t.Context(), c)
+
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Installer.Trust() error = %v, want an error that isn't a deadline of the command", err)
+	}
+	if want := "didn't say what it is"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("Installer.Trust() error = %v, want %q", err, want)
 	}
 }

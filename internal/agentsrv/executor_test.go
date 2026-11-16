@@ -502,8 +502,8 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
-	if err == nil || !strings.Contains(err.Error(), "terminal state") {
-		t.Fatalf("SendMessage() answering the failed task error = %v, want a terminal state error", err)
+	if want := "failed; send the message again without the task ID"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("SendMessage() answering the failed task error = %v, want %q", err, want)
 	}
 }
 
@@ -1131,7 +1131,7 @@ func TestExplainFailure(t *testing.T) {
 		},
 		{
 			name: "provider without a key", cfg: &agentdir.Config{Harness: "opencode", Model: "google/gemini-old"}, reported: "model not found: google/gemini-old",
-			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`; the agent reported: model not found: google/gemini-old",
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`; the agent reported: model not found: google/gemini-old",
 		},
 		{name: "agent that takes its model in its command", cfg: &agentdir.Config{Harness: "acp"}, reported: "model not found: x", want: "model not found: x"},
 		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},

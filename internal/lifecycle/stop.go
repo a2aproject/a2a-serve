@@ -130,6 +130,16 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	return res, waitStopped(ctx, dir, cmp.Or(opts.KillAfter, killAfter), kill)
 }
 
+// Unanswered returns err, the error of a call to the server of dir, with
+// a hint at `a2a-serve stop` when the call timed out while a server holds
+// dir: that server is stuck, and stop ends it by its PID.
+func Unanswered(dir agentdir.Dir, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) || !serverRunning(dir) {
+		return err
+	}
+	return agenterr.WithHint(err, agenterr.HintStopUnanswered, "")
+}
+
 // waitStopped waits until the server releases the lock of the agent
 // directory, which it holds until everything is shut down. kill runs once
 // the server is still running after killAfter. A missing lock file means

@@ -212,7 +212,7 @@ func TestListCutsLongParts(t *testing.T) {
 		t.Fatalf("CutLists().List() error = %v", err)
 	}
 
-	cutText := a2a.NewTextPart(long[:limit] + fmt.Sprintf("\n[cut: %d of %d bytes shown; get task t1 for the whole text]", limit, len(long)))
+	cutText := a2a.NewTextPart(long[:limit] + fmt.Sprintf("\n[cut: %d of %d bytes shown; run `a2a task get -a <agent-url> t1` for the whole text]", limit, len(long)))
 	cutQuestion := &a2a.Message{ID: question.ID, Role: a2a.MessageRoleAgent, TaskID: "t1", ContextID: "c1", Parts: a2a.ContentParts{cutText}}
 	want := &a2a.Task{
 		ID: "t1", ContextID: "c1",
@@ -220,9 +220,9 @@ func TestListCutsLongParts(t *testing.T) {
 		History: []*a2a.Message{
 			{ID: task.History[0].ID, Role: a2a.MessageRoleUser, TaskID: "t1", ContextID: "c1", Parts: a2a.ContentParts{
 				cutText,
-				a2a.NewTextPart(fmt.Sprintf("[file of %d bytes left out of the list; get task t1 for it]", len(blob))),
+				a2a.NewTextPart(fmt.Sprintf("[file of %d bytes left out of the list; run `a2a task get -a <agent-url> t1` for it]", len(blob))),
 				a2a.NewRawPart([]byte("small")),
-				a2a.NewTextPart(fmt.Sprintf("[data of %d bytes left out of the list; get task t1 for it]", len(long)+8)),
+				a2a.NewTextPart(fmt.Sprintf("[data of %d bytes left out of the list; run `a2a task get -a <agent-url> t1` for it]", len(long)+8)),
 			}},
 			cutQuestion,
 			answer,

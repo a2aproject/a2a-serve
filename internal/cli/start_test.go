@@ -73,3 +73,56 @@ func TestStartServiceWhileDetachedHintStopsTheAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizedNameIsNoted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "config set", args: []string{"config", "set", "--name", "日本語"}},
+		{name: "start of a running agent", args: []string{"start", "opencode", "--name", "日本語"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			if err := d.Init(); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			serveFakeControl(t, d)
+
+			out, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if err != nil {
+				t.Fatalf("a2a-serve %s error = %v", strings.Join(tc.args, " "), err)
+			}
+
+			if want := "! " + agentdir.NameNote("日本語") + "\n"; !strings.Contains(out, want) {
+				t.Fatalf("a2a-serve %s output = %q, want %q", strings.Join(tc.args, " "), out, want)
+			}
+		})
+	}
+}
+
+func TestStartOfARunningAgentNamesTheRunningAgent(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	serveFakeControl(t, d)
+
+	out, err := runCMD(t, "start", "opencode", "--name", "other", "--dir", d.Root)
+	if err != nil {
+		t.Fatalf("a2a-serve start opencode --name other error = %v", err)
+	}
+
+	if want := "✓ coder is already running; restart to apply name (a2a-serve restart)\n"; !strings.HasSuffix(out, want) {
+		t.Fatalf("a2a-serve start opencode --name other output = %q, want it to end with %q", out, want)
+	}
+}

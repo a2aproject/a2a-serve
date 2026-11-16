@@ -334,3 +334,36 @@ func TestRecipeUpdateFromGit(t *testing.T) {
 		t.Fatalf("a2a-serve recipe update output = %s, want the commits of main", out)
 	}
 }
+
+func TestRecipeUpdateWithoutTerminal(t *testing.T) {
+	t.Parallel()
+	src, target := newRecipeAgent(t, nil)
+
+	out, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", "--dir", target)
+	if err != nil || !strings.Contains(out, "is up to date with "+src) {
+		t.Fatalf("a2a-serve recipe of an up-to-date agent = %q, %v, want it up to date", out, err)
+	}
+
+	writeTestFile(t, src, "AGENTS.md", "instructions v2")
+	if _, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", "--dir", target); err == nil || !strings.Contains(err.Error(), "without a terminal, pass --yes or --dry-run") {
+		t.Fatalf("a2a-serve recipe of an agent with changes error = %v, want --yes asked for", err)
+	}
+	if got := readTestFile(t, target, "AGENTS.md"); got == "instructions v2" {
+		t.Fatalf("a2a-serve recipe without --yes updated AGENTS.md")
+	}
+}
+
+func TestRecipeWithoutSourceOutsideAnAgent(t *testing.T) {
+	t.Parallel()
+	empty := t.TempDir()
+
+	_, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", "--dir", empty)
+
+	want := empty + " has no .a2a/config.yaml; create an agent from a recipe with `a2a-serve recipe <source> --dir <new directory>`"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("a2a-serve recipe --dir <empty> error = %v, want %q", err, want)
+	}
+	if !errors.Is(err, agentdir.ErrNotFound) {
+		t.Fatalf("a2a-serve recipe --dir <empty> error = %v, want it to match agentdir.ErrNotFound", err)
+	}
+}

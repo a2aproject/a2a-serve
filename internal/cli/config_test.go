@@ -826,6 +826,20 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 	}
 }
 
+func TestPrintConfigResultRemovedKeys(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+
+	if err := printConfigResult(cfg, &agentctl.Result{Name: "coder", Path: "/a/.a2a/config.yaml", RemovedKeys: []string{"sandbx"}}, false); err != nil {
+		t.Fatalf("printConfigResult() error = %v", err)
+	}
+
+	if want := "  sandbx       removed (unknown key)\n✓ saved /a/.a2a/config.yaml\n"; buf.String() != want {
+		t.Fatalf("printConfigResult() = %q, want %q", buf.String(), want)
+	}
+}
+
 func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 	t.Parallel()
 	access := &controlapi.Access{Summary: []string{"anyone"}, Sandbox: []string{"guests: read-only workspace, no secrets"}, GuestNote: "guests' agent gets no key"}

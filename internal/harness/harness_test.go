@@ -155,12 +155,12 @@ func TestMissingKey(t *testing.T) {
 		{
 			name: "google model without a key",
 			cfg:  agentdir.Config{Harness: "opencode", Model: "google/gemini-3-flash-preview", Secrets: []string{"GITHUB_TOKEN"}},
-			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`",
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`",
 		},
 		{
 			name: "openrouter model without a key",
 			cfg:  agentdir.Config{Harness: "opencode", Model: "openrouter/~google/gemini-flash-latest"},
-			want: "no key for provider openrouter: set one with `a2a-serve config set --secret OPENROUTER_API_KEY`",
+			want: "no key for provider openrouter: set one with `a2a-serve config set --secret OPENROUTER_API_KEY --restart`",
 		},
 		{name: "google model with another google key", cfg: agentdir.Config{Harness: "opencode", Model: "google/gemini-3-flash-preview", Secrets: []string{"GEMINI_API_KEY"}}},
 		{name: "key in env", cfg: agentdir.Config{Harness: "opencode", Model: "anthropic/claude-sonnet-4-5", Env: []string{"ANTHROPIC_API_KEY=sk"}}},

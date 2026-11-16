@@ -500,6 +500,8 @@ func TestUnsetEntriesOfScalar(t *testing.T) {
 		{name: "entry", setting: "memory", entries: []string{"1g"}, wantErr: "memory is not a list: run `a2a-serve config unset memory` to reset it"},
 		{name: "settings", setting: "memory", entries: []string{"cpus"}, wantErr: "memory is not a list, and unset takes one setting: run `a2a-serve config unset memory` and `a2a-serve config unset cpus`"},
 		{name: "secret settings", setting: "tailscale-authkey", entries: []string{"port", "cpus"}, wantErr: "tailscale-authkey takes no entries, and unset takes one setting: run `a2a-serve config unset tailscale-authkey`, `a2a-serve config unset port` and `a2a-serve config unset cpus`"},
+		{name: "list settings", setting: "allow-tools", entries: []string{"deny-tools"}, wantErr: "allow-tools has no entry deny-tools, and unset takes one setting: run `a2a-serve config unset allow-tools` and `a2a-serve config unset deny-tools`"},
+		{name: "list entry and setting", setting: "allow-tools", entries: []string{"bash", "deny-tools"}, wantErr: "allow-tools bash is not set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

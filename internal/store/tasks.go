@@ -778,11 +778,11 @@ func Interrupted(task *a2a.Task) bool {
 	return v
 }
 
-// CheckNotInterrupted refuses a message to a task that failed because the
-// server stopped or restarted, and says why, since a2a-go reports only that
-// the task is in a terminal state. Tasks the caller can't see pass, for
-// the handler to report.
-func (ts *TaskStore) CheckNotInterrupted(ctx context.Context, id a2a.TaskID) error {
+// CheckNotFailed refuses a message to a failed task, such as one whose
+// agent stopped or whose server restarted, and says what to do, since
+// a2a-go reports only that the task is in a terminal state. Tasks the
+// caller can't see pass, for the handler to report.
+func (ts *TaskStore) CheckNotFailed(ctx context.Context, id a2a.TaskID) error {
 	stored, err := ts.Header(ctx, id)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return nil
@@ -790,10 +790,14 @@ func (ts *TaskStore) CheckNotInterrupted(ctx context.Context, id a2a.TaskID) err
 	if err != nil {
 		return fmt.Errorf("checking task %s: %w", id, err)
 	}
-	if !Interrupted(stored.Task) {
+	if stored.Task.Status.State != a2a.TaskStateFailed {
 		return nil
 	}
-	return fmt.Errorf("%w: task %s failed because the server stopped or restarted before it finished; send the message again without the task ID", a2a.ErrUnsupportedOperation, id)
+	why := ""
+	if Interrupted(stored.Task) {
+		why = " because the server stopped or restarted before it finished"
+	}
+	return fmt.Errorf("%w: task %s failed%s; send the message again without the task ID", a2a.ErrUnsupportedOperation, id, why)
 }
 
 // terminalStates returns the states a task never leaves, as arguments for the

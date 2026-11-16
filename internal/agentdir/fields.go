@@ -1014,6 +1014,9 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 		for _, arg := range entries {
 			k := f.key(arg)
 			i := slices.IndexFunc(cur, func(e string) bool { return f.key(e) == k })
+			if i < 0 && allSettings(entries) {
+				return nil, unsetEntriesError(setting+" has no entry "+arg, "", setting, entries)
+			}
 			if i < 0 {
 				return nil, fmt.Errorf("%s %s is not set", setting, arg)
 			}
@@ -1146,19 +1149,23 @@ func CopyLive(dst, src *Config) {
 	dst.Policy.Sandbox = loadedRules(dst.Policy.Sandbox, dst.Secrets)
 }
 
-// unsetEntriesError refuses the entries of setting, which takes none, for
-// the reason why. When every entry is a setting too, it names the command
-// that resets each.
+// unsetEntriesError refuses the entries of setting for the reason why.
+// When every entry is a setting too, it names the command that resets each.
 func unsetEntriesError(why, purpose, setting string, entries []string) error {
 	cmds := []string{"`a2a-serve config unset " + setting + "`"}
+	if !allSettings(entries) {
+		return fmt.Errorf("%s: run %s%s", why, cmds[0], purpose)
+	}
 	for _, e := range entries {
-		if CheckUnset(e) != nil {
-			return fmt.Errorf("%s: run %s%s", why, cmds[0], purpose)
-		}
 		cmds = append(cmds, "`a2a-serve config unset "+e+"`")
 	}
 	last := len(cmds) - 1
 	return fmt.Errorf("%s, and unset takes one setting: run %s and %s", why, strings.Join(cmds[:last], ", "), cmds[last])
+}
+
+// allSettings reports whether every entry is a setting `config unset` resets.
+func allSettings(entries []string) bool {
+	return !slices.ContainsFunc(entries, func(e string) bool { return CheckUnset(e) != nil })
 }
 
 // label names the flag of f in errors.

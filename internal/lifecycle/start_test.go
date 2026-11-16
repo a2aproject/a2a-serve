@@ -229,20 +229,40 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 	}
 }
 
-func TestStartDetachedWhileRunning(t *testing.T) {
+func TestStartWhileRunningNamesTheRunningAgent(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("unix sockets are not used on this platform")
 	}
-	dir := newAgent(t)
-	serveControl(t, dir, &fakeControl{})
+	for name, mode := range map[string]Mode{"foreground": Foreground, "detached": Detached} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if err := dir.SaveConfig(&agentdir.Config{Name: "other", Harness: "opencode"}); err != nil {
+				t.Fatalf("SaveConfig() error = %v", err)
+			}
+			if mode == Foreground {
+				release, err := dir.Lock()
+				if err != nil {
+					t.Fatalf("Lock() error = %v", err)
+				}
+				t.Cleanup(func() {
+					if err := release(); err != nil {
+						t.Errorf("release() error = %v", err)
+					}
+				})
+			}
+			serveControl(t, dir, &fakeControl{})
 
-	var out strings.Builder
-	if err := Start(context.Background(), dir, StartOptions{Mode: Detached, Quiet: true, Out: &out}); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
-		t.Fatalf("Start() output = %q, want %q", out.String(), want)
+			var out strings.Builder
+			if err := Start(t.Context(), dir, StartOptions{Mode: mode, Quiet: true, Out: &out}); err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+
+			if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+				t.Fatalf("Start() output = %q, want %q", out.String(), want)
+			}
+		})
 	}
 }
 
@@ -348,4 +368,30 @@ func exitedProcess() <-chan struct{} {
 	c := make(chan struct{})
 	close(c)
 	return c
+}
+
+func TestStartForegroundWhileRunning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	release, err := dir.Lock()
+	if err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("release() error = %v", err)
+		}
+	})
+	serveControl(t, dir, &fakeControl{})
+
+	var out strings.Builder
+	if err := Start(t.Context(), dir, StartOptions{Mode: Foreground, Quiet: true, Out: &out}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+		t.Fatalf("Start() output = %q, want %q", out.String(), want)
+	}
 }

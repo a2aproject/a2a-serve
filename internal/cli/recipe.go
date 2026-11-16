@@ -113,8 +113,9 @@ type recipeRun struct {
 	dir         string
 	interactive bool
 	dryRun      bool
-	// unconfirmed is a run that can neither ask nor change anything, which
-	// fails once a local source is read, and before a git source is fetched.
+	// unconfirmed is a run that can neither ask nor change anything. It
+	// fails once a local source is read, or before a git source of a new
+	// agent is fetched. An update that changes nothing succeeds.
 	unconfirmed bool
 	getenv      func(string) string
 	prompter    *wizard.Prompter
@@ -140,14 +141,15 @@ func (r *recipeRun) run(ctx context.Context) error {
 	)
 	if !r.hasSource {
 		if d, err = r.sf.agentDir(); err != nil {
-			return err
+			return noRecipeAgent(err, r.dir)
 		}
 		if record, err = readRecord(d); err != nil {
 			return err
 		}
 		r.src = record.Source()
 	}
-	if r.unconfirmed && !r.src.Local() {
+	// An update fetches its recipe first, to tell whether anything changes.
+	if r.unconfirmed && record == nil && !r.src.Local() {
 		return unconfirmedError()
 	}
 	work, err := os.MkdirTemp("", "a2a-recipe-*")
@@ -162,9 +164,6 @@ func (r *recipeRun) run(ctx context.Context) error {
 	fetched, rec, err := r.fetch(ctx, work)
 	if err != nil {
 		return err
-	}
-	if r.unconfirmed {
-		return unconfirmedError()
 	}
 	if record != nil {
 		return r.update(ctx, d, record, fetched, rec)
@@ -203,6 +202,23 @@ func readRecord(d agentdir.Dir) (*recipe.Record, error) {
 	return record, err
 }
 
+// noRecipeAgent words err, the error of finding the agent to update, for
+// a run without a source: where no agent is found, it says how to create
+// one from a recipe.
+func noRecipeAgent(err error, dir string) error {
+	if dir == "" {
+		if err != agentdir.ErrNotFound {
+			return err
+		}
+		return agentdir.NotFoundWith("no .a2a directory found here or in any parent directory; create an agent from a recipe with `a2a-serve recipe <source>`, or pass --dir")
+	}
+	d, openErr := agentdir.Open(dir)
+	if !errors.Is(err, agentdir.ErrNotFound) || openErr != nil || d.HasRelay() || d.HasServerState() {
+		return err
+	}
+	return agentdir.NotFoundWith(d.Root + " has no .a2a/config.yaml; create an agent from a recipe with `a2a-serve recipe <source> --dir <new directory>`")
+}
+
 // sameSource reports whether a and b are the same directory of the same
 // repository, at any ref.
 func sameSource(a, b recipe.Source) bool {
@@ -211,6 +227,9 @@ func sameSource(a, b recipe.Source) bool {
 
 // create creates a new agent from the fetched recipe rec.
 func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *recipe.Recipe) (err error) {
+	if r.unconfirmed {
+		return unconfirmedError()
+	}
 	parent, err := r.parent()
 	if err != nil {
 		return err
@@ -218,7 +237,8 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	if outer, err := agentdir.FindEnclosing(parent); err == nil {
 		return clierr.Usage(fmt.Sprintf("%s is inside the agent in %s, which could read the new agent's secrets; create it elsewhere or pass --dir", parent, outer.Root))
 	}
-	name := agentdir.SanitizeName(firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name()))
+	given := firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name())
+	name := agentdir.SanitizeName(given)
 	target := r.dir
 	if target == "" {
 		target = filepath.Join(parent, name)
@@ -249,6 +269,11 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	preview, err := r.preview(d, rec, base)
 	if err != nil {
 		return err
+	}
+	if note := agentdir.NameNote(given); note != "" {
+		if err := r.printf("! %s\n", note); err != nil {
+			return err
+		}
 	}
 	if err := r.printReview(name, fetched, rec, agentdir.Dir{Root: target}, preview); err != nil {
 		return err

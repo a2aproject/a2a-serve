@@ -16,10 +16,12 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
@@ -50,5 +52,28 @@ func TestPrintJoinedAs(t *testing.T) {
 				t.Fatalf("printJoinedAs() wrong output (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestCheckNotJoinedNamesWhatReplaceKeeps(t *testing.T) {
+	t.Parallel()
+	store := credstore.At(t.TempDir())
+	if err := store.Put(credstore.Credential{URL: "http://x", Token: "t", Agent: "coder", Principal: "anna"}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	err := checkNotJoined(store, "http://x")
+
+	var ce *clierr.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("checkNotJoined() error = %v, want a usage error", err)
+	}
+	want := "you already joined coder as anna; joining again replaces that token in " + store.Path + ", and with a code for another pairing you lose access to the conversations and tasks of anna"
+	if ce.Message != want {
+		t.Fatalf("checkNotJoined() message = %q, want %q", ce.Message, want)
+	}
+	wantHint := "pass --replace to join anyway; a code from `a2a-serve pair set --rotate` keeps the conversations and tasks, and a code for a webhook node replaces nothing"
+	if ce.Hint != wantHint {
+		t.Fatalf("checkNotJoined() hint = %q, want %q", ce.Hint, wantHint)
 	}
 }

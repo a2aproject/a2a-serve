@@ -51,6 +51,8 @@ type SecretChange struct {
 
 // Result describes a change of settings.
 type Result struct {
+	// Name is the agent's name: the running agent's while it runs, else
+	// the saved one.
 	Name    string            `json:"name"`
 	Path    string            `json:"path"`
 	Changes []agentdir.Change `json:"changes"`
@@ -67,10 +69,15 @@ type Result struct {
 	Access *controlapi.Access `json:"access,omitempty"`
 	// Warnings are problems of the saved settings that don't stop the agent.
 	Warnings []string `json:"warnings,omitempty"`
+	// RemovedKeys are the keys an edit of config.yaml removed that the
+	// server ignored, by their dotted path.
+	RemovedKeys []string `json:"removedKeys,omitempty"`
 }
 
 // Empty reports whether nothing changed.
-func (r *Result) Empty() bool { return len(r.Changes) == 0 && len(r.Secrets) == 0 }
+func (r *Result) Empty() bool {
+	return len(r.Changes) == 0 && len(r.Secrets) == 0 && len(r.RemovedKeys) == 0
+}
 
 // Mutation changes cfg and returns the secrets to store and the names of
 // the secrets to delete.
@@ -83,11 +90,21 @@ type Step func(cfg *agentdir.Config) error
 
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
-	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+	res, err := Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		old := cfg.Clone()
 		store, err := s.Apply(cfg, d)
 		return store, agentdir.DroppedSecrets(old, cfg), err
 	}, dryRun)
+	return withNameNote(res, s.Name), err
+}
+
+// withNameNote adds a warning to res, if set, when the name given was
+// normalized in a way users may not expect.
+func withNameNote(res *Result, given string) *Result {
+	if note := agentdir.NameNote(given); res != nil && note != "" {
+		res.Warnings = append(res.Warnings, note)
+	}
+	return res
 }
 
 // Unset removes entries of a list setting, or resets a setting.
@@ -118,13 +135,14 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
 	}
+	given := next.Name
 	if name := agentdir.SanitizeName(next.Name); next.Name != "" && name != next.Name {
 		next.Name = name
 		if data, err = agentdir.MergeConfig(data, next); err != nil {
 			return nil, err
 		}
 	}
-	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+	res, err := apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		if agentdir.MessengersDiffer(cfg, next) {
 			return nil, nil, errMessengers
 		}
@@ -135,6 +153,7 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 		*cfg = *next
 		return store, nil, nil
 	}, nil, dryRun, &rawEdit{data: data, base: base})
+	return withNameNote(res, given), err
 }
 
 // rawEdit is a hand edit of config.yaml: data is saved as it is if the
@@ -226,6 +245,10 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		if release != nil {
 			defer func() { err = errors.Join(err, release()) }()
 		}
+	}
+	// A new name waits for a restart, so the running agent has the old one.
+	if res.Running && old.Name != "" {
+		res.Name = old.Name
 	}
 	if res.Running {
 		if err := applyMessengers(ctx, client, next, store, res); err != nil {
@@ -415,62 +438,75 @@ func applyMessengers(ctx context.Context, client *controlapi.Client, next *agent
 // reload applies the other live settings, and lists the rest as waiting
 // for a restart.
 func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Config, res *Result) error {
-	var live []string
+	var live, restart []string
 	for _, c := range res.Changes {
 		switch {
 		case messengerOf(c.Setting) != "":
 		case c.Live:
 			live = append(live, c.Setting)
 		default:
-			res.Restart = appendNew(res.Restart, c.Setting)
+			restart = append(restart, c.Setting)
 		}
 	}
+	var secret bool
 	for _, s := range res.Secrets {
-		if slices.Contains(next.Secrets, s.Name) || s.Name == agentdir.SecretTailscaleKey {
-			res.Restart = appendNew(res.Restart, "secret")
-		}
+		secret = secret || slices.Contains(next.Secrets, s.Name) || s.Name == agentdir.SecretTailscaleKey
 	}
-	if len(live) == 0 {
-		return nil
-	}
-	_, err := client.ReloadConfig(ctx)
-	if errors.Is(err, controlapi.ErrUnsupported) {
-		res.Restart = appendNew(res.Restart, live...)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	// The server can keep part of a live setting waiting, such as the grant
-	// of a secret it loads at restart. When it can't say, the sandbox
-	// settings count as waiting. Opening the public URL to anyone waits for
-	// a public URL that waits.
-	waiting := map[string]bool{}
-	if slices.ContainsFunc(live, func(s string) bool { return agentdir.IsSandboxSetting(s) || s == settingPublicAllowIncoming }) {
-		running, err := client.Config(ctx)
+	if len(live) > 0 {
+		_, err := client.ReloadConfig(ctx)
 		switch {
+		case errors.Is(err, controlapi.ErrUnsupported):
+			restart = append(restart, live...)
+			live = nil
 		case err != nil:
-			slog.Warn("reading the config of the running agent", "error", err)
-			for _, s := range live {
-				waiting[s] = agentdir.IsSandboxSetting(s)
-			}
-		default:
-			for _, c := range agentdir.Diff(running, next) {
-				waiting[c.Setting] = true
-			}
-			if waiting["public"] && next.Policy.PublicAllowIncoming == agentdir.AccessAnyone {
-				waiting[settingPublicAllowIncoming] = true
-			}
+			return err
 		}
+	}
+	// A change waits only while it differs from what the agent runs: a
+	// change back to the running value waits for nothing. The server can
+	// also keep part of a live setting waiting, such as the grant of a
+	// secret it loads at restart. When it can't say, the changes count as
+	// waiting, and of the live ones the sandbox settings. Opening the public
+	// URL to anyone waits for a public URL that waits.
+	checkLive := slices.ContainsFunc(live, func(s string) bool { return agentdir.IsSandboxSetting(s) || s == settingPublicAllowIncoming })
+	var waiting map[string]bool
+	if len(restart) > 0 || checkLive {
+		waiting = runningDiff(ctx, client, next)
+	}
+	for _, s := range restart {
+		if waiting == nil || waiting[s] {
+			res.Restart = appendNew(res.Restart, s)
+		}
+	}
+	if secret {
+		res.Restart = appendNew(res.Restart, "secret")
 	}
 	for _, s := range live {
-		if waiting[s] {
+		if checkLive && (waiting == nil && agentdir.IsSandboxSetting(s) || waiting[s]) {
 			res.Restart = appendNew(res.Restart, s)
 		} else {
 			res.Applied = appendNew(res.Applied, s)
 		}
 	}
 	return nil
+}
+
+// runningDiff returns the settings in which next differs from the config
+// of the running agent, or nil if the agent can't say.
+func runningDiff(ctx context.Context, client *controlapi.Client, next *agentdir.Config) map[string]bool {
+	running, err := client.Config(ctx)
+	if err != nil {
+		slog.Warn("reading the config of the running agent", "error", err)
+		return nil
+	}
+	out := map[string]bool{}
+	for _, c := range agentdir.Diff(running, next) {
+		out[c.Setting] = true
+	}
+	if out["public"] && next.Policy.PublicAllowIncoming == agentdir.AccessAnyone {
+		out[settingPublicAllowIncoming] = true
+	}
+	return out
 }
 
 // settingPublicAllowIncoming says who may call on the public URL.

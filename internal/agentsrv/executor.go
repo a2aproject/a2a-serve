@@ -1083,7 +1083,7 @@ func (i *callerInterceptor) admit(ctx context.Context, callCtx *a2asrv.CallConte
 		if errors.Is(headerErr, a2a.ErrTaskNotFound) {
 			return ctx, nil, headerErr
 		}
-		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
+		if err := i.tasks.CheckNotFailed(ctx, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
