@@ -120,7 +120,7 @@ func CutPart(task a2a.TaskID, p *a2a.Part, limit int) *a2a.Part {
 			keep--
 		}
 		cut := *p
-		cut.Content = c[:keep] + a2a.Text(fmt.Sprintf("\n[cut: %d of %d bytes shown; get task %s for the whole text]", keep, len(c), task))
+		cut.Content = c[:keep] + a2a.Text(fmt.Sprintf("\n[cut: %d of %d bytes shown; run `a2a task get %s` for the whole text]", keep, len(c), task))
 		return &cut
 	case a2a.Raw:
 		if len(c) <= limit {
@@ -132,7 +132,7 @@ func CutPart(task a2a.TaskID, p *a2a.Part, limit int) *a2a.Part {
 		if err != nil || len(data) <= limit {
 			return p
 		}
-		return omitted(p, fmt.Sprintf("[data of %d bytes left out of the list; get task %s for it]", len(data), task))
+		return omitted(p, fmt.Sprintf("[data of %d bytes left out of the list; run `a2a task get %s` for it]", len(data), task))
 	}
 	return p
 }
@@ -140,7 +140,7 @@ func CutPart(task a2a.TaskID, p *a2a.Part, limit int) *a2a.Part {
 // OmitFile returns a copy of p, a file part of size bytes, with a note in
 // place of the file.
 func OmitFile(task a2a.TaskID, p *a2a.Part, size int) *a2a.Part {
-	return omitted(p, fmt.Sprintf("[file of %d bytes left out of the list; get task %s for it]", size, task))
+	return omitted(p, fmt.Sprintf("[file of %d bytes left out of the list; run `a2a task get %s` for it]", size, task))
 }
 
 func omitted(p *a2a.Part, note string) *a2a.Part {
