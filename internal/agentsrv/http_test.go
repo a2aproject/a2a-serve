@@ -723,7 +723,14 @@ func TestOneMemberLeavesRequestsToOtherMembers(t *testing.T) {
 	task := sendAsync(t, anna, userText("stall", "", ""))
 	waitState(t, anna, task.ID, a2a.TaskStateWorking)
 	t.Cleanup(func() {
-		if _, err := anna.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID}); err != nil {
+		// The server frees anna's slots once it sees her streams close,
+		// which can take a moment after the cleanups that close them.
+		var err error
+		waitFor(t, "anna's streams to close", func() bool {
+			_, err = anna.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID})
+			return err == nil || !strings.Contains(err.Error(), httpserver.CallerBusyMessage)
+		})
+		if err != nil {
 			t.Errorf("CancelTask() error = %v", err)
 		}
 	})
