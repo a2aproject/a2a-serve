@@ -265,7 +265,7 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 
 // Register adds the node routes to a listener's mux. members bounds the
 // requests to the mailbox API, which nodes make as members.
-func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request) string, members func(http.Handler) http.Handler) {
+func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request) string, members func(caller string, h http.Handler) http.Handler) {
 	serveNode := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("node")
 		rest := "/" + r.PathValue("rest")
@@ -370,8 +370,8 @@ func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 }
 
 // nodeAPI authenticates a node by its node token, and serves h within
-// members.
-func (n *Host) nodeAPI(base func(*http.Request) string, members func(http.Handler) http.Handler, h func(http.ResponseWriter, *http.Request, string, store.Node)) http.HandlerFunc {
+// members as the node's principal.
+func (n *Host) nodeAPI(base func(*http.Request) string, members func(caller string, h http.Handler) http.Handler, h func(http.ResponseWriter, *http.Request, string, store.Node)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok, _ := auth.BearerToken(r.Header.Get("Authorization"))
 		if _, _, ok := mailboxapi.ParseNodeToken(tok); !ok {
@@ -387,7 +387,7 @@ func (n *Host) nodeAPI(base func(*http.Request) string, members func(http.Handle
 			jsonhttp.Error(w, http.StatusUnauthorized, "invalid node token")
 			return
 		}
-		members(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h(w, r, base(r), node) })).ServeHTTP(w, r)
+		members(auth.NodePrincipal(node.ID), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h(w, r, base(r), node) })).ServeHTTP(w, r)
 	}
 }
 

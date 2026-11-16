@@ -688,6 +688,21 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 	case "markdown":
 		a.chunk(sid, markdownSample)
 		end("end_turn")
+	case "big":
+		n, err := strconv.Atoi(arg)
+		if err != nil {
+			a.chunk(sid, "big error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		// The server handles parts of 1 MiB between tool calls much faster
+		// than one long chunk.
+		for i, part := 0, strings.Repeat("x", 1<<20); n > 0; i, n = i+1, n-len(part) {
+			id := "t" + strconv.Itoa(i)
+			a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": id, "title": "list files", "kind": "read", "status": "completed"})
+			a.chunk(sid, part[:min(n, len(part))])
+		}
+		end("end_turn")
 	case "line":
 		if lined {
 			a.chunk(sid, "with agents line")

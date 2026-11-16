@@ -19,6 +19,7 @@ package httpserver
 import (
 	"context"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"sync"
@@ -41,6 +42,9 @@ const (
 	// MaxMemberRequests is how many of a server's requests the callers of
 	// the member role may make together once they authenticate.
 	MaxMemberRequests = 512
+	// MaxMemberRequestsPerCaller is how many of those one caller may make,
+	// so that one member leaves the others room.
+	MaxMemberRequestsPerCaller = 32
 	// MaxGuestRequests is how many the callers of the guest role may make.
 	// With the unauthenticated requests, members and guests leave the
 	// owner at least 128 of MaxConcurrent, and guests can't take the
@@ -49,6 +53,8 @@ const (
 
 	// BusyMessage is the error of a request refused for lack of room.
 	BusyMessage = "the server is busy; try again later"
+	// CallerBusyMessage is the error of a request over its caller's share.
+	CallerBusyMessage = "you have too many requests open at once; close one or try again later"
 
 	readHeaderTimeout = 30 * time.Second
 	idleTimeout       = 2 * time.Minute
@@ -164,27 +170,109 @@ func (l *KeyedLimiter) release(key string) {
 	}
 }
 
-// WriteTimeout gives next d to write its whole response. Writes fail after
-// that, and the server closes the connection. It bounds how long a client
-// that doesn't read a large response holds the request.
-func WriteTimeout(d time.Duration, next http.Handler) http.Handler {
+// streamChunk is the most bytes of a stream write that one write deadline
+// covers, so that a large event can take as long as its client reads it.
+const streamChunk = 64 << 10
+
+// WriteTimeout bounds how long a client that doesn't read the response
+// holds the request. A response gets total to be written whole. A response
+// stream (text/event-stream) can stay open as long as its client reads it:
+// each write gets streamIdle. Writes fail after their deadline, and the
+// server closes the connection.
+func WriteTimeout(total, streamIdle time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rc := http.NewResponseController(w)
-		if err := rc.SetWriteDeadline(time.Now().Add(d)); err != nil {
-			slog.Debug("no write deadline for the response", "error", err)
+		dw := &deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w), total: total, idle: streamIdle}
+		next.ServeHTTP(dw, r)
+		dw.start()
+		if dw.stream {
+			dw.setDeadline(time.Now().Add(dw.idle))
 		}
-		next.ServeHTTP(w, r)
 		// The connection may serve the next request, so the deadline ends
 		// once the rest of the response is sent within it.
-		if err := rc.Flush(); err != nil {
+		if err := dw.rc.Flush(); err != nil {
 			slog.Debug("sending the response", "error", err)
 			return
 		}
-		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
-			slog.Debug("clearing the write deadline of the response", "error", err)
-		}
+		dw.setDeadline(time.Time{})
 	})
 }
+
+// deadlineWriter sets the write deadlines of [WriteTimeout] as a response
+// is written.
+type deadlineWriter struct {
+	http.ResponseWriter
+	rc          *http.ResponseController
+	total, idle time.Duration
+	// started is set once the response starts, and stream if it is a
+	// stream.
+	started, stream bool
+}
+
+// start sets the deadline of a whole response when the response starts
+// and isn't a stream.
+func (d *deadlineWriter) start() {
+	if d.started {
+		return
+	}
+	d.started = true
+	mediaType, _, err := mime.ParseMediaType(d.Header().Get("Content-Type"))
+	d.stream = err == nil && mediaType == "text/event-stream"
+	if !d.stream {
+		d.setDeadline(time.Now().Add(d.total))
+	}
+}
+
+func (d *deadlineWriter) setDeadline(t time.Time) {
+	if err := d.rc.SetWriteDeadline(t); err != nil {
+		slog.Debug("setting the write deadline of the response", "error", err)
+	}
+}
+
+func (d *deadlineWriter) WriteHeader(code int) {
+	if code >= http.StatusOK {
+		d.start()
+	}
+	d.ResponseWriter.WriteHeader(code)
+}
+
+func (d *deadlineWriter) Write(p []byte) (int, error) {
+	d.start()
+	if !d.stream {
+		return d.ResponseWriter.Write(p)
+	}
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), streamChunk)
+		d.setDeadline(time.Now().Add(d.idle))
+		m, err := d.ResponseWriter.Write(p[:n])
+		written += m
+		if err != nil {
+			return written, err
+		}
+		p = p[n:]
+	}
+	return written, nil
+}
+
+// FlushError sends the buffered response, as [http.ResponseController]
+// does.
+func (d *deadlineWriter) FlushError() error {
+	d.start()
+	if d.stream {
+		d.setDeadline(time.Now().Add(d.idle))
+	}
+	return d.rc.Flush()
+}
+
+// Flush is [deadlineWriter.FlushError] for callers of [http.Flusher], such
+// as the stream writers of a2a-go.
+func (d *deadlineWriter) Flush() {
+	if err := d.FlushError(); err != nil {
+		slog.Debug("sending the response", "error", err)
+	}
+}
+
+func (d *deadlineWriter) Unwrap() http.ResponseWriter { return d.ResponseWriter }
 
 // SetBusy sets the headers of a request refused for lack of room: try
 // again in a second, on a new connection. Closing spares the server from
@@ -194,48 +282,80 @@ func SetBusy(h http.Header) {
 	h.Set("Connection", "close")
 }
 
+// Share is how many requests a class of callers may make at once.
+type Share struct {
+	Total int
+	// PerCaller is how many of those one caller may make; 0 sets no limit.
+	PerCaller int
+}
+
 // Shares limits the requests in progress of each class of callers, such as
-// a role. Classes without a share are left to the limit of the server.
+// a role, and of each caller in it. Classes without a share are left to
+// the limit of the server.
 type Shares struct {
-	caps map[string]int
+	shares map[string]Share
 
-	mu    sync.Mutex
-	inUse map[string]int
+	mu      sync.Mutex
+	inUse   map[string]int
+	callers map[shareCaller]int
 }
 
-// NewShares returns shares of caps requests at once for each class.
-func NewShares(caps map[string]int) *Shares {
-	return &Shares{caps: caps, inUse: map[string]int{}}
+// shareCaller is a caller of a class. A caller leaves [Shares] when its
+// last request ends.
+type shareCaller struct{ class, caller string }
+
+// NewShares returns the shares of each class.
+func NewShares(shares map[string]Share) *Shares {
+	return &Shares{shares: shares, inUse: map[string]int{}, callers: map[shareCaller]int{}}
 }
 
-// Acquire takes a request of class's share and returns the function that
-// gives it back, or false when the share is in use.
-func (s *Shares) Acquire(class string) (release func(), ok bool) {
-	limit, capped := s.caps[class]
+// Acquire takes a request of class's share for caller and returns the
+// function that gives it back. When there is no room, it returns the
+// status of the refusal: 429 when the caller's part of the share is in
+// use, and 503 when the share is.
+func (s *Shares) Acquire(class, caller string) (release func(), status int) {
+	share, capped := s.shares[class]
 	if !capped {
-		return func() {}, true
+		return func() {}, 0
 	}
+	key := shareCaller{class: class, caller: caller}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.inUse[class] >= limit {
-		return nil, false
+	switch {
+	case share.PerCaller > 0 && s.callers[key] >= share.PerCaller:
+		return nil, http.StatusTooManyRequests
+	case s.inUse[class] >= share.Total:
+		return nil, http.StatusServiceUnavailable
 	}
 	s.inUse[class]++
+	s.callers[key]++
 	return sync.OnceFunc(func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.inUse[class]--
-	}), true
+		if s.callers[key]--; s.callers[key] == 0 {
+			delete(s.callers, key)
+		}
+	}), 0
 }
 
-// Handler serves next within the share of class, and answers requests over
-// it with 503.
-func (s *Shares) Handler(class string, next http.Handler) http.Handler {
+// RefusalMessage is the error of a request that [Shares.Acquire] refused
+// with status.
+func RefusalMessage(status int) string {
+	if status == http.StatusTooManyRequests {
+		return CallerBusyMessage
+	}
+	return BusyMessage
+}
+
+// Handler serves next within the share of class and its caller's part, and
+// answers requests over them as [Shares.Acquire] refuses them.
+func (s *Shares) Handler(class, caller string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		release, ok := s.Acquire(class)
-		if !ok {
+		release, status := s.Acquire(class, caller)
+		if status != 0 {
 			SetBusy(w.Header())
-			jsonhttp.Error(w, http.StatusServiceUnavailable, BusyMessage)
+			jsonhttp.Error(w, status, RefusalMessage(status))
 			return
 		}
 		defer release()

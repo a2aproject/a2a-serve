@@ -67,6 +67,13 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | Unfinished tasks of one caller | 8 |
 | Refresh of contact and peer cards | Every hour. `--contact-refresh` changes it. |
 
+## Requests
+
+| Limit | Value |
+| --- | --- |
+| Open requests and streams of one member | 32 on each URL of the agent. Past that, a request fails with 429. You have no limit. |
+| Writing a response | 2 minutes. A stream stays open while its client reads it, and fails after 1 minute without progress. |
+
 ## Schedules
 
 | Limit | Value |

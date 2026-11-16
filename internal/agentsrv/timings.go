@@ -79,6 +79,11 @@ type Timings struct {
 	// DownloadTimeout bounds writing a whole download of a binary, which
 	// callers fetch before they authenticate.
 	DownloadTimeout time.Duration
+	// ResponseTimeout bounds writing a whole A2A response that isn't a
+	// stream, and StreamIdleTimeout each write to an A2A stream. They bound
+	// how long a client that doesn't read holds its request.
+	ResponseTimeout   time.Duration
+	StreamIdleTimeout time.Duration
 	// CardRefresh replaces --contact-refresh, the time between refreshes
 	// of the cards of contacts and peers, when set.
 	CardRefresh time.Duration
@@ -111,5 +116,7 @@ func (t Timings) withDefaults() Timings {
 	t.NarrowedCancelGrace = cmp.Or(t.NarrowedCancelGrace, 10*time.Second)
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	t.DownloadTimeout = cmp.Or(t.DownloadTimeout, 10*time.Minute)
+	t.ResponseTimeout = cmp.Or(t.ResponseTimeout, 2*time.Minute)
+	t.StreamIdleTimeout = cmp.Or(t.StreamIdleTimeout, time.Minute)
 	return t
 }
