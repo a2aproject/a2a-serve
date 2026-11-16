@@ -161,6 +161,18 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
                 got = await self.turn(runner, session, text)
 
                 self.assertEqual([bool(ev.turn_complete) for ev in got], [False] * (len(got) - 1) + [True])
+                if name == "completed":
+                    self.assertIsNone(got[-1].content)
+
+    async def test_tool_progress_is_partial(self):
+        _, runner = self.agent()
+        session = await self.session(runner)
+
+        events = [ev async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message("tool"))]
+
+        progress = [ev for ev in events if (ev.custom_metadata or {}).get("acp_tool_call")]
+        self.assertEqual([(ev.partial, self.texts([ev])) for ev in progress], [(True, ["Running list files"]), (True, ["Finished list files"])])
+        self.assertEqual(self.texts([ev for ev in events if not ev.partial]), ["Listed the files."])
 
     async def test_permissions(self):
         tests = [

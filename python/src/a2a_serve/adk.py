@@ -463,7 +463,9 @@ class AcpAgent(BaseAgent):
         parts = (status.get("message") or {}).get("parts", [])
         message = "".join(p.get("text", "") for p in parts)
         if state == "TASK_STATE_COMPLETED":
-            return [self._event(ctx, text="".join(reply), turn_complete=True)]
+            # acpagent sends the reply, then an empty event that completes the turn.
+            text = "".join(reply)
+            return ([self._event(ctx, text=text)] if text else []) + [self._event(ctx, turn_complete=True)]
         if state == "TASK_STATE_INPUT_REQUIRED":
             with self._lock:
                 self._pending[key] = task_id
@@ -478,10 +480,11 @@ class AcpAgent(BaseAgent):
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
             return self._failed(ctx, reply, message or state)
         # A question carries its tool call too, so tool updates come after it.
+        # They are progress, partial in every streaming mode as in acpagent.
         for p in parts:
             data = p.get("data")
             if isinstance(data, dict) and data.get("toolCall"):
-                return [self._event(ctx, metadata={"acp_tool_call": data["toolCall"]})]
+                return [self._event(ctx, text=message, partial=True, metadata={"acp_tool_call": data["toolCall"]})]
         return []
 
     def _failed(self, ctx: InvocationContext, reply: list[str], error: str) -> list[Event]:

@@ -44,6 +44,9 @@ async def turn(runner: InMemoryRunner, session_id: str, prompt: str) -> None:
     """Sends prompt and prints the turn."""
     message = types.Content(role="user", parts=[types.Part(text=prompt)])
     async for event in runner.run_async(user_id="user", session_id=session_id, new_message=message):
+        tool = (event.custom_metadata or {}).get("acp_tool_call")
+        if tool:
+            print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
         if event.partial:
             continue
         if event.error_message:
@@ -57,9 +60,6 @@ async def turn(runner: InMemoryRunner, session_id: str, prompt: str) -> None:
                 print(f"[adk tool result] {part.function_response.response}")
             elif part.text:
                 print(f"Agent -> {part.text}\n")
-        tool = (event.custom_metadata or {}).get("acp_tool_call")
-        if tool:
-            print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
 
 
 async def main(args: list[str]) -> None:
