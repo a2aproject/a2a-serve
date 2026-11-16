@@ -72,7 +72,7 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | Limit | Value |
 | --- | --- |
 | Open requests and streams of one member | 32 on each URL of the agent. Past that, a request fails with 429. You have no limit. |
-| Writing a response | 2 minutes. A stream stays open while its client reads it, and fails after 1 minute without progress. |
+| Writing a response | 1 minute without progress, and 10 minutes in all. A stream stays open while its client reads it. |
 
 ## Schedules
 

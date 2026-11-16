@@ -440,14 +440,14 @@ func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
 	}
 }
 
-// eventStream writes size bytes of events, each once tick passed, to a
-// client that reads them, and returns the error of the first write that
+// eventStream writes events of size bytes, each once tick passed, as a
+// response of contentType, and returns the error of the first write that
 // fails.
-func eventStream(t *testing.T, total, idle time.Duration, events, size int, tick time.Duration) (net.Conn, <-chan error) {
+func eventStream(t *testing.T, contentType string, total, idle time.Duration, events, size int, tick time.Duration) (net.Conn, <-chan error) {
 	t.Helper()
 	ended := make(chan error, 1)
 	srv := httptest.NewServer(WriteTimeout(total, idle, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Type", contentType)
 		event := []byte("data: " + strings.Repeat("x", size) + "\n\n")
 		for range events {
 			time.Sleep(tick)
@@ -476,7 +476,7 @@ func eventStream(t *testing.T, total, idle time.Duration, events, size int, tick
 func TestWriteTimeoutKeepsStreamsThatAreRead(t *testing.T) {
 	t.Parallel()
 	const total = 200 * time.Millisecond
-	conn, ended := eventStream(t, total, time.Minute, 10, 1<<20, 2*total/10)
+	conn, ended := eventStream(t, "text/event-stream", total, time.Minute, 10, 1<<20, 2*total/10)
 	read := make(chan error, 1)
 	go func() {
 		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -501,16 +501,49 @@ func TestWriteTimeoutKeepsStreamsThatAreRead(t *testing.T) {
 	}
 }
 
-func TestWriteTimeoutEndsStreamsThatAreNotRead(t *testing.T) {
+func TestWriteTimeoutEndsResponsesThatAreNotRead(t *testing.T) {
 	t.Parallel()
-	_, ended := eventStream(t, time.Minute, 50*time.Millisecond, 1000, 1<<20, 0)
+	for _, contentType := range []string{"text/event-stream", "application/json"} {
+		t.Run(contentType, func(t *testing.T) {
+			t.Parallel()
+			_, ended := eventStream(t, contentType, time.Hour, 50*time.Millisecond, 1000, 1<<20, 0)
+
+			select {
+			case err := <-ended:
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("WriteTimeout() response to a client that doesn't read write error = %v, want %v", err, os.ErrDeadlineExceeded)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatalf("WriteTimeout() response to a client that doesn't read still written after 30 seconds")
+			}
+		})
+	}
+}
+
+func TestWriteTimeoutKeepsResponsesThatAreReadPastTheIdleTimeout(t *testing.T) {
+	t.Parallel()
+	const idle = 200 * time.Millisecond
+	conn, ended := eventStream(t, "application/json", time.Minute, idle, 10, 1<<20, idle/2)
+	read := make(chan error, 1)
+	go func() {
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			read <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		read <- err
+	}()
 
 	select {
 	case err := <-ended:
-		if !errors.Is(err, os.ErrDeadlineExceeded) {
-			t.Fatalf("WriteTimeout() stream to a client that doesn't read write error = %v, want %v", err, os.ErrDeadlineExceeded)
+		if err != nil {
+			t.Fatalf("WriteTimeout() response read for longer than the idle timeout write error = %v, want nil", err)
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatalf("WriteTimeout() stream to a client that doesn't read still written after 30 seconds")
+	case <-time.After(time.Minute):
+		t.Fatalf("WriteTimeout() response still written after a minute")
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("reading the response: %v", err)
 	}
 }

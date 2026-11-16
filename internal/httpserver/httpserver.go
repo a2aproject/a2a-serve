@@ -170,23 +170,21 @@ func (l *KeyedLimiter) release(key string) {
 	}
 }
 
-// streamChunk is the most bytes of a stream write that one write deadline
-// covers, so that a large event can take as long as its client reads it.
-const streamChunk = 64 << 10
+// writeChunk is the most bytes of a write that one write deadline covers,
+// so that a large response can take as long as its client reads it.
+const writeChunk = 64 << 10
 
 // WriteTimeout bounds how long a client that doesn't read the response
-// holds the request. A response gets total to be written whole. A response
-// stream (text/event-stream) can stay open as long as its client reads it:
-// each write gets streamIdle. Writes fail after their deadline, and the
-// server closes the connection.
-func WriteTimeout(total, streamIdle time.Duration, next http.Handler) http.Handler {
+// holds the request: each 64 KiB of the response gets idle. A response
+// gets total to be written whole, and a response stream
+// (text/event-stream) stays open as long as its client reads it. Writes
+// fail after their deadline, and the server closes the connection.
+func WriteTimeout(total, idle time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dw := &deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w), total: total, idle: streamIdle}
+		dw := &deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w), total: total, idle: idle}
 		next.ServeHTTP(dw, r)
 		dw.start()
-		if dw.stream {
-			dw.setDeadline(time.Now().Add(dw.idle))
-		}
+		dw.extend()
 		// The connection may serve the next request, so the deadline ends
 		// once the rest of the response is sent within it.
 		if err := dw.rc.Flush(); err != nil {
@@ -206,10 +204,11 @@ type deadlineWriter struct {
 	// started is set once the response starts, and stream if it is a
 	// stream.
 	started, stream bool
+	// end is when a response that isn't a stream must be written whole.
+	end time.Time
 }
 
-// start sets the deadline of a whole response when the response starts
-// and isn't a stream.
+// start notes when the response starts, and whether it is a stream.
 func (d *deadlineWriter) start() {
 	if d.started {
 		return
@@ -218,8 +217,18 @@ func (d *deadlineWriter) start() {
 	mediaType, _, err := mime.ParseMediaType(d.Header().Get("Content-Type"))
 	d.stream = err == nil && mediaType == "text/event-stream"
 	if !d.stream {
-		d.setDeadline(time.Now().Add(d.total))
+		d.end = time.Now().Add(d.total)
 	}
+}
+
+// extend gives the next write idle, within the end of a response that
+// isn't a stream.
+func (d *deadlineWriter) extend() {
+	t := time.Now().Add(d.idle)
+	if !d.stream && d.end.Before(t) {
+		t = d.end
+	}
+	d.setDeadline(t)
 }
 
 func (d *deadlineWriter) setDeadline(t time.Time) {
@@ -237,13 +246,10 @@ func (d *deadlineWriter) WriteHeader(code int) {
 
 func (d *deadlineWriter) Write(p []byte) (int, error) {
 	d.start()
-	if !d.stream {
-		return d.ResponseWriter.Write(p)
-	}
 	written := 0
 	for len(p) > 0 {
-		n := min(len(p), streamChunk)
-		d.setDeadline(time.Now().Add(d.idle))
+		n := min(len(p), writeChunk)
+		d.extend()
 		m, err := d.ResponseWriter.Write(p[:n])
 		written += m
 		if err != nil {
@@ -258,9 +264,7 @@ func (d *deadlineWriter) Write(p []byte) (int, error) {
 // does.
 func (d *deadlineWriter) FlushError() error {
 	d.start()
-	if d.stream {
-		d.setDeadline(time.Now().Add(d.idle))
-	}
+	d.extend()
 	return d.rc.Flush()
 }
 
