@@ -69,3 +69,7 @@ bin/
 site/.build/
 site/.out/
 __pycache__/
+
+# C libraries and the launcher that clib/build.sh builds for the Python package
+python/src/a2a_serve/_lib/
+*.egg-info/
