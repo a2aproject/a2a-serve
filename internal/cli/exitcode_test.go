@@ -129,6 +129,20 @@ func TestStartWithoutAnAgentHere(t *testing.T) {
 	}
 }
 
+func TestRecipeWithoutAnAgentHere(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, err := runCMD(t, "recipe")
+
+	got := classify(err, nil)
+	if err == nil || got.Code != clierr.CodeNoAgent || got.Exit != 7 {
+		t.Fatalf("a2a-serve recipe error = %v (%s, exit %d), want %s (exit 7)", err, got.Code, got.Exit, clierr.CodeNoAgent)
+	}
+	if want := "create an agent from a recipe with `a2a-serve recipe <source>`"; !strings.Contains(got.Message, want) {
+		t.Fatalf("a2a-serve recipe message = %q, want %q", got.Message, want)
+	}
+}
+
 func TestMailboxReplyMissingArtifact(t *testing.T) {
 	t.Parallel()
 	token := mailboxapi.NewNodeToken("http://127.0.0.1:1/mailbox", "n1", "secret")

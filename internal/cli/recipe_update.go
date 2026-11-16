@@ -73,6 +73,9 @@ func (r *recipeRun) update(ctx context.Context, d agentdir.Dir, record *recipe.R
 		}
 		return r.printUpToDate(u)
 	}
+	if r.unconfirmed {
+		return unconfirmedError()
+	}
 	if err := r.printUpdate(u, changes); err != nil {
 		return err
 	}

@@ -52,6 +52,12 @@ func NotFoundIn(root string) error {
 	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"})
 }
 
+// NotFoundWith returns an error, matching [ErrNotFound], with the message
+// msg, for a command that says its own way to create the agent.
+func NotFoundWith(msg string) error {
+	return clierr.NoAgent(&notFoundError{msg: msg})
+}
+
 // relayNotAgent returns an error, matching [ErrNotFound], for a root that
 // holds a relay.
 func relayNotAgent(root string) error {
