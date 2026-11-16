@@ -86,7 +86,7 @@ class AcpAgentTest(unittest.IsolatedAsyncioTestCase):
         texts = []
         async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=types.Content(role="user", parts=[types.Part(text="hello")])):
             if not ev.partial and ev.content and ev.content.parts:
-                texts.append(ev.content.parts[0].text)
+                texts.append("".join(p.text or "" for p in ev.content.parts))
         self.assertEqual(texts, ["Hello from fakeacp."])
 
     async def test_abandoned_run_cancels_its_task(self):
@@ -116,7 +116,7 @@ class AcpAgentTest(unittest.IsolatedAsyncioTestCase):
         texts = []
         async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message("hello")):
             if not ev.partial and ev.content and ev.content.parts:
-                texts.append(ev.content.parts[0].text)
+                texts.append("".join(p.text or "" for p in ev.content.parts))
         self.assertEqual(texts, ["Hello from fakeacp."])
         self.assertLess(asyncio.get_running_loop().time() - started, 30)
 

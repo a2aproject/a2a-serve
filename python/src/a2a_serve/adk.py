@@ -448,7 +448,7 @@ class AcpAgent(BaseAgent):
             if not chunk:
                 return []
             reply.append(chunk)
-            if ctx.run_config is not None and ctx.run_config.streaming_mode == StreamingMode.NONE:
+            if not _streaming(ctx):
                 return []
             return [self._event(ctx, text=chunk, partial=True)]
         status = None
@@ -463,7 +463,11 @@ class AcpAgent(BaseAgent):
         parts = (status.get("message") or {}).get("parts", [])
         message = "".join(p.get("text", "") for p in parts)
         if state == "TASK_STATE_COMPLETED":
-            # acpagent sends the reply, then an empty event that completes the turn.
+            # As in acpagent: without streaming, one event with a part per
+            # chunk; with it, the reply and then an empty event that completes
+            # the turn.
+            if not _streaming(ctx):
+                return [self._event(ctx, texts=reply, turn_complete=True)]
             text = "".join(reply)
             return ([self._event(ctx, text=text)] if text else []) + [self._event(ctx, turn_complete=True)]
         if state == "TASK_STATE_INPUT_REQUIRED":
@@ -480,16 +484,18 @@ class AcpAgent(BaseAgent):
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
             return self._failed(ctx, reply, message or state)
         # A question carries its tool call too, so tool updates come after it.
-        # They are progress, partial in every streaming mode as in acpagent.
+        # They are progress: thoughts, streamed only, as in acpagent.
         for p in parts:
             data = p.get("data")
-            if isinstance(data, dict) and data.get("toolCall"):
-                return [self._event(ctx, text=message, partial=True, metadata={"acp_tool_call": data["toolCall"]})]
+            if isinstance(data, dict) and data.get("toolCall") and _streaming(ctx):
+                return [self._event(ctx, text=message, partial=True, thought=True, metadata={"acp_tool_call": data["toolCall"]})]
         return []
 
     def _failed(self, ctx: InvocationContext, reply: list[str], error: str) -> list[Event]:
         """Returns the events of a failed turn: the text streamed before it,
         then the error, which is also the content as in acpagent."""
+        if not _streaming(ctx):
+            return [self._event(ctx, texts=[*reply, error], error=error, turn_complete=True)]
         events = [self._event(ctx, text="".join(reply))] if reply else []
         return events + [self._event(ctx, text=error, error=error, turn_complete=True)]
 
@@ -498,14 +504,17 @@ class AcpAgent(BaseAgent):
         ctx: InvocationContext,
         *,
         text: str = "",
+        texts: list[str] | None = None,
+        thought: bool = False,
         partial: bool = False,
         error: str = "",
         metadata: dict | None = None,
         turn_complete: bool = False,
     ) -> Event:
         ev = Event(invocation_id=ctx.invocation_id, author=self.name, branch=ctx.branch)
-        if text:
-            ev.content = types.Content(role="model", parts=[types.Part(text=text)])
+        texts = [t for t in (texts if texts is not None else [text]) if t]
+        if texts:
+            ev.content = types.Content(role="model", parts=[types.Part(text=t, thought=thought or None) for t in texts])
         if partial:
             ev.partial = True
         if error:
@@ -589,10 +598,11 @@ class AcpAgent(BaseAgent):
         except Exception as e:  # pylint: disable=broad-exception-caught
             future.cancel()
             return _tool_error(f"{type(e).__name__}: {e}")
+        if failed:
+            # The agent gets the tool's error as acpagent sends it: its text.
+            return _tool_error(result["error"])
         text = json.dumps(result, default=str)
         out: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
-        if failed:
-            out["isError"] = True
         if isinstance(result, dict):
             out["structuredContent"] = result
         return out
@@ -852,6 +862,11 @@ def _on_branch(ev: Event, branch: str | None) -> bool:
     """Reports whether ev belongs to the history of branch, as ADK decides
     for the history it gives a model."""
     return not ev.branch or not branch or branch == ev.branch or branch.startswith(ev.branch + ".")
+
+
+def _streaming(ctx: InvocationContext) -> bool:
+    """Reports whether the invocation streams partial events."""
+    return ctx.run_config is None or ctx.run_config.streaming_mode != StreamingMode.NONE
 
 
 def _text(content: types.Content | None) -> str:

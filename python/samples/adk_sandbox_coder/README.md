@@ -214,7 +214,7 @@ Tests in the sandbox: exit 0
 - **One container per ADK session.** opencode stops after 10 idle minutes and starts again in the same container on the next message, so the workspace survives. After `SANDBOX_IDLE`, the sandbox and its workspace are removed, and the next message starts in a fresh one. Closing the agent removes them all.
 - **Tool callbacks, plugins and confirmation don't apply** to the tools that the coding agent calls, as in adk-go. The model callbacks apply to its model calls; plugins and `on_model_error` callbacks don't.
 - **Model answers arrive whole.** A model call that opencode streams gets its answer in one piece once the model is done. Errors of the model reach opencode as HTTP errors it retries when they are transient, such as a rate limit. A refusal of `before_model_callback`, such as the budget's, ends opencode's turn.
-- **Tool results.** A tool that raises gives opencode an MCP error with `{"error": "<message>"}`, and a result that isn't a dict reaches it as `{"result": ...}`.
+- **Tool results.** A tool that raises gives opencode an MCP error with its message, and a result that isn't a dict reaches it as `{"result": ...}`.
 - **Questions live in opencode's process.** A question that waits longer than opencode's idle stop, 10 minutes, is lost with the process; the next message starts afresh.
 - **Gemini 3 works too.** `MODEL=gemini-3-flash-preview` runs the sample; the thought signatures that Gemini 3 needs back travel in the IDs of the tool calls.
 - **HTTPS to other hosts isn't inspected.** The guard model sees only the host and port. List hosts in the sandbox's `inspect_tls` to see their requests too, for clients that trust the sandbox's CA.

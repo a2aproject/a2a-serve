@@ -109,9 +109,8 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def texts(events):
-        return [
-            p.text for ev in events if ev.content for p in ev.content.parts if p.text
-        ]
+        texts = ["".join(p.text or "" for p in ev.content.parts) for ev in events if ev.content]
+        return [t for t in texts if t]
 
     async def test_conversation(self):
         _, runner = self.agent()
@@ -151,28 +150,44 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
         self.assertIn("session/cancel", methods)
 
-    async def test_last_event_completes_the_turn(self):
-        tests = [("completed", "hello"), ("question", "ask"), ("failed", "crash")]
-        for name, text in tests:
+    async def test_turn_events_per_streaming_mode(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+
+        none, sse = RunConfig(streaming_mode=StreamingMode.NONE), RunConfig(streaming_mode=StreamingMode.SSE)
+        tests = [
+            ("completed without streaming", none, "hello", [(False, True, ["Hello ", "from fakeacp."])]),
+            ("completed with streaming", sse, "hello", [(False, False, ["Hello from fakeacp."]), (False, True, [])]),
+            ("question", none, "ask", [(False, True, ["Permission required: git push (git push origin main).\nReply with one of: once, always, reject."])]),
+            ("failed without streaming", none, "crash", [(True, True, ["about to crash", "acp agent error: acp agent exited"])]),
+            ("failed with streaming", sse, "crash", [(False, False, ["about to crash"]), (True, True, ["acp agent error: acp agent exited"])]),
+        ]
+        for name, run_config, text, want in tests:
             with self.subTest(name):
                 _, runner = self.agent()
                 session = await self.session(runner)
 
-                got = await self.turn(runner, session, text)
+                got = await self.turn(runner, session, text, run_config=run_config)
 
-                self.assertEqual([bool(ev.turn_complete) for ev in got], [False] * (len(got) - 1) + [True])
-                if name == "completed":
-                    self.assertIsNone(got[-1].content)
+                self.assertEqual([(bool(ev.error_message), bool(ev.turn_complete), [p.text for p in (ev.content.parts if ev.content else [])]) for ev in got], want)
 
-    async def test_tool_progress_is_partial(self):
-        _, runner = self.agent()
-        session = await self.session(runner)
+    async def test_tool_progress(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
 
-        events = [ev async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message("tool"))]
+        tests = [
+            ("without streaming", StreamingMode.NONE, []),
+            ("with streaming", StreamingMode.SSE, [["Running list files"], ["Finished list files"]]),
+        ]
+        for name, mode, want in tests:
+            with self.subTest(name):
+                _, runner = self.agent()
+                session = await self.session(runner)
 
-        progress = [ev for ev in events if (ev.custom_metadata or {}).get("acp_tool_call")]
-        self.assertEqual([(ev.partial, self.texts([ev])) for ev in progress], [(True, ["Running list files"]), (True, ["Finished list files"])])
-        self.assertEqual(self.texts([ev for ev in events if not ev.partial]), ["Listed the files."])
+                events = [ev async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message("tool"), run_config=RunConfig(streaming_mode=mode))]
+
+                progress = [ev for ev in events if (ev.custom_metadata or {}).get("acp_tool_call")]
+                self.assertTrue(all(ev.partial and all(p.thought for p in ev.content.parts) for ev in progress), progress)
+                self.assertEqual([self.texts([ev]) for ev in progress], want)
+                self.assertEqual(self.texts([ev for ev in events if not ev.partial]), ["Listed the files."])
 
     async def test_permissions(self):
         tests = [
@@ -223,9 +238,9 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         got = await self.turn(runner, session, "crash")
         after = await self.turn(runner, session, "hello")
 
-        self.assertEqual(self.texts(got), ["about to crash", "acp agent error: acp agent exited"])
-        self.assertEqual([ev.error_code for ev in got], [None, None])
-        self.assertEqual(got[1].error_message, "acp agent error: acp agent exited")
+        self.assertEqual([p.text for p in got[-1].content.parts], ["about to crash", "acp agent error: acp agent exited"])
+        self.assertEqual([ev.error_code for ev in got], [None])
+        self.assertEqual(got[-1].error_message, "acp agent error: acp agent exited")
         self.assertEqual(self.texts(after), ["Hello from fakeacp."])
 
     async def test_streaming_modes(self):
@@ -259,8 +274,7 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
 
         await self.turn(runner, session, "slow 2s", on_partial=call)
 
-        self.assertTrue(results[0].get("isError"), results[0])
-        self.assertIn("tracker down", results[0]["content"][0]["text"])
+        self.assertEqual(results[0], {"content": [{"type": "text", "text": "tracker down"}], "isError": True})
 
     async def test_tools_in_later_invocations(self):
         agent, runner = self.agent(tools=[self.ticket_tool()])

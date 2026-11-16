@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -43,7 +44,9 @@ DEFAULT_PROMPT = (
 async def turn(runner: InMemoryRunner, session_id: str, prompt: str) -> None:
     """Sends prompt and prints the turn."""
     message = types.Content(role="user", parts=[types.Part(text=prompt)])
-    async for event in runner.run_async(user_id="user", session_id=session_id, new_message=message):
+    # Streaming shows the coding agent's tool progress as it works.
+    config = RunConfig(streaming_mode=StreamingMode.SSE)
+    async for event in runner.run_async(user_id="user", session_id=session_id, new_message=message, run_config=config):
         tool = (event.custom_metadata or {}).get("acp_tool_call")
         if tool:
             print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
