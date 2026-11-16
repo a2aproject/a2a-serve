@@ -120,7 +120,7 @@ func TestKeyedLimiter(t *testing.T) {
 func TestSharesHandler(t *testing.T) {
 	t.Parallel()
 	entered, release := make(chan struct{}), make(chan struct{})
-	shares := NewShares(map[string]int{"member": 1})
+	shares := NewShares(map[string]Share{"member": {Total: 1}})
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/block" {
 			entered <- struct{}{}
@@ -130,7 +130,7 @@ func TestSharesHandler(t *testing.T) {
 	})
 	serve := func(path, class string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		shares.Handler(class, ok).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		shares.Handler(class, "anna", ok).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		return w
 	}
 	blocked := make(chan int)
@@ -159,13 +159,45 @@ func TestSharesHandler(t *testing.T) {
 	}
 }
 
+func TestSharesPerCaller(t *testing.T) {
+	t.Parallel()
+	shares := NewShares(map[string]Share{"member": {Total: 3, PerCaller: 2}})
+	var held []func()
+	for _, caller := range []string{"anna", "anna", "bob"} {
+		release, status := shares.Acquire("member", caller)
+		if status != 0 {
+			t.Fatalf("Shares.Acquire(member, %s) status = %d, want 0", caller, status)
+		}
+		held = append(held, release)
+	}
+
+	_, overCaller := shares.Acquire("member", "anna")
+	_, overShare := shares.Acquire("member", "carol")
+	held[0]()
+	again, afterRelease := shares.Acquire("member", "anna")
+
+	if overCaller != http.StatusTooManyRequests {
+		t.Fatalf("Shares.Acquire() over the caller's part status = %d, want %d", overCaller, http.StatusTooManyRequests)
+	}
+	if overShare != http.StatusServiceUnavailable {
+		t.Fatalf("Shares.Acquire() of another caller over the share status = %d, want %d", overShare, http.StatusServiceUnavailable)
+	}
+	if afterRelease != 0 {
+		t.Fatalf("Shares.Acquire() after the caller gave back a request status = %d, want 0", afterRelease)
+	}
+	again()
+	for _, release := range held[1:] {
+		release()
+	}
+}
+
 func TestSharesLeaveTheOwnerRequests(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
 	var held sync.WaitGroup
-	shares := NewShares(map[string]int{"unauthenticated": MaxUnauthenticated, "member": MaxMemberRequests, "guest": MaxGuestRequests})
+	shares := NewShares(map[string]Share{"unauthenticated": {Total: MaxUnauthenticated}, "member": {Total: MaxMemberRequests}, "guest": {Total: MaxGuestRequests}})
 	h := LimitConcurrency(MaxConcurrent, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		shares.Handler(r.Header.Get("X-Class"), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		shares.Handler(r.Header.Get("X-Class"), r.Header.Get("X-Class"), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/block" {
 				held.Done()
 				<-release
@@ -331,7 +363,7 @@ func rawGet(t *testing.T, conn net.Conn, path string) {
 func TestWriteTimeout(t *testing.T) {
 	t.Parallel()
 	ended := make(chan error, 1)
-	srv := httptest.NewServer(WriteTimeout(50*time.Millisecond, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(WriteTimeout(50*time.Millisecond, time.Minute, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunk := make([]byte, 64<<10)
 		for {
 			if _, err := w.Write(chunk); err != nil {
@@ -368,7 +400,7 @@ func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
 	// The first response must finish within the deadline, also on a loaded
 	// runner, so the deadline is long and the test sleeps past it.
 	const timeout = time.Second
-	srv := httptest.NewServer(WriteTimeout(timeout, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(WriteTimeout(timeout, timeout, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.WriteString(w, "ok"); err != nil {
 			t.Errorf("writing: %v", err)
 		}
@@ -405,5 +437,113 @@ func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
 
 	if got != "ok" {
 		t.Fatalf("WriteTimeout() second response on the connection = %q, want %q", got, "ok")
+	}
+}
+
+// eventStream writes events of size bytes, each once tick passed, as a
+// response of contentType, and returns the error of the first write that
+// fails.
+func eventStream(t *testing.T, contentType string, total, idle time.Duration, events, size int, tick time.Duration) (net.Conn, <-chan error) {
+	t.Helper()
+	ended := make(chan error, 1)
+	srv := httptest.NewServer(WriteTimeout(total, idle, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		event := []byte("data: " + strings.Repeat("x", size) + "\n\n")
+		for range events {
+			time.Sleep(tick)
+			if _, err := w.Write(event); err != nil {
+				ended <- err
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
+		ended <- nil
+	})))
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	rawGet(t, conn, "/")
+	return conn, ended
+}
+
+func TestWriteTimeoutKeepsStreamsThatAreRead(t *testing.T) {
+	t.Parallel()
+	const total = 200 * time.Millisecond
+	conn, ended := eventStream(t, "text/event-stream", total, time.Minute, 10, 1<<20, 2*total/10)
+	read := make(chan error, 1)
+	go func() {
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			read <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		read <- err
+	}()
+
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("WriteTimeout() stream read for twice the total timeout write error = %v, want nil", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatalf("WriteTimeout() stream still written after a minute")
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("reading the stream: %v", err)
+	}
+}
+
+func TestWriteTimeoutEndsResponsesThatAreNotRead(t *testing.T) {
+	t.Parallel()
+	for _, contentType := range []string{"text/event-stream", "application/json"} {
+		t.Run(contentType, func(t *testing.T) {
+			t.Parallel()
+			_, ended := eventStream(t, contentType, time.Hour, 50*time.Millisecond, 1000, 1<<20, 0)
+
+			select {
+			case err := <-ended:
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("WriteTimeout() response to a client that doesn't read write error = %v, want %v", err, os.ErrDeadlineExceeded)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatalf("WriteTimeout() response to a client that doesn't read still written after 30 seconds")
+			}
+		})
+	}
+}
+
+func TestWriteTimeoutKeepsResponsesThatAreReadPastTheIdleTimeout(t *testing.T) {
+	t.Parallel()
+	const idle = 200 * time.Millisecond
+	conn, ended := eventStream(t, "application/json", time.Minute, idle, 10, 1<<20, idle/2)
+	read := make(chan error, 1)
+	go func() {
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			read <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		read <- err
+	}()
+
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("WriteTimeout() response read for longer than the idle timeout write error = %v, want nil", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatalf("WriteTimeout() response still written after a minute")
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("reading the response: %v", err)
 	}
 }

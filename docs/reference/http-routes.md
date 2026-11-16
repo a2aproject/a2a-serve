@@ -49,7 +49,7 @@ Each listener handles at most 1024 requests at once, including open streams. It 
 
 `/pair`, `/oauth/…`, `/hitl/<token>`, `/download/…` and `/gossip…` on the private listener serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts. Callers that the relay doesn't identify count only toward the 256 shared slots, and the relay limits each of their addresses to 8 open requests to these routes ([relay routes](#relay-routes)). A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`. A download from `/download/…` must finish within 10 minutes. The server then closes the connection.
 
-On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of its caller's role once the caller authenticates, before the server reads the body. Members share 512 slots of each listener, and guests share 128. The owner's requests count only toward the listener's limit, so members and guests always leave the owner at least 128 slots. A request over its role's slots gets 503 with `Retry-After` and the error `the server is busy; try again later`, which the A2A routes and `/n/…` send as an A2A error.
+On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of its caller's role once the caller authenticates, before the server reads the body. Members share 512 slots of each listener, and guests share 128. The owner's requests count only toward the listener's limit, so members and guests always leave the owner at least 128 slots. A request over its role's slots gets 503 with `Retry-After` and the error `the server is busy; try again later`, which the A2A routes and `/n/…` send as an A2A error. One member may hold only part of the members' slots ([limits](limits.md#requests)). A request over that part gets 429 with `Retry-After` and the error `you have too many requests open at once; close one or try again later`.
 
 | Route | Largest body | Time to send the body |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ On the A2A routes, `/n/…` and `/mailbox/api/…`, a request takes a slot of it
 | `POST /oauth/token` | 64 KiB | 10 seconds in total |
 | A2A routes, `/n/…`, `POST /mailbox/api/tasks/<id>/events` | 32 MiB | 30 seconds without progress |
 
-A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
+A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open. On the A2A routes, `/n/…` and `/mailbox/api/…`, the server also limits the time to write a response ([limits](limits.md#requests)). A stream has no limit in total and stays open while the client reads it. When the time runs out, the server closes the connection.
 
 ## Message and response limits
 

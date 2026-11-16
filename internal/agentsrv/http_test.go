@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -560,29 +561,39 @@ func TestMembersAndGuestsLeaveRequestsToTheOwner(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, nil)
 	jsonType := http.Header{"Content-Type": {"application/json"}}
-	owner := http.Header{"Authorization": {"Bearer " + ts.pair("me", auth.RoleOwner)}}
-	member := http.Header{"Authorization": {"Bearer " + ts.pair("bob", auth.RoleMember)}}
+	bearer := func(name, role string) http.Header {
+		return http.Header{"Authorization": {"Bearer " + ts.pair(name, role)}}
+	}
+	owner := bearer("me", auth.RoleOwner)
+	member := bearer("bob", auth.RoleMember)
+	var members []http.Header
+	for i := range httpserver.MaxMemberRequests / httpserver.MaxMemberRequestsPerCaller {
+		members = append(members, bearer(fmt.Sprintf("member%d", i), auth.RoleMember))
+	}
 	tests := []struct {
 		name    string
 		url     string
-		caller  http.Header
-		held    int
+		callers []http.Header
+		each    int
+		over    http.Header
 		through map[string]http.Header
 	}{
-		{name: "members", url: ts.localURL(), caller: member, held: httpserver.MaxMemberRequests, through: map[string]http.Header{"owner": owner}},
-		{name: "guests", url: ts.publicURL(), caller: http.Header{}, held: httpserver.MaxGuestRequests, through: map[string]http.Header{"owner": owner, "member": member}},
+		{name: "members", url: ts.localURL(), callers: members, each: httpserver.MaxMemberRequestsPerCaller, over: member, through: map[string]http.Header{"owner": owner}},
+		{name: "guests", url: ts.publicURL(), callers: []http.Header{{}}, each: httpserver.MaxGuestRequests, over: http.Header{}, through: map[string]http.Header{"owner": owner, "member": member}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			for range tc.held {
-				stallPost(t, tc.url, "/", tc.caller)
+			for _, caller := range tc.callers {
+				for range tc.each {
+					stallPost(t, tc.url, "/", caller)
+				}
 			}
 			// Until all stalled requests reach the server, more may get in too.
 			var refused *http.Response
 			var body string
 			for deadline := time.Now().Add(time.Minute); refused == nil && time.Now().Before(deadline); {
-				refused, body = stalledResponse(t, stallPost(t, tc.url, "/", tc.caller), time.Second)
+				refused, body = stalledResponse(t, stallPost(t, tc.url, "/", tc.over), time.Second)
 			}
 
 			if refused == nil || refused.StatusCode != http.StatusServiceUnavailable {
@@ -607,6 +618,159 @@ func TestMembersAndGuestsLeaveRequestsToTheOwner(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// dialRaw opens a connection to u that stays open until the test ends.
+func dialRaw(t *testing.T, u string) net.Conn {
+	t.Helper()
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	return conn
+}
+
+// writeRPC sends the A2A 1.0 JSON-RPC request body with header on conn.
+func writeRPC(t *testing.T, conn net.Conn, body string, header http.Header) {
+	t.Helper()
+	var lines strings.Builder
+	if err := header.Write(&lines); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST / HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nA2A-Version: 1.0\r\nContent-Length: %d\r\n%s\r\n%s", conn.RemoteAddr(), len(body), lines.String(), body)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
+	t.Parallel()
+	const timeout = time.Second
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.IdleTimeout = timeout }})
+	token := ts.pair("anna", auth.RoleMember)
+	task := send(t, ts.client(token), userText("big 8000000", "", ""))
+	conn := dialRaw(t, ts.localURL())
+	if err := conn.(*net.TCPConn).SetReadBuffer(4 << 10); err != nil {
+		t.Fatal(err)
+	}
+
+	writeRPC(t, conn, `{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"`+string(task.ID)+`"}}`, http.Header{"Authorization": {"Bearer " + token}})
+	time.Sleep(3 * timeout)
+	// A connection the server closed keeps the unsent part of the response
+	// and never ends it, but the next request on it gets a reset.
+	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + token}})
+
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+	}
+	if !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("reading GetTask of a large task %s after the idle timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
+	}
+}
+
+func TestResponseTimeoutLeavesLongTurns(t *testing.T) {
+	t.Parallel()
+	const timeout = time.Second
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.ResponseTimeout = timeout }})
+	token := ts.pair("anna", auth.RoleMember)
+	for _, transport := range conformanceTransports {
+		c := ts.clientOver(token, transport)
+		t.Run(string(transport)+"/stream", func(t *testing.T) {
+			t.Parallel()
+			var last *a2a.Task
+			for ev, err := range c.SendStreamingMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("slow 3s", "", "")}) {
+				if err != nil {
+					t.Fatalf("SendStreamingMessage() error = %v", err)
+				}
+				if task, ok := ev.(*a2a.Task); ok {
+					last = task
+				}
+				if update, ok := ev.(*a2a.TaskStatusUpdateEvent); ok && update.Status.State.Terminal() {
+					last = &a2a.Task{Status: update.Status}
+				}
+			}
+			if last == nil || last.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("SendStreamingMessage() streamed for longer than the response timeout last task = %v, want state %s", last, a2a.TaskStateCompleted)
+			}
+		})
+		t.Run(string(transport)+"/blocking", func(t *testing.T) {
+			t.Parallel()
+			wantResult(t, send(t, c, userText("slow 3s", "", "")), a2a.TaskStateCompleted, "Done.")
+		})
+	}
+}
+
+func TestOneMemberLeavesRequestsToOtherMembers(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	annaToken := ts.pair("anna", auth.RoleMember)
+	anna := ts.client(annaToken)
+	bob := http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer " + ts.pair("bob", auth.RoleMember)}}
+	task := sendAsync(t, anna, userText("stall", "", ""))
+	waitState(t, anna, task.ID, a2a.TaskStateWorking)
+	t.Cleanup(func() {
+		// The server frees anna's slots once it sees her streams close,
+		// which can take a moment after the cleanups that close them.
+		var err error
+		waitFor(t, "anna's streams to close", func() bool {
+			_, err = anna.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID})
+			return err == nil || !strings.Contains(err.Error(), httpserver.CallerBusyMessage)
+		})
+		if err != nil {
+			t.Errorf("CancelTask() error = %v", err)
+		}
+	})
+	subscribe := `{"jsonrpc":"2.0","id":1,"method":"SubscribeToTask","params":{"id":"` + string(task.ID) + `"}}`
+	for range httpserver.MaxMemberRequestsPerCaller {
+		conn := dialRaw(t, ts.localURL())
+		writeRPC(t, conn, subscribe, http.Header{"Authorization": {"Bearer " + annaToken}})
+		if err := conn.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("reading the response to SubscribeToTask: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("SubscribeToTask status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	conn := dialRaw(t, ts.localURL())
+	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + annaToken}})
+	over, body := stalledResponse(t, conn, time.Minute)
+	other := statusOf(t, http.MethodPost, ts.localURL()+"/", listTasksRPC, bob)
+
+	if over == nil {
+		t.Fatalf("POST / of anna over her open streams got no response")
+	}
+	if over.StatusCode != http.StatusTooManyRequests || over.Header.Get("Retry-After") != "1" {
+		t.Fatalf("POST / of anna over her open streams = %d with Retry-After %q, want %d with Retry-After 1", over.StatusCode, over.Header.Get("Retry-After"), http.StatusTooManyRequests)
+	}
+	var got rpcErrorResponse
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("POST / of anna over her open streams body = %s, want JSON: %v", body, err)
+	}
+	want := rpcError{Code: -32603, Message: httpserver.CallerBusyMessage}
+	if diff := cmp.Diff(want, got.Error, cmpopts.IgnoreFields(rpcError{}, "Data")); diff != "" {
+		t.Fatalf("POST / of anna over her open streams wrong error (-want +got) diff = %s", diff)
+	}
+	if other != http.StatusOK {
+		t.Fatalf("POST / of bob while anna holds her open streams status = %d, want %d", other, http.StatusOK)
 	}
 }
 

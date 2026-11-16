@@ -112,7 +112,7 @@ func (s *Server) routes(l listener) http.Handler {
 	// their own, limited for each client that the server can tell apart.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
 	download := func(h http.HandlerFunc) http.Handler {
-		return unauthenticated.Handler(httpserver.WriteTimeout(s.timings.DownloadTimeout, h))
+		return unauthenticated.Handler(httpserver.WriteTimeout(s.timings.DownloadTimeout, s.timings.DownloadTimeout, h))
 	}
 	mux.Handle("GET /download/a2a", download(handleDownloadCLI))
 	mux.Handle("GET /download/a2a-serve", download(handleDownloadServe))
@@ -127,7 +127,9 @@ func (s *Server) routes(l listener) http.Handler {
 	if l.inspector {
 		s.inspector.Register(mux)
 	}
-	members := func(h http.Handler) http.Handler { return s.roleRequests[l.kind].Handler(auth.RoleMember, h) }
+	members := func(caller string, h http.Handler) http.Handler {
+		return s.roleRequests[l.kind].Handler(auth.RoleMember, caller, s.writeTimeout(h))
+	}
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) }, members)
 	bodies := newGuestBodies(maxGuestBodies, jsonhttp.ReadIdleTimeout)
 	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, bodies, jsonrpc))
@@ -197,16 +199,26 @@ func (s *Server) listenerURL(kind string) string {
 }
 
 // newRoleShares returns the shares of one listener's requests for members
-// and guests. The owner has no share, so the others leave it room.
+// and guests. The owner has no share, so the others leave it room. Each
+// member gets a part of the members' share; guests share one principal.
 func newRoleShares() *httpserver.Shares {
-	return httpserver.NewShares(map[string]int{auth.RoleMember: httpserver.MaxMemberRequests, auth.RoleGuest: httpserver.MaxGuestRequests})
+	return httpserver.NewShares(map[string]httpserver.Share{
+		auth.RoleMember: {Total: httpserver.MaxMemberRequests, PerCaller: httpserver.MaxMemberRequestsPerCaller},
+		auth.RoleGuest:  {Total: httpserver.MaxGuestRequests},
+	})
+}
+
+// writeTimeout bounds how long a caller that doesn't read the responses of
+// next holds its requests.
+func (s *Server) writeTimeout(next http.Handler) http.Handler {
+	return httpserver.WriteTimeout(s.timings.ResponseTimeout, s.timings.IdleTimeout, next)
 }
 
 // authenticate resolves the principal of a request with the auth chain: 401
 // for a caller without a credential, and 403 naming a known caller whom
 // the policy refuses. The request then holds one of its role's share of
 // the listener's requests until it ends, and gets 503 when the share is in
-// use.
+// use, or 429 when the caller's part of it is.
 func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.chain.Authenticate(r.Context(), auth.Request{Listener: kind, RemoteAddr: r.RemoteAddr, Header: r.Header})
@@ -240,15 +252,15 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			// An agent calls through its server, at a URL only that server knows.
 			agentURL = "<agent URL>"
 		}
-		release, ok := s.roleRequests[kind].Acquire(p.Role)
-		if !ok {
+		release, status := s.roleRequests[kind].Acquire(p.Role, p.ID)
+		if status != 0 {
 			httpserver.SetBusy(w.Header())
-			proto.writeError(w, http.StatusServiceUnavailable, a2a.ErrInternalError, httpserver.BusyMessage)
+			proto.writeError(w, status, a2a.ErrInternalError, httpserver.RefusalMessage(status))
 			return
 		}
 		defer release()
 		ctx := context.WithValue(auth.WithPrincipal(r.Context(), p), agentURLKey{}, agentURL)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		s.writeTimeout(next).ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
