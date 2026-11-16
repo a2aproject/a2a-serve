@@ -532,12 +532,18 @@ func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if len(doc.Content) > 0 {
 		renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
-		var problems []error
-		typeProblems(doc.Content[0], reflect.TypeFor[Config](), "", &problems)
-		if len(problems) > 0 {
-			return nil, errors.Join(problems...)
-		}
+		// Decoding first bounds aliases, which typeProblems follows, so it
+		// rewords only the type errors of a document that decodes.
 		if err := doc.Decode(&cfg); err != nil {
+			var typeErr *yaml.TypeError
+			if !errors.As(err, &typeErr) {
+				return nil, err
+			}
+			var problems []error
+			typeProblems(doc.Content[0], reflect.TypeFor[Config](), "", &problems)
+			if len(problems) > 0 {
+				return nil, errors.Join(problems...)
+			}
 			return nil, err
 		}
 	}

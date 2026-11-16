@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -809,5 +810,29 @@ func TestParseConfigWordsTypeErrors(t *testing.T) {
 				t.Fatalf("ParseConfig() error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseConfigRefusesExcessiveAliasingAtOnce(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("x-m: &m [a")
+	for range 3000 {
+		b.WriteString(", a")
+	}
+	b.WriteString("]\nx-r: &r {match: *m}\npolicy:\n  sandbox: [*r")
+	for range 3000 {
+		b.WriteString(", *r")
+	}
+	b.WriteString("]\n")
+	start := time.Now()
+
+	_, err := ParseConfig([]byte(b.String()))
+
+	if err == nil || !strings.Contains(err.Error(), "excessive aliasing") {
+		t.Fatalf("ParseConfig() error = %v, want excessive aliasing", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("ParseConfig() of %d bytes with aliases took %v, want it refused at once", b.Len(), took)
 	}
 }
