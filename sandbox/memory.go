@@ -390,6 +390,25 @@ func (f *memoryFiles) waitRunning(ctx context.Context) error {
 	}
 }
 
+// checkHolder fails when the container that keeps the file system runs no
+// longer, with what Docker knows about its end. The file system is gone
+// then: Docker unmounts a tmpfs volume that no container uses.
+func (f *memoryFiles) checkHolder(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.Error}}", f.holder).Output()
+	if err != nil {
+		return fmt.Errorf("the file system in memory is gone: its container %s doesn't exist: %w", f.holder, exitErr(err))
+	}
+	state := strings.TrimSpace(string(out))
+	if strings.HasPrefix(state, "running ") {
+		return nil
+	}
+	logs, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "5", f.holder).CombinedOutput()
+	if err != nil {
+		logs = []byte("reading its log: " + err.Error())
+	}
+	return fmt.Errorf("the file system in memory is gone: its container %s stopped (status, exit code, OOM killed, error: %s): %s", f.holder, state, bytes.TrimSpace(logs))
+}
+
 // writeAll writes files, by their paths relative to the file system.
 func (f *memoryFiles) writeAll(ctx context.Context, files map[string][]byte) error {
 	if len(files) == 0 {
@@ -413,9 +432,13 @@ func startHolder(ctx context.Context, name, image, volume, dir, launcher string,
 	if err := RemoveContainer(ctx, name); err != nil {
 		return err
 	}
-	args := []string{"run", "-d", "--rm", "--name", name,
+	// Without --rm, a holder that dies keeps its exit code and its log,
+	// which checkHolder reports; closing the sandbox removes it.
+	args := []string{"run", "-d", "--name", name,
 		"--user", "0:0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-		"--network", "none", "--memory", "32m", "--pids-limit", "8",
+		// One P keeps the launcher's threads few, and the PID limit leaves
+		// it room: a Go runtime that can't start a thread exits.
+		"--network", "none", "--memory", "32m", "--pids-limit", "32", "-e", "GOMAXPROCS=1",
 		"--entrypoint", sandboxnet.ContainerLauncher,
 		"-v", launcher + ":" + sandboxnet.ContainerLauncher + ":ro",
 		"-v", volume + ":" + dir,

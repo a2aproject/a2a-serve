@@ -54,7 +54,7 @@ EOF
   --env "OPENCODE_CONFIG_CONTENT=$CONFIG" --env OPENCODE_DISABLE_MODELS_FETCH=1 --allow aiplatform.googleapis.com
 ```
 
-The reply is `C morf deedes`, and the workspace lists `reversed.txt` and `seed.txt`. Environment values can't hold line breaks, so `tr` joins the config into one line. This hands the agent an access token. The sample in [`python/samples/adk_sandbox_coder`](../python/samples/adk_sandbox_coder) keeps credentials out of the sandbox by adding them as its requests leave.
+The reply is the reversed text, `C morf dedees` when the model gets it right, and the workspace lists `reversed.txt` and `seed.txt`. Environment values can't hold line breaks, so `tr` joins the config into one line. This hands the agent an access token. The sample in [`python/samples/adk_sandbox_coder`](../python/samples/adk_sandbox_coder) keeps credentials out of the sandbox by adding them as its requests leave.
 
 ## Calling convention
 

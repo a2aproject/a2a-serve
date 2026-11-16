@@ -152,6 +152,10 @@ type memorySandbox struct {
 var _ Files = (*memorySandbox)(nil)
 
 func (s *memorySandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
+	// docker run would create an empty volume in place of a missing one.
+	if err := s.checkHolder(ctx); err != nil {
+		return nil, err
+	}
 	rwc, err := s.dockerSandbox.Start(ctx)
 	if err != nil {
 		return nil, err
@@ -191,6 +195,11 @@ func (d *Docker) prepareMemory(ctx context.Context, spec Spec, image string, roo
 		return nil, errors.Join(err, removeVolume(ctx, volume))
 	}
 	if err := mem.writeAll(ctx, spec.Memory.Files); err != nil {
+		return nil, errors.Join(err, RemoveContainer(ctx, mem.holder), removeVolume(ctx, volume))
+	}
+	// docker cp into a holder that died writes to a volume that Docker
+	// unmounts again, which loses the files.
+	if err := mem.checkHolder(ctx); err != nil {
 		return nil, errors.Join(err, RemoveContainer(ctx, mem.holder), removeVolume(ctx, volume))
 	}
 	return mem, nil

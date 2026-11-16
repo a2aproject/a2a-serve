@@ -193,4 +193,11 @@ func TestDockerMemoryFiles(t *testing.T) {
 	if err := rwc.Close(); err != nil {
 		t.Fatalf("closing the command error = %v", err)
 	}
+
+	if out, err := exec.Command("docker", "kill", memoryVolume(name)).CombinedOutput(); err != nil {
+		t.Fatalf("docker kill the holder error = %v: %s", err, out)
+	}
+	if _, err := sb.Start(ctx); err == nil || !strings.Contains(err.Error(), "the file system in memory is gone") {
+		t.Fatalf("Sandbox.Start() after the holder died error = %v, want the file system gone", err)
+	}
 }

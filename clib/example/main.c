@@ -85,8 +85,27 @@ static long long json_int(const char *s, const char *key) {
 // is 0 before the sandbox is closed, 1 while a thread closes it, and 2
 // once it is removed.
 static atomic_int interrupted, closing;
-// close_error holds the result of a failed close, for main to report.
+// close_error holds the result of a failed close, and reported tells
+// whether it was printed.
 static char close_error[1024];
+static atomic_int reported;
+
+// report_close_error prints a failed close once; write keeps it safe on
+// the signal's thread.
+static void report_close_error(void) {
+  if (close_error[0] == '\0' || atomic_exchange(&reported, 1) != 0) {
+    return;
+  }
+  const char *prefix = "a2a_sandbox_close: ";
+  ssize_t ignored = write(2, prefix, strlen(prefix));
+  ignored = write(2, close_error, strlen(close_error));
+  ignored = write(2, "\n", 1);
+  (void)ignored;
+}
+
+// close_at_exit removes the sandbox at exit after an error, and says so
+// when that fails too.
+static void close_at_exit(void);
 
 // close_sandbox removes the sandbox, once, and returns once it is removed,
 // whichever thread does it: at the end of main, at exit after an error,
@@ -141,6 +160,11 @@ static void append_json_string(char *out, size_t size, const char *s) {
   out[n] = '\0';
 }
 
+static void close_at_exit(void) {
+  close_sandbox();
+  report_close_error();
+}
+
 // on_signal removes the sandbox when SIGINT or SIGTERM comes, which atexit
 // doesn't see, then exits as the signal would.
 static void *on_signal(void *arg) {
@@ -149,6 +173,7 @@ static void *on_signal(void *arg) {
   if (sigwait(set, &sig) == 0) {
     atomic_store(&interrupted, 1);
     close_sandbox();
+    report_close_error();
     _exit(128 + sig);
   }
   return NULL;
@@ -245,7 +270,7 @@ int main(int argc, char **argv) {
            " \"launcher\": \"%s/a2a-sandbox-init\"}",
            (int)getpid(), argv[2], agent, args, env, allow, argv[1]);
 
-  atexit(close_sandbox);
+  atexit(close_at_exit);
   char *res = sb.open(sandbox_spec);
   fail_on_error("a2a_sandbox_open", res);
   sandbox_handle = json_int(res, "handle");
@@ -294,7 +319,7 @@ int main(int argc, char **argv) {
     pause();
   }
   if (close_error[0] != '\0') {
-    fprintf(stderr, "a2a_sandbox_close: %s\n", close_error);
+    report_close_error();
     return 1;
   }
   printf("done\n");
