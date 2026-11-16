@@ -203,6 +203,8 @@ type Server struct {
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
+	// queued are the new tasks that wait for their turn in a conversation.
+	queued *queuedTurns
 	// decider answers tool permissions without asking.
 	decider *toolDecider
 	// prefs are the tool calls people allowed in all their conversations.
@@ -484,6 +486,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.allowed = newAllowedAnswers()
 	s.prefs = approvals.NewPreferences(s.store, func(ctx context.Context) { s.answerAllowed(ctx, "") })
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
+	waiting := waitingTasks{tasks: s.tasks, records: records}
+	s.queued = newQueuedTurns(waiting)
 	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes, store: s.store, taskUser: records.TaskUser}
 	s.sessions = s.store.Sessions().In(s.workspace)
 	s.claims = newCallClaims(CallClaimsDeps{
@@ -567,10 +571,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice},
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued},
 			a2asrv.WithTaskStore(s.tasks.CutLists()),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, dir: s.dir, removeHome: s.forgetHome}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, keys: s.keys, users: &s.users, dir: s.dir, removeHome: s.forgetHome}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),

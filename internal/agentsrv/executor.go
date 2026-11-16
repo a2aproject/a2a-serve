@@ -452,6 +452,7 @@ func (s *Server) acpConfig() *a2aacp.Config {
 		SessionStore: s.sessions,
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
+		Prompt:       s.queued.prompt,
 		Turn:         s.stalls.turn(s.claims.turn),
 		Converter:    s.stalls,
 		Abandoned:    s.abandoned,
@@ -640,6 +641,9 @@ type observedExecutor struct {
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
+	// queued fails the new tasks that wait behind a question in their
+	// conversation; nil runs them as they come.
+	queued *queuedTurns
 }
 
 var (
@@ -670,6 +674,9 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 	if q := approvals.FromStatus(task.Status); q != nil && !askedBefore(execCtx.StoredTask, q) {
 		e.approvals.OnQuestion(ctx, execCtx, q)
 	}
+	if state == a2a.TaskStateInputRequired {
+		e.queued.refuseIn(execCtx.ContextID)
+	}
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -683,7 +690,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	// rejects the tool call without saying so.
 	q := pendingApproval(execCtx.StoredTask)
 	if q == nil {
-		return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
+		return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.queued.run(ctx, execCtx, e.turn)))
 	}
 	opt, chosen := replyOption(execCtx.Message, q)
 	_, ownOptions := q.AgentOption(a2aacp.OptionOnce)
@@ -960,6 +967,7 @@ type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
 	tasks     *store.TaskStore
+	waiting   waitingTasks
 	budget    *guestBudget
 	keys      *agentKeys
 	users     *userAgents
@@ -1149,41 +1157,17 @@ func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Princi
 // checkWaiting refuses a new task in a conversation with a task that waits
 // for an answer to a question of the agent, since the new task would wait
 // behind it without a word. Messages from chats and schedules still wait.
-// Questions of other agents don't hold the conversation.
+// [queuedTurns] fails the tasks that a question catches while they wait.
 func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, contextID string) error {
 	if contextID == "" || auth.IsInProcess(ctx) {
 		return nil
 	}
-	history := 0
-	waiting, err := i.tasks.List(auth.WithPrincipal(ctx, auth.Owner()), &a2a.ListTasksRequest{
-		ContextID: contextID, Status: a2a.TaskStateInputRequired, HistoryLength: &history,
-	})
+	refusal, err := i.waiting.refusal(ctx, p, contextID)
 	if err != nil {
-		return fmt.Errorf("checking conversation %s: %w", contextID, err)
+		return err
 	}
-	for _, t := range waiting.Tasks {
-		q := approvals.FromStatus(t.Status)
-		if q == nil || asksCallerQuestion(t) {
-			continue
-		}
-		err := i.approvals.CheckAnswer(ctx, p, t.ID)
-		if errors.Is(err, a2a.ErrTaskNotFound) || errors.Is(err, a2a.ErrUnauthorized) {
-			return fmt.Errorf("%w: conversation %s waits for the agent's owner to answer %q; send the message again after they answer, or leave out the context ID to start a new conversation",
-				a2a.ErrInvalidRequest, contextID, q.Title)
-		}
-		if err != nil {
-			return err
-		}
-		ids := make([]string, len(q.Options))
-		for i, o := range q.Options {
-			ids[i] = o.ID
-		}
-		answer := "with " + a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" <answer>")
-		if len(ids) > 0 {
-			answer = fmt.Sprintf("with one of %s, as in %s", strings.Join(ids, ", "), a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" "+ids[0]))
-		}
-		return fmt.Errorf("%w: task %s in conversation %s waits for an answer to %q; answer it first %s, or leave out the context ID to start a new conversation",
-			a2a.ErrInvalidRequest, t.ID, contextID, q.Title, answer)
+	if refusal != "" {
+		return fmt.Errorf("%w: %s", a2a.ErrInvalidRequest, refusal)
 	}
 	return nil
 }
