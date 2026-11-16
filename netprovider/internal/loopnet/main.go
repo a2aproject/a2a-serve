@@ -17,7 +17,9 @@
 // at loopnet:///<dir>: each listens on <dir>/<agent>.sock, where its peers
 // connect with a first line that names them. Query settings: owner, the
 // email the agent signs in as; token, the network token the agent needs;
-// health, a health state to report while joining.
+// health, a health state to report while joining; freeze, a file: while it
+// exists, loopnet doesn't answer describe or forward connections, as a
+// provider that stopped answering.
 package main
 
 import (
@@ -34,6 +36,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/netprovider"
 )
@@ -52,10 +55,13 @@ type loopnet struct {
 	dir       string
 	agent     string
 	owner     string
+	freeze    string
+	closed    bool
 	listeners []net.Listener
 }
 
 func (l *loopnet) Describe() netprovider.Description {
+	l.waitThawed(context.Background())
 	return netprovider.Description{Name: "loopnet", Version: "v0.0.0", Hosts: []string{Host}}
 }
 
@@ -76,7 +82,7 @@ func (l *loopnet) Join(_ context.Context, req netprovider.JoinRequest) (netprovi
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.dir, l.agent, l.owner = u.Path, req.Agent, q.Get("owner")
+	l.dir, l.agent, l.owner, l.freeze = u.Path, req.Agent, q.Get("owner"), q.Get("freeze")
 	if l.owner != "" {
 		l.host.Notice("signed in to loopnet as " + l.owner)
 	}
@@ -84,6 +90,27 @@ func (l *loopnet) Join(_ context.Context, req netprovider.JoinRequest) (netprovi
 		l.host.Health(netprovider.Health{State: state, Problem: "loopnet reports " + state})
 	}
 	return netprovider.JoinResult{Node: node(req.Agent), Owner: l.owner}, nil
+}
+
+// waitThawed returns once the freeze file doesn't exist, loopnet closed, or
+// ctx is done.
+func (l *loopnet) waitThawed(ctx context.Context) {
+	for {
+		l.mu.Lock()
+		freeze, closed := l.freeze, l.closed
+		l.mu.Unlock()
+		if freeze == "" || closed {
+			return
+		}
+		if _, err := os.Stat(freeze); errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func node(agent string) string { return "loop:" + agent }
@@ -136,6 +163,7 @@ func (l *loopnet) servePrivate(in *netprovider.Inbound, ln net.Listener) {
 			return
 		}
 		go func() {
+			l.waitThawed(context.Background())
 			br := bufio.NewReader(c)
 			line, err := br.ReadString('\n')
 			fields := strings.Fields(strings.TrimPrefix(line, "FROM "))
@@ -204,7 +232,7 @@ func (l *loopnet) Peers(context.Context) ([]netprovider.PeerInfo, error) {
 // Outbound forwards a request for http://loopnet.local/<agent>/<path> to
 // the agent, as /<path>.
 func (l *loopnet) Outbound() http.Handler {
-	return &httputil.ReverseProxy{
+	proxy := &httputil.ReverseProxy{
 		FlushInterval: -1,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			agent, rest, _ := strings.Cut(strings.TrimPrefix(r.In.URL.Path, "/"), "/")
@@ -227,11 +255,19 @@ func (l *loopnet) Outbound() http.Handler {
 			return c, nil
 		}},
 	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.waitThawed(r.Context())
+		if r.Context().Err() != nil {
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
 }
 
 func (l *loopnet) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.closed = true
 	var errs []error
 	for _, ln := range l.listeners {
 		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {

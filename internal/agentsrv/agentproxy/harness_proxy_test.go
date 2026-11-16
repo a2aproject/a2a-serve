@@ -38,6 +38,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -1167,5 +1168,39 @@ func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
 	}
 	if len(ws) != 1 || ws[0].TaskID != "t1" {
 		t.Fatalf("store.Watches() = %+v, want a watch of task t1", ws)
+	}
+}
+
+// failingStreamHandler fails every stream with err.
+type failingStreamHandler struct {
+	a2asrv.RequestHandler
+	err error
+}
+
+func (h failingStreamHandler) SendStreamingMessage(context.Context, *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) { yield(nil, h.err) }
+}
+
+func TestGuardedHandlerNamesTheAgentThatTheNetworkDoesNotReach(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "agent called doesn't answer", err: network.ErrPeerUnavailable},
+		{name: "network provider doesn't answer", err: network.ErrProviderStalled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProxyFixture(t)
+			g := &guardedHandler{RequestHandler: failingStreamHandler{err: fmt.Errorf("failed to send HTTP request: %w", tc.err)}, proxy: f.proxy, claims: Claims{ContextID: "c1", User: auth.Owner()}, agent: "coder"}
+
+			_, err := g.SendMessage(t.Context(), &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))})
+
+			if want := "coder: " + tc.err.Error(); err == nil || err.Error() != want {
+				t.Fatalf("guardedHandler.SendMessage() error = %v, want %q", err, want)
+			}
+		})
 	}
 }
