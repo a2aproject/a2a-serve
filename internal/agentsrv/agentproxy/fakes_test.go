@@ -364,6 +364,20 @@ func (p *staticPeers) Peers(context.Context) ([]network.PeerInfo, error) { retur
 
 func (p *staticPeers) HTTPClient() *http.Client { return testHTTP }
 
+// probedPeers is a private network whose peers are known by URL and listed
+// once their card answers, as the cards of a real network are.
+type probedPeers struct {
+	network.Provider
+	cards      *network.CardCache
+	candidates []network.PeerInfo
+}
+
+func (p *probedPeers) Peers(ctx context.Context) ([]network.PeerInfo, error) {
+	return p.cards.ProbeAgents(ctx, testHTTP, p.candidates, nil), nil
+}
+
+func (p *probedPeers) HTTPClient() *http.Client { return testHTTP }
+
 type askedQuestion struct {
 	To     approvals.Chat
 	Header string

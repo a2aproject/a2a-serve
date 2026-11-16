@@ -70,6 +70,16 @@ func NewCardCache(agentTTL, noAgentTTL time.Duration, now func() time.Time) *Car
 
 func newCardCache() *CardCache { return NewCardCache(AgentCardTTL, NoAgentTTL, time.Now) }
 
+type refetchMissesKey struct{}
+
+// WithRefetchMisses returns a context that makes [CardCache.ProbeAgents]
+// fetch again the cards of hosts that served none when last probed. A user
+// who asks for the agents on the network wants to find one that started
+// since.
+func WithRefetchMisses(ctx context.Context) context.Context {
+	return context.WithValue(ctx, refetchMissesKey{}, true)
+}
+
 // ProbeAgents keeps the candidates which serve an A2A agent card, filling in
 // their description from it. Candidates come named by the network, and taken
 // are the network names of the other machines, such as this one and offline
@@ -105,7 +115,7 @@ func (c *CardCache) ProbeAgents(ctx context.Context, client *http.Client, candid
 // entry returns the cached card of the peer at u, or fetches it when it
 // expired. It reports false when ctx ended before the fetch.
 func (c *CardCache) entry(ctx context.Context, client *http.Client, u string) (cardEntry, bool) {
-	if e, ok := c.fresh(u); ok {
+	if e, ok := c.fresh(u); ok && (e.agent || ctx.Value(refetchMissesKey{}) == nil) {
 		return e, true
 	}
 	select {
