@@ -1131,7 +1131,7 @@ func TestExplainFailure(t *testing.T) {
 		},
 		{
 			name: "provider without a key", cfg: &agentdir.Config{Harness: "opencode", Model: "google/gemini-old"}, reported: "model not found: google/gemini-old",
-			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`; the agent reported: model not found: google/gemini-old",
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`; the agent reported: model not found: google/gemini-old",
 		},
 		{name: "agent that takes its model in its command", cfg: &agentdir.Config{Harness: "acp"}, reported: "model not found: x", want: "model not found: x"},
 		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},

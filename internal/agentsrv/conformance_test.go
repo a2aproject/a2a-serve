@@ -226,7 +226,7 @@ func TestConformanceSessionModel(t *testing.T) {
 		{name: "no model", wantState: a2a.TaskStateCompleted, wantText: "model: fake/default"},
 		{
 			name: "model of a provider without a key", model: "google/gemini-3-flash-preview", wantState: a2a.TaskStateFailed,
-			wantText: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`",
+			wantText: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`",
 		},
 		{
 			name: "unknown model of a provider with a key", model: "google/gemini-missing", secret: "GEMINI_API_KEY", wantState: a2a.TaskStateFailed,

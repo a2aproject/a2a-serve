@@ -145,7 +145,7 @@ func MissingKey(cfg *agentdir.Config) string {
 	if provider == "" {
 		return ""
 	}
-	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, key)
+	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s --restart`", provider, key)
 }
 
 // MissingProviderKey returns the provider of cfg's opencode model and the
