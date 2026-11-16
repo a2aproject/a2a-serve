@@ -140,6 +140,9 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 	if err != nil {
 		return nil, err
 	}
+	if role != "" && role != auth.RoleOwner && req.Sandbox != nil && !s.keepsSandbox(req.Name, *req.Sandbox) {
+		return nil, errChangesSandbox(req.Name, *req.Sandbox)
+	}
 	undo, err := s.changeSandbox(req.Name, req.Owner || role == auth.RoleOwner, req.Sandbox)
 	if err != nil {
 		return nil, err
