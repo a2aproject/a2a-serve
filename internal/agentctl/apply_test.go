@@ -468,6 +468,47 @@ func TestSetNotesNormalizedName(t *testing.T) {
 	}
 }
 
+func TestSetToolRuleOfAnMCPServerWarns(t *testing.T) {
+	t.Parallel()
+	const mcp = `{"mcpServers": {"gmail": {"command": "gmail-mcp"}}}`
+	tests := []struct {
+		name     string
+		settings agentdir.Settings
+		want     []string
+	}{
+		{
+			name:     "deny the server",
+			settings: agentdir.Settings{DenyTools: []string{"tool:gmail"}},
+			want:     []string{"--deny-tools tool:gmail matches no tool of the MCP server gmail; tool:gmail.* matches all its tools"},
+		},
+		{
+			name:     "allow the server",
+			settings: agentdir.Settings{AllowTools: []string{"tool:gmail"}},
+			want:     []string{"--allow-tools tool:gmail matches no tool of the MCP server gmail; tool:gmail.* matches all its tools"},
+		},
+		{name: "all its tools", settings: agentdir.Settings{DenyTools: []string{"tool:gmail.*"}}},
+		{name: "a tool of the agent", settings: agentdir.Settings{DenyTools: []string{"tool:webfetch"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Model: "openrouter/a/b", Secrets: []string{"OPENROUTER_API_KEY"}}, agentdir.Secrets{"OPENROUTER_API_KEY": "k"})
+			if err := os.WriteFile(filepath.Join(d.Root, ".mcp.json"), []byte(mcp), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), tc.settings, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+
+			if diff := cmp.Diff(tc.want, got.Warnings); diff != "" {
+				t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`

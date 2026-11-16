@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // Secret actions of a [SecretChange].
@@ -226,7 +227,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	res := &Result{
 		Name: next.Name, Path: d.ConfigPath(), Changes: agentdir.Diff(old, next),
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
-		Warnings: append(harness.Warnings(next), mcpWarnings(d, old, next)...),
+		Warnings: slices.Concat(harness.Warnings(next), mcpWarnings(d, old, next), toolRuleWarnings(d, old, next)),
 	}
 	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) || !slices.Equal(old.Inject, next.Inject) {
 		if w := harness.HostEgress(next).Warning; w != "" {
@@ -530,6 +531,47 @@ func mcpWarnings(d agentdir.Dir, old, next *agentdir.Config) []string {
 	var out []string
 	for _, u := range project.UnknownDisabled(servers, added) {
 		out = append(out, u.String())
+	}
+	return out
+}
+
+// toolRuleWarnings returns a warning for each tool entry that next adds to
+// --allow-tools or --deny-tools and that names an MCP server of the
+// project without a tool, so that it matches none of the server's tools.
+func toolRuleWarnings(d agentdir.Dir, old, next *agentdir.Config) []string {
+	type added struct{ flag, server string }
+	var entries []added
+	lists := []struct {
+		flag      string
+		old, next []string
+	}{{"--allow-tools", nil, next.Approvals.Allow}, {"--deny-tools", nil, next.Approvals.Deny}}
+	if old != nil {
+		lists[0].old, lists[1].old = old.Approvals.Allow, old.Approvals.Deny
+	}
+	for _, l := range lists {
+		for _, e := range l.next {
+			server, ok := strings.CutPrefix(e, toolrules.PrefixTool)
+			if ok && !strings.ContainsAny(server, ".*") && !slices.Contains(l.old, e) {
+				entries = append(entries, added{l.flag, server})
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	ws, err := d.WorkspaceMount(next)
+	if err != nil {
+		return nil
+	}
+	servers, err := project.LoadMCP(ws.Src)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if slices.ContainsFunc(servers, func(s project.MCPServer) bool { return s.Name == e.server }) {
+			out = append(out, fmt.Sprintf("%s %s%s matches no tool of the MCP server %s; %s%s.* matches all its tools", e.flag, toolrules.PrefixTool, e.server, e.server, toolrules.PrefixTool, e.server))
+		}
 	}
 	return out
 }
