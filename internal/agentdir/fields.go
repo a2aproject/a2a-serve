@@ -996,6 +996,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	}
 	before := cfg.referencedSecrets()
 	injected := cfg.InjectedSecrets()
+	hadNetwork := cfg.Network.URL()
 	var deleted []string
 	f, _ := lookupField(setting)
 	switch {
@@ -1025,6 +1026,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
 		cfg.Messengers.Email = nil
 	}
+	cfg.Network.dropProviderWithoutURL(hadNetwork)
 	// The key and the voice belong to the service, and are invalid without it.
 	if f.path == "voice.service" {
 		cfg.Voice = VoiceConfig{}
