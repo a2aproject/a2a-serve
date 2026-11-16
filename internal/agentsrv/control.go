@@ -193,13 +193,8 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	return s.answerWaiting(ctx, nil)
 }
 
-// peersRediscoverEvery bounds how often `a2a-serve peers` discovers the
-// agents on the private network, so it stops listing an agent soon after
-// it leaves.
-const peersRediscoverEvery = time.Second
-
 func (s *Server) listPeers(ctx context.Context) ([]network.PeerInfo, error) {
-	return s.clients.Rediscover(ctx, peersRediscoverEvery)
+	return s.clients.RefreshPeers(ctx)
 }
 
 // networkProblem describes h for the status, or returns nil when the

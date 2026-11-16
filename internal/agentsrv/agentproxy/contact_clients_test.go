@@ -694,6 +694,62 @@ func TestContactClientsLocate(t *testing.T) {
 	}
 }
 
+func TestContactClientsFindPeerStartedAfterMiss(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		find func(*testing.T, *ContactClients) string
+	}{
+		{name: "contact by name", find: func(t *testing.T, cc *ContactClients) string {
+			t.Helper()
+			u, _, err := cc.Locate(context.Background(), "reviewer", "")
+			if err != nil {
+				t.Fatalf("ContactClients.Locate() error = %v", err)
+			}
+			return u
+		}},
+		{name: "peers", find: func(t *testing.T, cc *ContactClients) string {
+			t.Helper()
+			peers, err := cc.RefreshPeers(context.Background())
+			if err != nil || len(peers) != 1 {
+				t.Fatalf("ContactClients.RefreshPeers() = %v, %v, want one peer", peers, err)
+			}
+			return peers[0].URL
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var started atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !started.Load() {
+					http.NotFound(w, r)
+					return
+				}
+				if _, err := io.WriteString(w, `{"name":"reviewer"}`); err != nil {
+					t.Errorf("writing the card: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			private := &probedPeers{
+				cards:      network.NewCardCache(10*time.Minute, time.Minute, time.Now),
+				candidates: []network.PeerInfo{{Name: "slim-reviewer", URL: srv.URL, Online: true, Node: "n1"}},
+			}
+			cc := newTestContactClients(t, openTestStore(t), private)
+			if peers, err := cc.Discover(context.Background()); err != nil || len(peers) != 0 {
+				t.Fatalf("ContactClients.Discover() before the agent started = %v, %v, want no peers", peers, err)
+			}
+			started.Store(true)
+
+			got := tc.find(t, cc)
+
+			if got != srv.URL {
+				t.Fatalf("URL of the peer started after a miss = %q, want %q", got, srv.URL)
+			}
+		})
+	}
+}
+
 func TestContactClientsSlowContactDoesNotStallOthers(t *testing.T) {
 	t.Parallel()
 	hanging := make(chan struct{})

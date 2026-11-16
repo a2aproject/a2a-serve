@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,6 +123,11 @@ func (cc *ContactClients) Discover(ctx context.Context) ([]network.PeerInfo, err
 	return cc.discoverWithin(ctx, 30*time.Second)
 }
 
+// rediscoverEvery bounds how often [ContactClients.RefreshPeers] bypasses
+// the cache of discoveries, so that `a2a-serve peers` stops listing an agent
+// soon after it leaves.
+const rediscoverEvery = time.Second
+
 // Rediscover lists agents on the private network bypassing the cache,
 // unless it did so within minInterval.
 func (cc *ContactClients) Rediscover(ctx context.Context, minInterval time.Duration) ([]network.PeerInfo, error) {
@@ -133,6 +139,25 @@ func (cc *ContactClients) Rediscover(ctx context.Context, minInterval time.Durat
 	cc.rediscovered = time.Now()
 	cc.mu.Unlock()
 	return cc.discoverWithin(ctx, 0)
+}
+
+// discoverWith lists the agents on the private network, cached briefly. When
+// found says the cached list lacks what the user asks for, it refreshes the
+// list.
+func (cc *ContactClients) discoverWith(ctx context.Context, found func([]network.PeerInfo) bool) ([]network.PeerInfo, error) {
+	peers, err := cc.Discover(ctx)
+	if err != nil || found(peers) {
+		return peers, err
+	}
+	return cc.RefreshPeers(ctx)
+}
+
+// RefreshPeers lists the agents on the private network for a user who asks
+// for them: it bypasses the cache, unless it did so a moment ago, and
+// fetches again the cards of hosts that served none, because an agent may
+// have started since.
+func (cc *ContactClients) RefreshPeers(ctx context.Context) ([]network.PeerInfo, error) {
+	return cc.Rediscover(network.WithRefetchMisses(ctx), rediscoverEvery)
 }
 
 func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Duration) ([]network.PeerInfo, error) {
@@ -199,7 +224,9 @@ func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, s
 		u, err := cc.advertisedURL(ctx, name)
 		return u, ViaPrivate, err
 	}
-	peers, err := cc.Discover(ctx)
+	peers, err := cc.discoverWith(ctx, func(peers []network.PeerInfo) bool {
+		return slices.ContainsFunc(peers, func(p network.PeerInfo) bool { return strings.EqualFold(p.Name, name) })
+	})
 	if err != nil {
 		return "", "", err
 	}
@@ -216,7 +243,11 @@ func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, s
 // private network. The advertisement only says it exists, so it can't send
 // calls outside the private network.
 func (cc *ContactClients) advertisedURL(ctx context.Context, key string) (string, error) {
-	peers, err := cc.Discover(ctx)
+	peers, err := cc.discoverWith(ctx, func(peers []network.PeerInfo) bool {
+		return slices.ContainsFunc(cc.ads.List(peers), func(l gossip.Listing) bool {
+			return strings.EqualFold(l.Key, key) && l.Agent != nil
+		})
+	})
 	if err != nil {
 		return "", err
 	}
