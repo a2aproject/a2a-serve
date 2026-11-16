@@ -28,8 +28,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 func TestRelayReachesTheBoundaryOfItsKey(t *testing.T) {

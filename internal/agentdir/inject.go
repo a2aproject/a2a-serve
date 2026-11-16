@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // InjectRule is a header the server adds to the Docker sandbox's HTTPS

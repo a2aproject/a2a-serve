@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // Limits of the requests to the hosts that get headers, per boundary.

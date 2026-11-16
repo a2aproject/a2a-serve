@@ -27,11 +27,11 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // egressSockets decides the connections of the agent's containers with

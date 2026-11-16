@@ -45,9 +45,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // harnessSocketName is the name of the Unix socket an agent process reaches

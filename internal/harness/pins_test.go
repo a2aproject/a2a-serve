@@ -22,8 +22,8 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
-	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxtest"
 )
 
 func mkdir(t *testing.T, dir string) string {

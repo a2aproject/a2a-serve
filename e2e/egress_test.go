@@ -29,7 +29,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // publicTarget is a public host the sandbox reaches, overridable for

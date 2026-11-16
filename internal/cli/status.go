@@ -32,12 +32,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
 )
 
 // urlFurthest is the value of a bare --url: the URL that reaches furthest.

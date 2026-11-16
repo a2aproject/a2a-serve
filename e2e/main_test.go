@@ -28,8 +28,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/harness"
-	sbx "github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
+	sbx "github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // binDir holds a2a, a2a-serve, fakeacp and, for the harness tests, mcpecho;
@@ -164,7 +164,7 @@ func buildRelayImage() error {
 		return err
 	}
 	const image = "a2a-e2e-relay:latest"
-	build := exec.Command("docker", "build", "-t", image, "-f", "internal/sandboxnet/Dockerfile", ".")
+	build := exec.Command("docker", "build", "-t", image, "-f", "sandbox/sandboxnet/Dockerfile", ".")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("docker build of the relay image: %w\n%s", err, out)

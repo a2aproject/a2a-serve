@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // boundaryFallback starts the agent's container with the egress boundary

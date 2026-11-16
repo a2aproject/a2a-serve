@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxtest"
 	"github.com/google/go-cmp/cmp"
 )
 

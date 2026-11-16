@@ -22,7 +22,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 func main() {

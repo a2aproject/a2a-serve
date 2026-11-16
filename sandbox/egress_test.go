@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxtest"
 )
 
 func TestPublishes(t *testing.T) {

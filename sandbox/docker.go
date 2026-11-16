@@ -33,7 +33,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // DockerRunner runs a process in a container.

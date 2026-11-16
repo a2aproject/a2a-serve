@@ -33,9 +33,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // maxRememberedUsers bounds the users whose principal [sandboxes] keeps in

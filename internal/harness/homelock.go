@@ -22,7 +22,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
+	"github.com/a2aproject/a2a-serve/sandbox"
 )
 
 // The configuration of the agents in their homes which can change what they

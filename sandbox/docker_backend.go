@@ -27,7 +27,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // exposeDir is where a container mounts the directory of an exposed socket.

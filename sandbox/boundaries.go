@@ -27,9 +27,9 @@ import (
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/sandbox/egress"
+	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 // Boundaries opens the egress boundaries of containers: an egress socket

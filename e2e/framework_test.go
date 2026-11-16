@@ -32,8 +32,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	sbx "github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
+	sbx "github.com/a2aproject/a2a-serve/sandbox"
 )
 
 const cmdTimeout = time.Minute
