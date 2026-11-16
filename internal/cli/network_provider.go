@@ -84,6 +84,10 @@ func installNetworkProvider(ctx context.Context, cfg *globalConfig, spec string,
 			return "", errors.New("the network provider wasn't installed")
 		}
 	}
+	// An interrupt cancels the run of the provider, so the install removes
+	// its temporary copy.
+	ctx, stop := signalContext(ctx)
+	defer stop()
 	p, version, err := inst.Trust(ctx, c)
 	if err != nil {
 		return "", err

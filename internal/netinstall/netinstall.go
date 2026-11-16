@@ -19,6 +19,7 @@
 package netinstall
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -181,6 +182,9 @@ type Installer struct {
 	Logf func(string, ...any)
 	// Pins replace the archives of [WellKnown], for tests.
 	Pins map[string]map[string]Archive
+	// DescribeTimeout bounds the answer of a provider to describe, 30
+	// seconds if zero.
+	DescribeTimeout time.Duration
 }
 
 func (i *Installer) archive(e Entry) (Archive, bool) {
@@ -514,9 +518,16 @@ func (i *Installer) describe(ctx context.Context, c *Candidate) (netprovider.Des
 	if err != nil {
 		return netprovider.Description{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := cmp.Or(i.DescribeTimeout, 30*time.Second)
+	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	d, err := p.Describe(ctx)
+	d, err := p.Describe(dctx)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		// The limit is fixed, so the error doesn't wrap the deadline,
+		// which a command reports as its --timeout.
+		err = fmt.Errorf("the network provider from %s didn't say what it is within %s", c.Source, timeout)
+		return netprovider.Description{}, errors.Join(err, p.Close())
+	}
 	if err := errors.Join(err, p.Close()); err != nil {
 		return netprovider.Description{}, fmt.Errorf("asking the network provider from %s what it is: %w", c.Source, err)
 	}
