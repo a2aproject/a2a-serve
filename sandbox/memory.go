@@ -394,20 +394,33 @@ func (f *memoryFiles) waitRunning(ctx context.Context) error {
 // longer, with what Docker knows about its end. The file system is gone
 // then: Docker unmounts a tmpfs volume that no container uses.
 func (f *memoryFiles) checkHolder(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.Error}}", f.holder).Output()
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.Error}}", f.holder)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil && bytes.Contains(stderr.Bytes(), []byte("No such object")) {
+		return fmt.Errorf("the file system in memory is gone: its container %s doesn't exist", f.holder)
+	}
 	if err != nil {
-		return fmt.Errorf("the file system in memory is gone: its container %s doesn't exist: %w", f.holder, exitErr(err))
+		return fmt.Errorf("checking the container of the file system in memory: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
 	}
 	state := strings.TrimSpace(string(out))
 	if strings.HasPrefix(state, "running ") {
 		return nil
 	}
-	logs, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "5", f.holder).CombinedOutput()
+	// A Go runtime that crashes says why first, before its stack.
+	logs, err := exec.CommandContext(ctx, "docker", "logs", f.holder).CombinedOutput()
 	if err != nil {
 		logs = []byte("reading its log: " + err.Error())
 	}
+	if len(logs) > maxHolderLog {
+		logs = logs[:maxHolderLog]
+	}
 	return fmt.Errorf("the file system in memory is gone: its container %s stopped (status, exit code, OOM killed, error: %s): %s", f.holder, state, bytes.TrimSpace(logs))
 }
+
+// maxHolderLog bounds the log of a stopped holder in an error.
+const maxHolderLog = 1024
 
 // writeAll writes files, by their paths relative to the file system.
 func (f *memoryFiles) writeAll(ctx context.Context, files map[string][]byte) error {
@@ -448,7 +461,8 @@ func startHolder(ctx context.Context, name, image, volume, dir, launcher string,
 	}
 	args = append(args, image, "sandbox-init", "--hold")
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("starting the container of the file system in memory: %w: %s", err, bytes.TrimSpace(out))
+		// docker run leaves a container that it created but couldn't start.
+		return errors.Join(fmt.Errorf("starting the container of the file system in memory: %w: %s", err, bytes.TrimSpace(out)), RemoveContainer(ctx, name))
 	}
 	return nil
 }
