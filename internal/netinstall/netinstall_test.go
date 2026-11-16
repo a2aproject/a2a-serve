@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -257,7 +258,7 @@ func TestCustomProviderTrust(t *testing.T) {
 		t.Fatalf("Installer.Fetch() again = %+v, %v, want trusted", c, err)
 	}
 
-	testutil.WriteExecutable(t, src, append(data, 0))
+	testutil.WriteExecutable(t, src, append(slices.Clip(data), 0))
 	if c, err := inst.Fetch(ctx, src); err != nil || !c.Changed {
 		t.Fatalf("Installer.Fetch() after a change = %+v, %v, want changed", c, err)
 	}
@@ -347,7 +348,7 @@ func TestTrustRemovesTheBinaryItSupersedes(t *testing.T) {
 					t.Fatalf("Installer.Trust(other) error = %v", err)
 				}
 			}
-			testutil.WriteExecutable(t, src, append(data, 0))
+			testutil.WriteExecutable(t, src, append(slices.Clip(data), 0))
 			c, err = inst.Fetch(ctx, src)
 			if err != nil {
 				t.Fatalf("Installer.Fetch(changed) error = %v", err)
