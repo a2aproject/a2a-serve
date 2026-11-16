@@ -30,6 +30,7 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -111,12 +112,28 @@ const (
 	maxRateClients = 10000
 )
 
+// Option configures a [Front].
+type Option func(*options)
+
+type options struct {
+	now func() time.Time
+}
+
+// WithClock makes the rate limits of the front read the time from now.
+func WithClock(now func() time.Time) Option {
+	return func(o *options) { o.now = now }
+}
+
 // New returns the front of a relay that reports info, proxies the backend
 // that routes describes, and serves control, which checks the admin token
 // itself, at [control.RemotePath], and signIn at [signin.Path], or nil when
 // agents can't sign in. It answers 503 on proxied routes until
 // [Front.Open].
-func New(info any, routes Routes, ctl, signIn http.Handler) *Front {
+func New(info any, routes Routes, ctl, signIn http.Handler, opts ...Option) *Front {
+	o := options{now: time.Now}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	// The control API and the identity provider serve callers before they
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
@@ -126,11 +143,11 @@ func New(info any, routes Routes, ctl, signIn http.Handler) *Front {
 		control:     unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
 		proxied:     httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
 		onboarding:  httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
-		enrollments: httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
+		enrollments: httpserver.NewKeyedRateClock(enrollmentRate, enrollmentBurst, maxRateClients, client, o.now),
 		transport:   upstreamTransport(),
 	}
-	f.ingress = httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, f.clientOfAgent)
-	f.ingressClient = httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client)
+	f.ingress = httpserver.NewKeyedRateClock(ingressRate, ingressBurst, maxRateClients, f.clientOfAgent, o.now)
+	f.ingressClient = httpserver.NewKeyedRateClock(ingressClientRate, ingressClientBurst, maxRateClients, client, o.now)
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
 	}

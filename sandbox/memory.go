@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os/exec"
 	"path"
@@ -125,6 +126,18 @@ func removeVolume(ctx context.Context, name string) error {
 		}
 		if !bytes.Contains(out, []byte("volume is in use")) || ctx.Err() != nil {
 			return fmt.Errorf("docker volume rm %s: %w: %s", name, err, bytes.TrimSpace(out))
+		}
+		// A container that Docker failed to remove after it exited, which
+		// leaves it dead, keeps the volume in use for good.
+		users, err := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "volume="+name, "--filter", "status=dead", "--filter", "status=exited").Output()
+		if err != nil {
+			slog.Warn("listing the stopped containers that use the file system in memory", "volume", name, "error", exitErr(err))
+		} else {
+			for _, id := range strings.Fields(string(users)) {
+				if err := RemoveContainer(ctx, id); err != nil {
+					slog.Warn("removing a stopped container that uses the file system in memory", "container", id, "error", err)
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():

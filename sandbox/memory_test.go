@@ -201,3 +201,30 @@ func TestDockerMemoryFiles(t *testing.T) {
 		t.Fatalf("Sandbox.Start() after the holder died error = %v, want the file system gone", err)
 	}
 }
+
+func TestRemoveVolumeRemovesStoppedUsers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	if _, err := CheckDocker(ctx); err != nil {
+		t.Skipf("docker isn't available: %v", err)
+	}
+	_, image := buildTestContainer(t)
+	name := "a2a-sandbox-test-" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
+	if err := createVolume(ctx, name, &Memory{Size: "1m"}, nil); err != nil {
+		t.Fatalf("createVolume() error = %v", err)
+	}
+	if out, err := exec.Command("docker", "run", "--name", name, "-v", name+":/w", image, "/probe", "write:/w/a").CombinedOutput(); err != nil {
+		t.Fatalf("docker run error = %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		if err := RemoveContainer(context.Background(), name); err != nil {
+			t.Errorf("RemoveContainer() error = %v", err)
+		}
+	})
+	if err := removeVolume(ctx, name); err != nil {
+		t.Fatalf("removeVolume() with a stopped container using it error = %v", err)
+	}
+	if err := exec.Command("docker", "volume", "inspect", name).Run(); err == nil {
+		t.Fatalf("volume %s exists after removeVolume()", name)
+	}
+}
