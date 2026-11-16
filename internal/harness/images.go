@@ -38,21 +38,31 @@ func LocalImage(harness string) string {
 	return "a2a-harness-" + harness + ":" + ImageTag
 }
 
-// EnsureImage makes image, or the profile's image when empty, available to
-// docker: it uses a local copy or pulls it. Only the profile's own image
-// falls back to building the harness's embedded Dockerfile when the pull
-// fails. It returns the image to run and a line describing what it did.
-func EnsureImage(ctx context.Context, image string, profile Profile, progress io.Writer) (string, string, error) {
+// imageOf returns image, or the profile's image when empty, and the
+// image to build when the pull fails: the harness's embedded Dockerfile,
+// for the profile's own image only.
+func imageOf(image string, profile Profile) (string, *sandbox.LocalBuild, error) {
 	harness := profile.Name()
 	if image == "" {
 		image = profile.Image()
 	}
 	if image == "" {
-		return "", "", fmt.Errorf("agent %q has no container image; pass --image or --sandbox local", harness)
+		return "", nil, fmt.Errorf("agent %q has no container image; pass --image or --sandbox local", harness)
 	}
 	var local *sandbox.LocalBuild
 	if df, ok := Dockerfile(harness); ok && image == profile.Image() {
 		local = &sandbox.LocalBuild{Tag: LocalImage(harness), Dockerfile: df, Reason: strings.TrimPrefix(image, ImageRepo) + " is not published"}
+	}
+	return image, local, nil
+}
+
+// EnsureImage makes image, or the profile's image when empty, available to
+// docker as the Docker backend does, and returns the image to run and a
+// line describing what it did.
+func EnsureImage(ctx context.Context, image string, profile Profile, progress io.Writer) (string, string, error) {
+	image, local, err := imageOf(image, profile)
+	if err != nil {
+		return "", "", err
 	}
 	return sandbox.EnsureImage(ctx, image, local, progress)
 }

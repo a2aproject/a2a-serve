@@ -16,7 +16,6 @@ package agentsrv
 
 import (
 	"cmp"
-	"errors"
 	"log/slog"
 	"maps"
 	"net"
@@ -55,30 +54,6 @@ type egressSockets struct {
 	nextWatch int
 	// ca signs the certificates of the hosts that get headers.
 	ca *sandboxnet.CA
-
-	// probeMu serializes the check of the containers' egress setup, which
-	// runs once for the server, and probed and probeErr are its result.
-	probeMu  sync.Mutex
-	probed   bool
-	probeErr error
-}
-
-// probeOnce runs probe, the check of a container's egress setup, and
-// returns its result to every later call once it passed or found that the
-// setup can't work on this host. Other failures, such as an error of the
-// Docker daemon, aren't kept, and the next call checks again. Each start
-// of the server checks again.
-func (e *egressSockets) probeOnce(probe func() error) error {
-	e.probeMu.Lock()
-	defer e.probeMu.Unlock()
-	if e.probed {
-		return e.probeErr
-	}
-	err := probe()
-	if err == nil || errors.Is(err, sandbox.ErrNoBoundary) {
-		e.probeErr, e.probed = err, true
-	}
-	return err
 }
 
 // watch adds fellBack, which tells why a container has Docker's own
@@ -207,13 +182,9 @@ func allowedByRule(p egress.Policy, dest string) bool {
 // boundary adds the headers of inject.
 func (s *Server) egressSandbox(spec *harness.Spec, inject []sandboxnet.Injection) error {
 	cfg := s.rt.Config()
-	if cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted {
-		spec.Launcher = s.egress.boundaries.Launcher()
-	}
 	spec.EgressMode = cfg.Egress.Mode
 	spec.EgressAllow = cfg.Egress.Allow
 	spec.Inject = cfg.Inject
-	spec.ProbeEgress = s.egress.probeOnce
 	var ca *sandboxnet.CA
 	if len(inject) > 0 {
 		var err error
@@ -222,7 +193,7 @@ func (s *Server) egressSandbox(spec *harness.Spec, inject []sandboxnet.Injection
 		}
 		spec.EgressCA = ca.PEM()
 	}
-	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode, inject, ca)
+	spec.OpenEgress = s.egress.opener(spec.Base.Name, spec.EgressMode, inject, ca)
 	return nil
 }
 

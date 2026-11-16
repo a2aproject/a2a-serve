@@ -58,6 +58,17 @@ func (f *boundaryFallback) Start(ctx context.Context) (io.ReadWriteCloser, error
 	return f.open.Start(ctx)
 }
 
+// Info describes the sandbox that the next start runs.
+func (f *boundaryFallback) Info() sandbox.Info {
+	f.mu.Lock()
+	fellBack := f.reason != ""
+	f.mu.Unlock()
+	if fellBack {
+		return f.open.Info()
+	}
+	return f.boundary.Info()
+}
+
 func (f *boundaryFallback) Close(ctx context.Context) error {
 	return errors.Join(f.boundary.Close(ctx), f.open.Close(ctx))
 }
@@ -70,18 +81,4 @@ func (f *boundaryFallback) problem() string {
 		return ""
 	}
 	return noBoundary("the agent's container can't set up its network: " + f.reason)
-}
-
-// withClose returns sb, whose Close also calls closeFn.
-func withClose(sb sandbox.Sandbox, closeFn func() error) sandbox.Sandbox {
-	return closer{Sandbox: sb, closeFn: closeFn}
-}
-
-type closer struct {
-	sandbox.Sandbox
-	closeFn func() error
-}
-
-func (c closer) Close(ctx context.Context) error {
-	return errors.Join(c.Sandbox.Close(ctx), c.closeFn())
 }

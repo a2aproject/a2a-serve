@@ -63,6 +63,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
+	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
@@ -153,6 +154,8 @@ type Server struct {
 	policies *policies
 	// egress opens the egress sockets of containers.
 	egress *egressSockets
+	// docker runs the agent processes with --sandbox docker.
+	docker *sandbox.Docker
 	// existed is set when the agent's database existed before this start,
 	// for an agent created by an earlier version.
 	existed bool
@@ -316,6 +319,7 @@ func Run(ctx context.Context, opts Options) error {
 	s.policies = newPolicies(s.dir)
 	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
+	s.docker = sandbox.NewDocker(s.dir.EnvFilesDir(), s.egress.boundaries.Launcher)
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {
 		s.existed = true
 	}
@@ -913,8 +917,8 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 // localSandboxWarning warns when an agent without a sandbox may be called
 // by others than you: their conversations run in separate processes, but
 // on the host as you, so they can read each other's files and yours.
-func localSandboxWarning(sandbox string, a *access.Description) string {
-	if sandbox != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
+func localSandboxWarning(kind string, a *access.Description) string {
+	if kind != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
 		return ""
 	}
 	return "the agent runs without a sandbox, so everyone who may call it can read your files and the conversations of others; use --sandbox docker unless you trust them all"

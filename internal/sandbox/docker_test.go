@@ -505,9 +505,9 @@ case $(grep -c check `+calls+`) in
 `)
 			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
 			var stderr strings.Builder
-			sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{Stderr: &stderr})
+			sb, err := r.sandbox(Command{Path: "agent", Args: []string{"it's"}}, true, Options{Stderr: &stderr}, Info{}, nil)
 			if err != nil {
-				t.Fatalf("DockerRunner.Sandbox() error = %v", err)
+				t.Fatalf("DockerRunner.sandbox() error = %v", err)
 			}
 			t.Cleanup(func() {
 				if err := sb.Close(context.Background()); err != nil {
@@ -546,15 +546,15 @@ func TestDockerSandboxRunsCommand(t *testing.T) {
 	sandboxtest.FakeDocker(t, `case "$1" in run) shift; printf '%s\n' "$@" ;; esac`)
 	checks := 0
 	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", EnvDir: t.TempDir(), Env: []string{"KEY=secret"}}
-	sb, err := r.Sandbox(Command{Path: "agent", Args: []string{"acp"}, Dir: "/w"}, true, Options{Check: func() error {
+	sb, err := r.sandbox(Command{Path: "agent", Args: []string{"acp"}, Dir: "/w"}, true, Options{Check: func() error {
 		checks++
 		if checks > 1 {
 			return errors.New("refused")
 		}
 		return nil
-	}})
+	}}, Info{}, nil)
 	if err != nil {
-		t.Fatalf("DockerRunner.Sandbox() error = %v", err)
+		t.Fatalf("DockerRunner.sandbox() error = %v", err)
 	}
 	rwc, err := sb.Start(context.Background())
 	if err != nil {
@@ -581,7 +581,14 @@ func TestLocalSandbox(t *testing.T) {
 	dir := t.TempDir()
 	refuse := errors.New("refused")
 	var checkErr error
-	sb := NewLocal(Command{Path: "sh", Args: []string{"-c", `pwd; echo "$X"; cat`}, Dir: dir, Env: []string{"X=1"}}, Options{Check: func() error { return checkErr }})
+	sb, err := Local{}.Prepare(context.Background(), Spec{
+		Command: Command{Path: "sh", Args: []string{"-c", `pwd; echo "$X"; echo "$S"; cat`}, Dir: dir, Env: []string{"X=1"}},
+		Expose:  []Socket{{Path: "/run/server.sock", Env: "S"}},
+		Check:   func() error { return checkErr },
+	})
+	if err != nil {
+		t.Fatalf("Local.Prepare() error = %v", err)
+	}
 	rwc, err := sb.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Sandbox.Start() error = %v", err)
@@ -601,7 +608,7 @@ func TestLocalSandbox(t *testing.T) {
 	if err := rwc.Close(); err != nil {
 		t.Fatalf("closing the process error = %v", err)
 	}
-	if want := dir + "\n1\nin\n"; out.String() != want {
+	if want := dir + "\n1\n/run/server.sock\nin\n"; out.String() != want {
 		t.Fatalf("Sandbox.Start() output = %q, want %q", out.String(), want)
 	}
 	checkErr = refuse

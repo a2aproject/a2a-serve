@@ -149,16 +149,17 @@ func (r *DockerRunner) startCommand(ctx context.Context, runArgs []string) *exec
 	return cmd
 }
 
-// Sandbox returns the [Sandbox] that runs c in the container of r. With
-// checkBoundary, every start first runs the check of the launcher's setup,
-// and fails with an [*EgressSetupError] when the setup can't work on this
-// host. Close calls [DockerRunner.Stop].
-func (r *DockerRunner) Sandbox(c Command, checkBoundary bool, opts Options) (Sandbox, error) {
+// sandbox returns the sandbox described by info that runs c in the
+// container of r. With checkBoundary, every start first runs the check of
+// the launcher's setup, and fails with an [*EgressSetupError] when the
+// setup can't work on this host. Close calls [DockerRunner.Stop], then
+// closeEgress unless it is nil.
+func (r *DockerRunner) sandbox(c Command, checkBoundary bool, opts Options, info Info, closeEgress func() error) (*dockerSandbox, error) {
 	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
 	if err != nil {
 		return nil, err
 	}
-	return &dockerSandbox{r: r, runArgs: r.runArgs(c, envFile, false), envFile: envFile, checkBoundary: checkBoundary && r.Egress != nil, opts: opts}, nil
+	return &dockerSandbox{r: r, runArgs: r.runArgs(c, envFile, false), envFile: envFile, checkBoundary: checkBoundary && r.Egress != nil, opts: opts, info: info, closeEgress: closeEgress}, nil
 }
 
 type dockerSandbox struct {
@@ -167,6 +168,10 @@ type dockerSandbox struct {
 	envFile       string
 	checkBoundary bool
 	opts          Options
+	info          Info
+	// closeEgress closes the egress boundary and removes the egress
+	// container, or is nil.
+	closeEgress func() error
 }
 
 func (s *dockerSandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
@@ -190,7 +195,15 @@ func (s *dockerSandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 	return startProcess(s.r.startCommand(context.WithoutCancel(ctx), s.runArgs), s.opts.Stderr)
 }
 
-func (s *dockerSandbox) Close(ctx context.Context) error { return s.r.Stop(ctx) }
+func (s *dockerSandbox) Close(ctx context.Context) error {
+	err := s.r.Stop(ctx)
+	if s.closeEgress == nil {
+		return err
+	}
+	return errors.Join(err, s.closeEgress())
+}
+
+func (s *dockerSandbox) Info() Info { return s.info }
 
 // EgressSetupError is the failure of a container to set up its network on
 // this host, which the server answers by giving the container Docker's
