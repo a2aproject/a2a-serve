@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -328,6 +329,26 @@ func TestConformanceQueuedConcurrentTask(t *testing.T) {
 		t.Fatalf("CancelTask() error = %v", err)
 	}
 	wantResult(t, waitState(t, c, queued.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
+func TestConformanceQueuedTaskFailsWhenTurnAheadAsks(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	first := send(t, c, userText("remember blue", "", ""))
+	asking := sendAsync(t, c, userText("ask 3s", "", first.ContextID))
+	waitState(t, c, asking.ID, a2a.TaskStateWorking)
+	queued := sendAsync(t, c, userText("remember red", "", first.ContextID))
+
+	waitState(t, c, asking.ID, a2a.TaskStateInputRequired)
+	got := waitState(t, c, queued.ID, a2a.TaskStateFailed)
+
+	want := fmt.Sprintf("task %s in conversation %s waits for an answer to \"git push\"; answer it first with one of once, always, reject, as in `a2a send -a %s --task-id %s once`", asking.ID, first.ContextID, ts.localURL(), asking.ID)
+	if text := a2atext.Message(got.Status.Message); !strings.Contains(text, want) {
+		t.Fatalf("queued task status = %q, want it to say %q", text, want)
+	}
+	wantResult(t, send(t, c, userText("approve", string(asking.ID), first.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+	wantResult(t, send(t, c, userText("recall", "", first.ContextID)), a2a.TaskStateCompleted, "You said: blue")
 }
 
 func TestUnauthenticatedCallerIsRejected(t *testing.T) {

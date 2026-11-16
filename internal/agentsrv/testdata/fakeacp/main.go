@@ -21,6 +21,7 @@
 //	ask twice        two permission requests in one turn
 //	ask slow         a permission request, then chunks until canceled
 //	ask big          a permission request with a 20 KiB tool input
+//	ask <d>          a permission request after duration d
 //	slow [<d>]       chunks for duration d, or until canceled
 //	stall            nothing until canceled, like opencode retrying a model
 //	                 that refuses requests
@@ -546,6 +547,14 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			a.chunk(sid, "Pushed twice ("+first+", "+second+").")
 			end("end_turn")
 			return
+		}
+		if d, err := time.ParseDuration(arg); err == nil {
+			select {
+			case <-canceled:
+				end("cancelled")
+				return
+			case <-time.After(d):
+			}
 		}
 		var option string
 		var ok bool
