@@ -143,20 +143,25 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if ready := opts.Ready; ready != nil {
 		srvOpts.Ready = func(*agentsrv.Server) { ready() }
 	}
-	if err := agentsrv.Run(ctx, srvOpts); err != nil {
+	err = agentsrv.Run(ctx, srvOpts)
+	// A stop that arrives while the server starts cancels the step it is
+	// in, which fails with that step's error.
+	if err != nil && ctx.Err() == nil {
 		logStop(slog.Default(), os.Getpid(), err)
 		return err
 	}
-	slog.Info("the server stopped")
+	logCleanStop(slog.Default(), os.Getpid())
 	return nil
 }
 
 // checkNotRunning fails if a server holds the lock of dir. The lock
-// is released at once: the server takes it again when it starts.
+// is released at once: the server takes it again when it starts. Callers
+// ask the control socket first, so a server that holds the lock without
+// answering is starting or stopping.
 func checkNotRunning(dir agentdir.Dir) error {
 	release, err := dir.LockWithin(agentdir.ProbeWait)
 	if errors.Is(err, fsutil.ErrLocked) {
-		return fmt.Errorf("the server is already running in %s (a2a-serve status)", dir.Root)
+		return fmt.Errorf("the server in %s is starting or stopping; check it with `a2a-serve status`, or try again in a moment", dir.Root)
 	}
 	if err != nil {
 		return fmt.Errorf("locking the agent directory: %w", err)
@@ -341,6 +346,9 @@ type relay struct {
 	// stopErr is the error of the server's stop record.
 	stopErr string
 	stopped bool
+	// clean is set when the server stopped without an error before it was
+	// ready, as when `a2a-serve stop` stopped it.
+	clean bool
 }
 
 // read relays the lines of the log at path after offset, and returns the
@@ -368,6 +376,9 @@ func (r *relay) line(l string) error {
 			r.stopped, r.stopErr = true, logAttr(l, "error")
 			// The server prints its error after the record.
 			r.held, r.inError = nil, false
+		}
+		if isCleanStop(l) && r.own(l) {
+			r.stopped, r.clean = true, true
 		}
 		return nil
 	}
@@ -401,6 +412,11 @@ const (
 
 // exitError returns the error of a server that exited.
 func (r *relay) exitError() error {
+	if r.clean && len(r.held) == 0 {
+		e := clierr.Wrap(clierr.CodeInternal, errors.New("the server was stopped before it was ready"))
+		e.Hint = "start it again with `a2a-serve start --detach`"
+		return e
+	}
 	if len(r.held) > 0 {
 		e := clierr.Wrap(clierr.CodeInternal, errors.New("the server exited: "+strings.TrimPrefix(r.held[0], errorPrefix)))
 		if hint := r.held[len(r.held)-1]; strings.HasPrefix(hint, hintPrefix) {

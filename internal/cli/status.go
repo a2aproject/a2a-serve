@@ -128,6 +128,12 @@ func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
 	if agent != "" {
 		fmt.Fprintf(&sb, " (%s)", agent)
 	}
+	if lifecycle.ServerRunning(d) {
+		fmt.Fprintf(&sb, " in %s is starting or stopping; check again in a moment, or see `a2a-serve logs`\n", d.Root)
+		writeConfigProblem(&sb, problem)
+		_, err := fmt.Fprint(cfg.Out, sb.String())
+		return err
+	}
 	start := "start it with `a2a-serve start --detach`"
 	if !d.Exists() {
 		start = "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"

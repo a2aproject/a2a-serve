@@ -96,8 +96,8 @@ func TestStartForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 	}
 
 	err = Start(context.Background(), dir, StartOptions{Out: io.Discard, Quiet: true})
-	if err == nil || !strings.Contains(err.Error(), "already running") {
-		t.Fatalf("Start() error = %v, want an already running error", err)
+	if err == nil || !strings.Contains(err.Error(), "is starting or stopping") {
+		t.Fatalf("Start() error = %v, want a starting or stopping error", err)
 	}
 	data, err := os.ReadFile(dir.LogPath())
 	if err != nil {
@@ -193,6 +193,15 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 				Out:     "✓ opencode is running (ACP)\n",
 				Message: "the server exited: listening on localhost:1: address already in use",
 				Hint:    "pick another port",
+			},
+		},
+		{
+			name: "stopped while starting",
+			log:  "pulling the harness image\n" + cleanStopRecord(42),
+			want: result{
+				Out:     "pulling the harness image\n",
+				Message: "the server was stopped before it was ready",
+				Hint:    "start it again with `a2a-serve start --detach`",
 			},
 		},
 		{
@@ -341,6 +350,12 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 }
 
 // stopRecord is the record a server with pid logs when it stops with err.
+func cleanStopRecord(pid int) string {
+	var b bytes.Buffer
+	logCleanStop(slog.New(slog.NewTextHandler(&b, nil)), pid)
+	return b.String()
+}
+
 func stopRecord(pid int, err string) string {
 	var b bytes.Buffer
 	logStop(slog.New(slog.NewTextHandler(&b, nil)), pid, errors.New(err))
