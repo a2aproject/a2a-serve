@@ -157,7 +157,12 @@ func TestEventOverMessageLimitsRefused(t *testing.T) {
 		{
 			name:    "too much text in artifacts",
 			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewTextPart(strings.Repeat("a", a2alimit.MaxText))}}, {Parts: []*a2a.Part{a2a.NewTextPart("b")}}}},
-			wantErr: fmt.Sprintf("the text of a reply may have at most %d bytes, got %d", a2alimit.MaxText, a2alimit.MaxText+1),
+			wantErr: fmt.Sprintf("the text and data of a reply may have at most %d bytes, got %d", a2alimit.MaxText, a2alimit.MaxText+1),
+		},
+		{
+			name:    "too much data in artifacts",
+			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewDataPart(strings.Repeat("a", a2alimit.MaxText))}}}},
+			wantErr: fmt.Sprintf("the text and data of a reply may have at most %d bytes, got %d", a2alimit.MaxText, a2alimit.MaxText+2),
 		},
 		{
 			name:    "too much metadata",
