@@ -151,6 +151,17 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
         self.assertIn("session/cancel", methods)
 
+    async def test_last_event_completes_the_turn(self):
+        tests = [("completed", "hello"), ("question", "ask"), ("failed", "crash")]
+        for name, text in tests:
+            with self.subTest(name):
+                _, runner = self.agent()
+                session = await self.session(runner)
+
+                got = await self.turn(runner, session, text)
+
+                self.assertEqual([bool(ev.turn_complete) for ev in got], [False] * (len(got) - 1) + [True])
+
     async def test_permissions(self):
         tests = [
             ("allowed kind", {"allow_tools": ["execute"]}, "Pushed (allow)."),

@@ -463,7 +463,7 @@ class AcpAgent(BaseAgent):
         parts = (status.get("message") or {}).get("parts", [])
         message = "".join(p.get("text", "") for p in parts)
         if state == "TASK_STATE_COMPLETED":
-            return [self._event(ctx, text="".join(reply))]
+            return [self._event(ctx, text="".join(reply), turn_complete=True)]
         if state == "TASK_STATE_INPUT_REQUIRED":
             with self._lock:
                 self._pending[key] = task_id
@@ -473,7 +473,7 @@ class AcpAgent(BaseAgent):
             text = "".join(reply)
             text = f"{text}\n\n{message}" if text else message
             return [
-                self._event(ctx, text=text, metadata={"acp_input_required": task_id})
+                self._event(ctx, text=text, metadata={"acp_input_required": task_id}, turn_complete=True)
             ]
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
             return self._failed(ctx, reply, message or state)
@@ -488,7 +488,7 @@ class AcpAgent(BaseAgent):
         """Returns the events of a failed turn: the text streamed before it,
         then the error, which is also the content as in acpagent."""
         events = [self._event(ctx, text="".join(reply))] if reply else []
-        return events + [self._event(ctx, text=error, error=error)]
+        return events + [self._event(ctx, text=error, error=error, turn_complete=True)]
 
     def _event(
         self,
@@ -498,6 +498,7 @@ class AcpAgent(BaseAgent):
         partial: bool = False,
         error: str = "",
         metadata: dict | None = None,
+        turn_complete: bool = False,
     ) -> Event:
         ev = Event(invocation_id=ctx.invocation_id, author=self.name, branch=ctx.branch)
         if text:
@@ -508,6 +509,8 @@ class AcpAgent(BaseAgent):
             ev.error_message = error
         if metadata:
             ev.custom_metadata = metadata
+        if turn_complete:
+            ev.turn_complete = True
         return ev
 
     def handle_mcp(
