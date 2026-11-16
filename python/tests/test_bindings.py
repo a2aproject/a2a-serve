@@ -105,7 +105,9 @@ class AcpAgentTest(unittest.IsolatedAsyncioTestCase):
         def message(text):
             return types.Content(role="user", parts=[types.Part(text=text)])
 
-        events = runner.run_async(user_id="u", session_id=session.id, new_message=message("slow 60s"))
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+
+        events = runner.run_async(user_id="u", session_id=session.id, new_message=message("slow 60s"), run_config=RunConfig(streaming_mode=StreamingMode.SSE))
         async for ev in events:
             if ev.partial:
                 break

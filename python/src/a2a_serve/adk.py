@@ -38,6 +38,7 @@ from typing import Any
 
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
+from google.adk.agents.run_config import StreamingMode
 from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 from google.adk.tools.base_tool import BaseTool
@@ -51,7 +52,8 @@ MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
 
 MAX_SESSIONS = 10000
-"""Bounds the sessions whose delivered history the agent remembers."""
+"""Bounds the sessions whose delivered history and pending question the
+agent remembers."""
 
 TOOL_TIMEOUT = 240.0
 """Bounds a tool call of the coding agent, in seconds. It stays below the
@@ -66,6 +68,10 @@ class AcpAgent(BaseAgent):
 
     argv: list[str] = Field(default_factory=list)
     """The agent's command, when it runs on this host."""
+    cwd: str = ""
+    """The working directory of the agent's command."""
+    env: dict[str, str] = Field(default_factory=dict)
+    """Added to the environment of the agent's command."""
     start: Callable[[str], int] | None = None
     """Starts the agent of an ADK session, by its ID, and returns the file
     descriptor of its stdio. Set it or argv."""
@@ -87,7 +93,8 @@ class AcpAgent(BaseAgent):
     _executor: Executor | None = PrivateAttr(default=None)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _runs: dict[str, "_Run"] = PrivateAttr(default_factory=dict)
-    _pending: dict[str, str] = PrivateAttr(default_factory=dict)
+    # The task waiting for an answer, by session.
+    _pending: OrderedDict[str, str] = PrivateAttr(default_factory=OrderedDict)
     # The last session event sent to the agent, by session.
     _delivered: OrderedDict[str, str] = PrivateAttr(default_factory=OrderedDict)
 
@@ -95,38 +102,46 @@ class AcpAgent(BaseAgent):
         super().model_post_init(context)
         if bool(self.argv) == (self.start is not None):
             raise ValueError("AcpAgent needs either argv or start")
+        for t in self.tools:
+            if t._get_declaration() is None:  # pylint: disable=protected-access
+                raise ValueError(f"AcpAgent tool {t.name!r} has no function declaration to serve over MCP")
         names = [t.name for t in self.tools]
         if len(names) != len(set(names)):
             raise ValueError(f"AcpAgent tools have duplicate names: {sorted(names)}")
 
-    def _unseen(self, ctx: InvocationContext) -> str:
-        """Returns the messages of the session since the agent's last turn.
+    def _unseen(self, ctx: InvocationContext) -> tuple[str, str]:
+        """Returns the messages of the session that the agent wasn't sent,
+        and the ID of the last event they reach to.
 
-        The agent keeps its own history, so it gets only what it wasn't
-        sent before: what others said meanwhile, such as other agents of a
-        workflow, and the user's message. Messages of others are marked
-        with their author.
+        The agent keeps its own history, so it gets what others said since
+        its last turn, such as other agents of a workflow, marked with their
+        author, and the user's message. Events of other branches don't
+        count, as in the history ADK gives a model.
         """
-        events = [e for e in ctx.session.events if not e.partial]
+        events = [e for e in ctx.session.events if not e.partial and _on_branch(e, ctx.branch)]
         with self._lock:
             delivered = self._delivered.get(ctx.session.id, "")
         last = max((i for i, e in enumerate(events) if e.author == self.name or e.id == delivered), default=-1)
-        if events:
-            with self._lock:
-                self._delivered[ctx.session.id] = events[-1].id
-                self._delivered.move_to_end(ctx.session.id)
-                while len(self._delivered) > MAX_SESSIONS:
-                    self._delivered.popitem(last=False)
+        unseen = events[last + 1 :]
         lines = []
-        for e in events[last + 1 :]:
+        for e in unseen:
             text = _text(e.content)
-            if not text:
-                continue
-            lines.append(text if e.author == "user" else f"[{e.author}] {text}")
+            if text:
+                lines.append(text if e.author == "user" else f"[{e.author}] {text}")
         user = _text(ctx.user_content)
-        if user and (not lines or lines[-1] != user):
+        if user and not any(e.author == "user" and _text(e.content) == user for e in unseen):
             lines.append(user)
-        return "\n\n".join(lines)
+        return "\n\n".join(lines), events[-1].id if events else ""
+
+    def _delivered_to(self, session_id: str, event_id: str) -> None:
+        """Records that the agent was sent the session up to event_id."""
+        if not event_id:
+            return
+        with self._lock:
+            self._delivered[session_id] = event_id
+            self._delivered.move_to_end(session_id)
+            while len(self._delivered) > MAX_SESSIONS:
+                self._delivered.popitem(last=False)
 
     def executor(self) -> Executor:
         """Returns the executor, starting it on the first call."""
@@ -144,6 +159,8 @@ class AcpAgent(BaseAgent):
                     ]
                 self._executor = Executor(
                     argv=self.argv or None,
+                    cwd=self.cwd,
+                    env=self.env,
                     start=self.start,
                     per_context=True,
                     idle_timeout=self.idle_timeout,
@@ -171,14 +188,19 @@ class AcpAgent(BaseAgent):
         self, ctx: InvocationContext
     ) -> AsyncGenerator[Event, None]:
         key = ctx.session.id
-        task_id = self._pending.pop(key, "")
-        # An answer to a question goes to the agent as typed; other messages
-        # carry what the agent hasn't seen since its last turn.
-        text = _text(ctx.user_content) if task_id else self._unseen(ctx)
-        run = _Run(self, ctx)
+        with self._lock:
+            task_id = self._pending.pop(key, "")
+        # An answer to a question goes to the agent as typed, which is how
+        # the agent matches it to an option; other messages carry what the
+        # agent wasn't sent.
+        if task_id:
+            text, through = _text(ctx.user_content), ""
+        else:
+            text, through = self._unseen(ctx)
+        executor = await asyncio.to_thread(self.executor)
+        run = _Run(self, ctx, on_delivered=lambda: self._delivered_to(key, through))
         with self._lock:
             self._runs[key] = run
-        executor = await asyncio.to_thread(self.executor)
         pump = threading.Thread(target=run.pump, args=(executor, text, key, task_id), name="acp-stream", daemon=True)
         pump.start()
         reply: list[str] = []
@@ -214,6 +236,8 @@ class AcpAgent(BaseAgent):
             if not chunk:
                 return []
             reply.append(chunk)
+            if ctx.run_config is not None and ctx.run_config.streaming_mode == StreamingMode.NONE:
+                return []
             return [self._event(ctx, text=chunk, partial=True)]
         status = None
         task_id = ""
@@ -229,7 +253,11 @@ class AcpAgent(BaseAgent):
         if state == "TASK_STATE_COMPLETED":
             return [self._event(ctx, text="".join(reply))]
         if state == "TASK_STATE_INPUT_REQUIRED":
-            self._pending[key] = task_id
+            with self._lock:
+                self._pending[key] = task_id
+                self._pending.move_to_end(key)
+                while len(self._pending) > MAX_SESSIONS:
+                    self._pending.popitem(last=False)
             text = "".join(reply)
             text = f"{text}\n\n{message}" if text else message
             return [
@@ -333,12 +361,14 @@ class AcpAgent(BaseAgent):
             return _tool_error("no ADK invocation of this session is in progress")
         future = asyncio.run_coroutine_threadsafe(run.call_tool(tool, args), run.loop)
         try:
-            result = future.result(timeout=TOOL_TIMEOUT)
+            result, failed = future.result(timeout=TOOL_TIMEOUT)
         except Exception as e:  # pylint: disable=broad-exception-caught
             future.cancel()
             return _tool_error(f"{type(e).__name__}: {e}")
         text = json.dumps(result, default=str)
         out: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+        if failed:
+            out["isError"] = True
         if isinstance(result, dict):
             out["structuredContent"] = result
         return out
@@ -358,9 +388,11 @@ def _cancel_quietly(executor: Executor, task_id: str) -> None:
 class _Run:
     """An invocation of the agent, which the tools of its session run in."""
 
-    def __init__(self, agent: AcpAgent, ctx: InvocationContext):
+    def __init__(self, agent: AcpAgent, ctx: InvocationContext, on_delivered: Callable[[], None] = lambda: None):
         self.agent = agent
         self.ctx = ctx
+        # on_delivered is called once the agent got the message.
+        self._on_delivered = on_delivered
         self.loop = asyncio.get_running_loop()
         self.queue: asyncio.Queue = asyncio.Queue()
         self._waiting: list[asyncio.Future] = []
@@ -379,7 +411,11 @@ class _Run:
         """
         err = None
         try:
+            delivered = False
             for ev in executor.stream(text, context_id=key, task_id=task_id, stop=self._stop):
+                if not delivered and _answered(ev):
+                    delivered = True
+                    self._on_delivered()
                 if self._note(ev) and self._abandoned.is_set():
                     self._cancel(executor)
                     return
@@ -443,7 +479,8 @@ class _Run:
             if not f.done():
                 f.set_exception(RuntimeError("the ADK invocation ended"))
 
-    async def call_tool(self, tool: BaseTool, args: dict) -> Any:
+    async def call_tool(self, tool: BaseTool, args: dict) -> tuple[Any, bool]:
+        """Runs tool in the invocation, and reports whether it failed."""
         call_id = "acp-" + Event.new_id()
         call = self.agent._event(self.ctx)
         call.content = types.Content(
@@ -461,10 +498,11 @@ class _Run:
         tool_ctx = ToolContext(
             self.ctx, function_call_id=call_id, event_actions=actions
         )
+        failed = False
         try:
             result = await tool.run_async(args=args, tool_context=tool_ctx)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            result = {"error": f"{type(e).__name__}: {e}"}
+            result, failed = {"error": f"{type(e).__name__}: {e}"}, True
         response = result if isinstance(result, dict) else {"result": result}
         resp = self.agent._event(self.ctx)
         resp.content = types.Content(
@@ -479,7 +517,25 @@ class _Run:
         )
         resp.actions = actions
         await self.emit(resp)
-        return result
+        return result, failed
+
+
+def _answered(ev: dict) -> bool:
+    """Reports whether ev shows that the agent got the message: a reply, a
+    tool update, a question or the end of its turn."""
+    if "artifactUpdate" in ev:
+        return True
+    status = (ev.get("statusUpdate") or {}).get("status") or {}
+    if status.get("state") in ("TASK_STATE_COMPLETED", "TASK_STATE_INPUT_REQUIRED"):
+        return True
+    parts = (status.get("message") or {}).get("parts", [])
+    return any(isinstance(p.get("data"), dict) and p["data"].get("toolCall") for p in parts)
+
+
+def _on_branch(ev: Event, branch: str | None) -> bool:
+    """Reports whether ev belongs to the history of branch, as ADK decides
+    for the history it gives a model."""
+    return not ev.branch or not branch or branch == ev.branch or branch.startswith(ev.branch + ".")
 
 
 def _text(content: types.Content | None) -> str:

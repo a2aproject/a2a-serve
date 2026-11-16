@@ -50,18 +50,26 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
     async def session(self, runner):
         return await runner.session_service.create_session(app_name="test", user_id="u")
 
-    async def turn(self, runner, session, text, on_partial=None):
-        """Runs one invocation and returns its final events."""
+    async def turn(self, runner, session, text, on_partial=None, run_config=None):
+        """Runs one invocation and returns its final events. on_partial, if
+        set, runs once the invocation works, as the agent would call a tool."""
+        if on_partial is not None:
+            agent = runner.agent
+
+            def when_busy():
+                for _ in range(500):
+                    if session.id in agent.busy_sessions():
+                        on_partial()
+                        return
+                    threading.Event().wait(0.01)
+
+            t = threading.Thread(target=when_busy)
+            t.start()
+            self.addCleanup(t.join)
         events = []
-        async for ev in runner.run_async(
-            user_id="u", session_id=session.id, new_message=message(text)
-        ):
-            if ev.partial:
-                if on_partial is not None:
-                    on_partial()
-                    on_partial = None
-                continue
-            events.append(ev)
+        async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message(text), run_config=run_config):
+            if not ev.partial:
+                events.append(ev)
         return events
 
     @staticmethod
@@ -112,6 +120,71 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("git push", "\n".join(self.texts(asked)))
         self.assertEqual(self.texts(answered), ["Pushed (allow)."])
+
+    async def test_reject_answer(self):
+        _, runner = self.agent()
+        session = await self.session(runner)
+
+        await self.turn(runner, session, "ask")
+        rejected = await self.turn(runner, session, "reject")
+        after = await self.turn(runner, session, "hello")
+
+        self.assertEqual(self.texts(rejected), ["Push denied."])
+        self.assertEqual(self.texts(after), ["Hello from fakeacp."])
+
+    async def test_streaming_modes(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+
+        _, runner = self.agent()
+        for mode, want_partial in [(StreamingMode.NONE, False), (StreamingMode.SSE, True)]:
+            with self.subTest(mode):
+                session = await self.session(runner)
+                events = [ev async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message("hello"), run_config=RunConfig(streaming_mode=mode))]
+
+                self.assertEqual(any(ev.partial for ev in events), want_partial)
+                self.assertEqual(self.texts([ev for ev in events if not ev.partial]), ["Hello from fakeacp."])
+
+    async def test_tool_error(self):
+        from google.adk.tools import FunctionTool
+
+        def broken(title: str) -> dict:
+            """Always fails."""
+            raise RuntimeError("tracker down")
+
+        agent, runner = self.agent(tools=[FunctionTool(broken)])
+        session = await self.session(runner)
+        results = []
+
+        def call():
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "broken", "arguments": {"title": "x"}}})
+            t = threading.Thread(target=lambda: results.append(json.loads(agent.handle_mcp(session.id, "POST", body.encode())[2])["result"]))
+            t.start()
+            self.addCleanup(t.join)
+
+        await self.turn(runner, session, "slow 2s", on_partial=call)
+
+        self.assertTrue(results[0].get("isError"), results[0])
+        self.assertIn("tracker down", results[0]["content"][0]["text"])
+
+    async def test_tools_in_later_invocations(self):
+        agent, runner = self.agent(tools=[self.ticket_tool()])
+        session = await self.session(runner)
+        results = []
+
+        def call(title):
+            def start():
+                t = threading.Thread(target=lambda: results.append(self.call_tool(agent, session.id, title)))
+                t.start()
+                self.addCleanup(t.join)
+
+            return start
+
+        await self.turn(runner, session, "slow 2s", on_partial=call("first"))
+        await self.turn(runner, session, "slow 2s", on_partial=call("second"))
+        stored = await runner.session_service.get_session(app_name="test", user_id="u", session_id=session.id)
+
+        self.assertEqual([r["structuredContent"] for r in results], [{"id": "T-1"}, {"id": "T-2"}])
+        self.assertEqual(stored.state.get("tickets"), ["first", "second"])
 
     def ticket_tool(self):
         from google.adk.tools import FunctionTool
@@ -181,11 +254,16 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.state.get("tickets"), ["fix the build"])
 
     async def test_tools_abandoned_run_keeps_session(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+
         agent, runner = self.agent(tools=[self.ticket_tool()])
         session = await self.session(runner)
 
         events = runner.run_async(
-            user_id="u", session_id=session.id, new_message=message("slow 60s")
+            user_id="u",
+            session_id=session.id,
+            new_message=message("slow 60s"),
+            run_config=RunConfig(streaming_mode=StreamingMode.SSE),
         )
         async for ev in events:
             if ev.partial:
@@ -274,12 +352,30 @@ class UnseenTest(unittest.TestCase):
         ctx = pytypes.SimpleNamespace(
             session=pytypes.SimpleNamespace(id="s", events=history),
             user_content=message("go"),
+            branch=None,
         )
 
-        self.assertEqual(agent._unseen(ctx), "[planner] split it in two\n\ngo")
+        text, through = agent._unseen(ctx)
+        self.assertEqual(text, "[planner] split it in two\n\ngo")
+        agent._delivered_to("s", through)
         history.append(self.event("user", "and test it"))
         ctx.user_content = message("and test it")
-        self.assertEqual(agent._unseen(ctx), "and test it")
+        self.assertEqual(agent._unseen(ctx)[0], "and test it")
+
+    def test_unseen_in_a_workflow(self):
+        from a2a_serve.adk import AcpAgent
+
+        agent = AcpAgent(name="coder", argv=["agent"])
+        other_branch = self.event("critic", "not for you")
+        other_branch.branch = "review.critic"
+        history = [self.event("user", "fix the bug"), self.event("planner", "step 1"), other_branch]
+        ctx = pytypes.SimpleNamespace(
+            session=pytypes.SimpleNamespace(id="s", events=history),
+            user_content=message("fix the bug"),
+            branch="work.coder",
+        )
+
+        self.assertEqual(agent._unseen(ctx)[0], "fix the bug\n\n[planner] step 1")
 
 
 if __name__ == "__main__":

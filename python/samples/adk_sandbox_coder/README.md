@@ -14,26 +14,26 @@ sequenceDiagram
     actor User
     participant ADK as ADK runner
     participant Agent as AcpAgent
-    participant Box as sandbox (boundary)
+    participant Boundary as sandbox boundary
     participant Harness as opencode (in the sandbox)
 
     Note over Agent,Harness: first message of an ADK session
     User->>ADK: prompt
     ADK->>Agent: run invocation
-    Agent->>Box: start opencode, workspace in memory
+    Agent->>Boundary: start opencode, workspace in memory
     Agent->>Harness: session/new with the MCP server adk, session/prompt
-    Harness->>Box: POST http://llm.internal/v1/chat/completions
-    Box->>Agent: request (interceptor)
-    Agent-->>Box: forward to Vertex AI with a token
-    Harness->>Box: MCP tools/call file_ticket at adk-tools.internal
-    Box->>Agent: request (interceptor)
+    Harness->>Boundary: POST http://llm.internal/v1/chat/completions
+    Boundary->>Agent: request (interceptor)
+    Agent-->>Boundary: forward to Vertex AI with a token
+    Harness->>Boundary: MCP tools/call file_ticket at adk-tools.internal
+    Boundary->>Agent: request (interceptor)
     Agent->>ADK: function call event
     Agent->>Agent: run file_ticket with the invocation's tool context
     Agent->>ADK: function response event with the state delta
     Agent-->>Harness: tool result
-    Harness->>Box: CONNECT registry.npmjs.org:443
-    Box->>Agent: connect (interceptor)
-    Agent-->>Box: deny (guard model)
+    Harness->>Boundary: CONNECT registry.npmjs.org:443
+    Boundary->>Agent: connect (interceptor)
+    Agent-->>Boundary: deny (guard model)
     Harness-->>Agent: reply
     Agent-->>User: reply
 ```
