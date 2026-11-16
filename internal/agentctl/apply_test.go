@@ -652,14 +652,14 @@ func TestSetRunning(t *testing.T) {
 	}{
 		{
 			name:        "live settings applied",
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /config", "GET /status"},
 			wantApplied: []string{"telegram", "description"},
 			wantRestart: []string{"sandbox"},
 		},
 		{
 			name:        "server without reload",
 			noReload:    true,
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /config", "GET /status"},
 			wantApplied: []string{"telegram"},
 			wantRestart: []string{"sandbox", "description"},
 		},
@@ -797,6 +797,36 @@ func TestSetPublicAllowIncomingWaitsForAPublicURLThatWaits(t *testing.T) {
 			if diff := cmp.Diff(tc.wantApplied, got.Applied); diff != "" {
 				t.Fatalf("Set().Applied wrong result (-want +got) diff = %s", diff)
 			}
+			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
+				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestSetBackToTheRunningSettingWaitsForNothing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		running     *agentdir.Config
+		noConfig    bool
+		wantRestart []string
+	}{
+		{name: "running setting", running: &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local"}},
+		{name: "other running setting", running: &agentdir.Config{Name: "coder", Harness: "opencode"}, wantRestart: []string{"sandbox"}},
+		{name: "running config unknown", noConfig: true, wantRestart: []string{"sandbox"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "docker"}, nil)
+			serveFake(t, d, &fakeServer{running: tc.running, noConfig: tc.noConfig})
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+
 			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
 				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
 			}
