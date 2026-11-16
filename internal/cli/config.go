@@ -117,6 +117,9 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool)
 			fmt.Fprintf(&sb, "  %-12s %s %s\n", "secret value", s.Name, secretAction(s.Action))
 		}
 	}
+	for _, k := range res.RemovedKeys {
+		fmt.Fprintf(&sb, "  %-12s removed (unknown key)\n", k)
+	}
 	rel := res.Path
 	if wd, err := filepath.Abs("."); err == nil {
 		if r, err := filepath.Rel(wd, res.Path); err == nil && !strings.HasPrefix(r, "..") {

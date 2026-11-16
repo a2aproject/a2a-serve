@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -88,6 +89,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		var se *agentdir.SettingsError
 		if err == nil {
 			removeDraft(d)
+			res.RemovedKeys = removedKeys(base, edited)
 			return withUnknownKeys(res, edited), nil
 		}
 		if errors.Is(err, ErrConfigChanged) {
@@ -186,6 +188,26 @@ func withUnknownKeys(res *Result, data []byte) *Result {
 		res.Warnings = append(res.Warnings, k.String())
 	}
 	return res
+}
+
+// removedKeys returns the keys of the config.yaml content old that the
+// server ignores and edited no longer has.
+func removedKeys(old, edited []byte) []string {
+	before, err := agentdir.UnknownKeys(old)
+	if err != nil {
+		return nil
+	}
+	after, err := agentdir.UnknownKeys(edited)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, k := range before {
+		if !slices.ContainsFunc(after, func(a agentdir.UnknownKey) bool { return a.Path == k.Path }) {
+			out = append(out, k.Path)
+		}
+	}
+	return out
 }
 
 func withErrors(data []byte, err error) []byte {

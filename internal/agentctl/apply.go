@@ -67,10 +67,15 @@ type Result struct {
 	Access *controlapi.Access `json:"access,omitempty"`
 	// Warnings are problems of the saved settings that don't stop the agent.
 	Warnings []string `json:"warnings,omitempty"`
+	// RemovedKeys are the keys an edit of config.yaml removed that the
+	// server ignored, by their dotted path.
+	RemovedKeys []string `json:"removedKeys,omitempty"`
 }
 
 // Empty reports whether nothing changed.
-func (r *Result) Empty() bool { return len(r.Changes) == 0 && len(r.Secrets) == 0 }
+func (r *Result) Empty() bool {
+	return len(r.Changes) == 0 && len(r.Secrets) == 0 && len(r.RemovedKeys) == 0
+}
 
 // Mutation changes cfg and returns the secrets to store and the names of
 // the secrets to delete.

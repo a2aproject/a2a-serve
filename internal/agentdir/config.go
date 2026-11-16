@@ -532,6 +532,11 @@ func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if len(doc.Content) > 0 {
 		renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
+		var problems []error
+		typeProblems(doc.Content[0], reflect.TypeFor[Config](), "", &problems)
+		if len(problems) > 0 {
+			return nil, errors.Join(problems...)
+		}
 		if err := doc.Decode(&cfg); err != nil {
 			return nil, err
 		}
@@ -624,6 +629,95 @@ func yamlFields(t reflect.Type) map[string]reflect.Type {
 		}
 	}
 	return out
+}
+
+// typeProblems appends a problem to out for each value of n, the node at
+// the dotted path, whose kind t can't take, worded by its key rather than
+// the Go type the YAML decoder would name.
+func typeProblems(n *yaml.Node, t reflect.Type, path string, out *[]error) {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!null" {
+		return
+	}
+	want, ok := kindOf(t)
+	if !ok {
+		return
+	}
+	if n.Kind != want {
+		*out = append(*out, fmt.Errorf("line %d: %s wants %s, got %s", n.Line, path, describeType(t), describeNode(n)))
+		return
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		known := yamlFields(t)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if ft, ok := known[n.Content[i].Value]; ok {
+				typeProblems(n.Content[i+1], ft, joinPath(path, n.Content[i].Value), out)
+			}
+		}
+	case reflect.Map:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			typeProblems(n.Content[i+1], t.Elem(), joinPath(path, n.Content[i].Value), out)
+		}
+	case reflect.Slice:
+		for i, item := range n.Content {
+			typeProblems(item, t.Elem(), fmt.Sprintf("%s[%d]", path, i), out)
+		}
+	default:
+		if err := n.Decode(reflect.New(t).Interface()); err != nil {
+			*out = append(*out, fmt.Errorf("line %d: %s wants %s, got %s", n.Line, path, describeType(t), describeNode(n)))
+		}
+	}
+}
+
+// kindOf returns the kind of YAML node a value of t takes.
+func kindOf(t reflect.Type) (yaml.Kind, bool) {
+	switch t.Kind() {
+	case reflect.Struct, reflect.Map:
+		return yaml.MappingNode, true
+	case reflect.Slice:
+		return yaml.SequenceNode, true
+	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return yaml.ScalarNode, true
+	}
+	return 0, false
+}
+
+func describeType(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Struct, reflect.Map:
+		return "a mapping of keys"
+	case reflect.Slice:
+		return "a list"
+	case reflect.Bool:
+		return "true or false"
+	case reflect.String:
+		return "text"
+	}
+	return "a number"
+}
+
+func describeNode(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.MappingNode:
+		return "a mapping"
+	case yaml.SequenceNode:
+		return "a list"
+	}
+	return fmt.Sprintf("%q", n.Value)
+}
+
+func joinPath(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
 }
 
 func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]UnknownKey) {
