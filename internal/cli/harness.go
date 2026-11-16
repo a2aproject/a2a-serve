@@ -96,13 +96,22 @@ workspace unless --allow-broad-mount names it.
 				}
 				return printStartRunning(cfg, res)
 			}
+			nameNote := agentdir.NameNote(s.Name)
 			if !res.Created {
-				// runAgent prints the warnings with the agent line.
+				// runAgent prints the warnings of the config with the agent
+				// line; the note about the name given is this command's.
 				shown := *res
 				if !cfg.IsJSON() {
 					shown.Warnings = nil
+					if nameNote != "" {
+						shown.Warnings = []string{nameNote}
+					}
 				}
 				if err := printConfigResult(cfg, &shown, false); err != nil {
+					return err
+				}
+			} else if nameNote != "" {
+				if err := printWarnings(cfg, []string{nameNote}); err != nil {
 					return err
 				}
 			}

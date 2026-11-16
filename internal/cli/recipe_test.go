@@ -305,6 +305,17 @@ func TestRecipeRelativeMount(t *testing.T) {
 	}
 }
 
+func TestRecipeNotesNormalizedName(t *testing.T) {
+	t.Parallel()
+	out, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", newTestRecipe(t), "--name", "日本語", "--dir", filepath.Join(t.TempDir(), "obs"), "--dry-run")
+	if err != nil {
+		t.Fatalf("a2a-serve recipe --dry-run error = %v", err)
+	}
+	if want := "! " + agentdir.NameNote("日本語") + "\n"; !strings.Contains(out, want) {
+		t.Fatalf("a2a-serve recipe --dry-run output = %q, want %q", out, want)
+	}
+}
+
 func TestRecipeWithoutTerminalReadsLocalSourceFirst(t *testing.T) {
 	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing")

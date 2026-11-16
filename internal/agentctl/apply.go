@@ -88,11 +88,21 @@ type Step func(cfg *agentdir.Config) error
 
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
-	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+	res, err := Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		old := cfg.Clone()
 		store, err := s.Apply(cfg, d)
 		return store, agentdir.DroppedSecrets(old, cfg), err
 	}, dryRun)
+	return withNameNote(res, s.Name), err
+}
+
+// withNameNote adds a warning to res, if set, when the name given was
+// normalized in a way users may not expect.
+func withNameNote(res *Result, given string) *Result {
+	if note := agentdir.NameNote(given); res != nil && note != "" {
+		res.Warnings = append(res.Warnings, note)
+	}
+	return res
 }
 
 // Unset removes entries of a list setting, or resets a setting.
@@ -123,13 +133,14 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
 	}
+	given := next.Name
 	if name := agentdir.SanitizeName(next.Name); next.Name != "" && name != next.Name {
 		next.Name = name
 		if data, err = agentdir.MergeConfig(data, next); err != nil {
 			return nil, err
 		}
 	}
-	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+	res, err := apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		if agentdir.MessengersDiffer(cfg, next) {
 			return nil, nil, errMessengers
 		}
@@ -140,6 +151,7 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 		*cfg = *next
 		return store, nil, nil
 	}, nil, dryRun, &rawEdit{data: data, base: base})
+	return withNameNote(res, given), err
 }
 
 // rawEdit is a hand edit of config.yaml: data is saved as it is if the

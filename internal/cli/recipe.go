@@ -237,7 +237,8 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	if outer, err := agentdir.FindEnclosing(parent); err == nil {
 		return clierr.Usage(fmt.Sprintf("%s is inside the agent in %s, which could read the new agent's secrets; create it elsewhere or pass --dir", parent, outer.Root))
 	}
-	name := agentdir.SanitizeName(firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name()))
+	given := firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name())
+	name := agentdir.SanitizeName(given)
 	target := r.dir
 	if target == "" {
 		target = filepath.Join(parent, name)
@@ -268,6 +269,11 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	preview, err := r.preview(d, rec, base)
 	if err != nil {
 		return err
+	}
+	if note := agentdir.NameNote(given); note != "" {
+		if err := r.printf("! %s\n", note); err != nil {
+			return err
+		}
 	}
 	if err := r.printReview(name, fetched, rec, agentdir.Dir{Root: target}, preview); err != nil {
 		return err

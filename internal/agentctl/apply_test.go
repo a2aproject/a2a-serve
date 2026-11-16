@@ -453,6 +453,21 @@ func TestSetVoiceGemini(t *testing.T) {
 	}
 }
 
+func TestSetNotesNormalizedName(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+
+	got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Name: "日本語"}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	want := []string{agentdir.NameNote("日本語")}
+	if diff := cmp.Diff(want, got.Warnings); diff != "" {
+		t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`
