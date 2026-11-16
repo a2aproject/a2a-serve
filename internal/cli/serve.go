@@ -189,7 +189,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
 			return e
 		}
-		return runWizard(cmd, cfg, m.quiet)
+		return runWizard(cmd, cfg, m)
 	}
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	return runAgent(cmd.Context(), cfg, d, m)
 }
 
-func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
+func runWizard(cmd *cobra.Command, cfg *globalConfig, m runMode) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -214,6 +214,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 		DockerErr:   dockerErr,
 		ReadSecret:  cfg.secretReader(cfg.Out).Read,
 		Workspace:   d.Root,
+		Mode:        m.wizardMode(),
 		Command: func(s agentdir.Settings) ([]string, error) {
 			conf, secrets, err := d.ApplySettings(s)
 			if err != nil {
@@ -232,7 +233,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 	if err := saveSettings(d, res.Settings); err != nil {
 		return err
 	}
-	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService, quiet: quiet, created: true})
+	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService, quiet: m.quiet, created: true})
 }
 
 // saveSettings saves start flags, reporting invalid ones as usage errors.
@@ -249,6 +250,18 @@ func saveSettings(d agentdir.Dir, s agentdir.Settings) error {
 // created the agent.
 type runMode struct {
 	detach, service, quiet, created bool
+}
+
+// wizardMode is the wizard's run mode that --detach or --service gives, or
+// empty when neither is set.
+func (m runMode) wizardMode() string {
+	switch {
+	case m.service:
+		return wizard.ModeService
+	case m.detach:
+		return wizard.ModeDetach
+	}
+	return ""
 }
 
 // runAgent runs the agent in the foreground, or starts it in the background.
