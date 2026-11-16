@@ -267,8 +267,10 @@ def _usage(response: LlmResponse) -> dict[str, Any]:
 def finish_of_error(error_code: str | None) -> str | None:
     """Returns the finish reason of an error code that ADK sets when the
     model ended without content, such as SAFETY, or None for other codes."""
-    # FinishReason takes any string, so membership decides.
-    if not error_code or error_code not in types.FinishReason.__members__:
+    # FinishReason takes any string, so membership decides. A malformed
+    # function call is worth a retry, which an error gets and a finished
+    # answer doesn't.
+    if not error_code or error_code not in types.FinishReason.__members__ or error_code == "MALFORMED_FUNCTION_CALL":
         return None
     return _FINISH.get(types.FinishReason[error_code], "stop")
 

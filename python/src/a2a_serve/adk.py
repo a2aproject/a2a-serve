@@ -697,18 +697,20 @@ class _Run:
         callback_context = CallbackContext(self.ctx, event_actions=actions)
         response = await _first_response(self.agent.before_model_callback, callback_context, llm_request)
         if response is None:
+            failed = False
             try:
                 async for r in llm.generate_content_async(llm_request, stream=False):
                     response = r
             except genai_errors.APIError as e:
-                response = LlmResponse(error_code=str(e.code), error_message=e.message or str(e))
+                response, failed = LlmResponse(error_code=str(e.code), error_message=e.message or str(e)), True
             if response is None:
-                response = LlmResponse(error_code="502", error_message="the model returned nothing")
-            # As for an LlmAgent, an answer of before_model_callback skips
-            # after_model_callback too.
-            changed = await _first_response(self.agent.after_model_callback, callback_context, response)
-            if changed is not None:
-                response = changed
+                response, failed = LlmResponse(error_code="502", error_message="the model returned nothing"), True
+            # As for an LlmAgent, after_model_callback sees answers of the
+            # model only: not those of before_model_callback, nor errors.
+            if not failed:
+                changed = await _first_response(self.agent.after_model_callback, callback_context, response)
+                if changed is not None:
+                    response = changed
         if actions.state_delta or actions.artifact_delta:
             ev = self.agent._event(self.ctx)
             ev.actions = actions
@@ -777,6 +779,8 @@ def _error_status(error_code: str) -> int:
     which the agent doesn't retry."""
     if error_code in ("429", "RESOURCE_EXHAUSTED"):
         return 429
+    if error_code == "MALFORMED_FUNCTION_CALL":
+        return 502
     if error_code.isdigit() and 400 <= int(error_code) < 600:
         return int(error_code)
     return 403

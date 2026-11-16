@@ -227,6 +227,7 @@ class TranslationTest(unittest.TestCase):
 
         self.assertEqual((choice["message"]["content"], choice["finish_reason"]), (None, "content_filter"))
         self.assertIsNone(openai_chat.finish_of_error("BUDGET_SPENT"))
+        self.assertIsNone(openai_chat.finish_of_error("MALFORMED_FUNCTION_CALL"))
 
     def test_stream(self):
         response = LlmResponse(
@@ -439,9 +440,11 @@ class ModelErrorTest(unittest.IsolatedAsyncioTestCase):
     async def test_model_errors(self):
         for code, want in [(429, 429), (400, 400)]:
             with self.subTest(code):
-                status, _, body = await self.status_of(ErrorLlm(model=f"error-{code}"))
+                after_calls = []
+                status, _, body = await self.status_of(ErrorLlm(model=f"error-{code}"), after=lambda ctx, resp: after_calls.append(resp))
                 self.assertEqual(status, want)
                 self.assertIn(f"model said {code}", body.decode())
+                self.assertEqual(after_calls, [])
 
     async def test_before_callback_answer_skips_after(self):
         after_calls = []
