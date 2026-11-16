@@ -47,7 +47,9 @@ async def turn(runner: InMemoryRunner, session_id: str, prompt: str) -> None:
         if event.partial:
             continue
         if event.error_message:
+            # The content repeats the error.
             print(f"[error] {event.error_message}")
+            continue
         for part in (event.content.parts if event.content else []):
             if part.function_call:
                 print(f"[adk tool call] {part.function_call.name}({part.function_call.args})")

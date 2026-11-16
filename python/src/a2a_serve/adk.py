@@ -420,7 +420,8 @@ class AcpAgent(BaseAgent):
                 kind, item, done = await run.queue.get()
                 if kind == "end":
                     if item is not None:
-                        yield self._event(ctx, text="".join(reply), error=str(item))
+                        for ev in self._failed(ctx, reply, str(item)):
+                            yield ev
                     return
                 if kind == "tool":
                     yield item
@@ -475,13 +476,19 @@ class AcpAgent(BaseAgent):
                 self._event(ctx, text=text, metadata={"acp_input_required": task_id})
             ]
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
-            return [self._event(ctx, text="".join(reply), error=message or state)]
+            return self._failed(ctx, reply, message or state)
         # A question carries its tool call too, so tool updates come after it.
         for p in parts:
             data = p.get("data")
             if isinstance(data, dict) and data.get("toolCall"):
                 return [self._event(ctx, metadata={"acp_tool_call": data["toolCall"]})]
         return []
+
+    def _failed(self, ctx: InvocationContext, reply: list[str], error: str) -> list[Event]:
+        """Returns the events of a failed turn: the text streamed before it,
+        then the error, which is also the content as in acpagent."""
+        events = [self._event(ctx, text="".join(reply))] if reply else []
+        return events + [self._event(ctx, text=error, error=error)]
 
     def _event(
         self,

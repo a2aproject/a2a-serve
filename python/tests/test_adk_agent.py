@@ -193,16 +193,16 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.texts(rejected), ["Push denied."])
         self.assertEqual(self.texts(after), ["Hello from fakeacp."])
 
-    async def test_failure_keeps_streamed_text(self):
+    async def test_failure_reports_error_after_streamed_text(self):
         _, runner = self.agent()
         session = await self.session(runner)
 
         got = await self.turn(runner, session, "crash")
         after = await self.turn(runner, session, "hello")
 
-        self.assertEqual(self.texts(got), ["about to crash"])
-        self.assertEqual([ev.error_code for ev in got], ["ACP_TASK_FAILED"])
-        self.assertIn("exited", got[0].error_message)
+        self.assertEqual(self.texts(got), ["about to crash", "acp agent error: acp agent exited"])
+        self.assertEqual([ev.error_code for ev in got], [None, "ACP_TASK_FAILED"])
+        self.assertEqual(got[1].error_message, "acp agent error: acp agent exited")
         self.assertEqual(self.texts(after), ["Hello from fakeacp."])
 
     async def test_streaming_modes(self):
