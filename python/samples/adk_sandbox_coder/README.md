@@ -28,7 +28,7 @@ python main.py
 | `GUARD_MODEL` | `gemini-2.5-flash` | The model that decides other traffic |
 | `MAX_MODEL_CALLS` | `60` | The budget of model calls per session |
 | `MAX_GUARD_CALLS` | `40` | The budget of guard-model questions per session; past it, other traffic is denied |
-| `SANDBOX_IDLE` | `1800` | Seconds without traffic or a turn in progress after which a session's sandbox and workspace are removed |
+| `SANDBOX_IDLE` | `1800` | Seconds without traffic or a turn in progress after which a session's sandbox and workspace are removed. It is at least a minute longer than the 10 minutes after which the agent stops. |
 | `SANDBOX_LOG` | unset | `1` prints each decision as it happens |
 
 `adk web` and `adk run` load the agent from `agent.py` as `root_agent` too.

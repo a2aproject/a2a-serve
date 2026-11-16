@@ -361,11 +361,15 @@ class SandboxedCoder:
         return sb.start_fd()
 
     def _reap(self) -> None:
-        while not self._closed.wait(min(60.0, SANDBOX_IDLE)):
+        # The agent stops its idle processes first, so that a turn which
+        # starts as the reaper works asks _start for a sandbox, which takes
+        # the lock, rather than talking to an agent in a removed sandbox.
+        limit = max(SANDBOX_IDLE, self.agent.idle_timeout + 60)
+        while not self._closed.wait(min(60.0, limit)):
             now = time.monotonic()
             busy = self.agent.busy_sessions()
             with self._lock:
-                idle = [k for k, i in self.interceptors.items() if now - i.last_used > SANDBOX_IDLE and k not in busy]
+                idle = [k for k, i in self.interceptors.items() if now - i.last_used > limit and k not in busy]
                 boxes = [(k, self.sandboxes.pop(k)) for k in idle]
                 for k in idle:
                     self.interceptors.pop(k, None)

@@ -38,7 +38,23 @@ workspace: {"files":[".fakeacp/....json","seed.txt"]}
 done
 ```
 
-The second and third arguments are the image and the agent's path in it. An agent such as `opencode acp` also needs a model it can reach; the sample in [`python/samples/adk_sandbox_coder`](../python/samples/adk_sandbox_coder) shows how to give it one.
+The second and third arguments are the image and the agent's command in it, split on spaces. `--env NAME=VALUE` adds to the agent's environment, and `--allow RULE` lets the sandbox reach a host; everything else is refused. For example, opencode with a Vertex AI model that it reaches directly:
+
+```sh
+P=$(gcloud config get-value project)
+TOKEN=$(gcloud auth application-default print-access-token)
+CONFIG=$(tr -d '\n' <<EOF
+{"model": "vertex/google/gemini-2.5-flash", "small_model": "vertex/google/gemini-2.5-flash",
+ "provider": {"vertex": {"npm": "@ai-sdk/openai-compatible", "models": {"google/gemini-2.5-flash": {}},
+ "options": {"baseURL": "https://aiplatform.googleapis.com/v1/projects/$P/locations/global/endpoints/openapi", "apiKey": "$TOKEN"}}}}
+EOF
+)
+/tmp/example python/src/a2a_serve/_lib ghcr.io/a2aproject/harness-opencode:latest "opencode acp" \
+  "Read seed.txt and write its content reversed to reversed.txt. Reply with the reversed text only." \
+  --env "OPENCODE_CONFIG_CONTENT=$CONFIG" --env OPENCODE_DISABLE_MODELS_FETCH=1 --allow aiplatform.googleapis.com
+```
+
+The reply is `C morf deedes`, and the workspace lists `reversed.txt` and `seed.txt`. Environment values can't hold line breaks, so `tr` joins the config into one line. This hands the agent an access token. The sample in [`python/samples/adk_sandbox_coder`](../python/samples/adk_sandbox_coder) keeps credentials out of the sandbox by adding them as its requests leave.
 
 ## Calling convention
 
