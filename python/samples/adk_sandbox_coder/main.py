@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runs the sample once: sends a prompt, then shows the workspace in memory,
-the tickets in the session state and what the sandbox's interceptor did.
+"""Runs the sample, then shows the workspace in memory, the session state
+and what the guard decided.
 
+  python main.py                      # one turn with the default prompt
   python main.py "Fix the failing tests in this project."
+  python main.py console              # a conversation, one line per message
+
+In the console, a question of the agent, such as a permission it needs,
+ends the turn, and your next line answers it.
 """
 
 from __future__ import annotations
@@ -35,29 +40,47 @@ DEFAULT_PROMPT = (
 )
 
 
-async def main(prompt: str) -> None:
+async def turn(runner: InMemoryRunner, session_id: str, prompt: str) -> None:
+    """Sends prompt and prints the turn."""
+    message = types.Content(role="user", parts=[types.Part(text=prompt)])
+    async for event in runner.run_async(user_id="user", session_id=session_id, new_message=message):
+        if event.partial:
+            continue
+        if event.error_message:
+            print(f"[error] {event.error_message}")
+        for part in (event.content.parts if event.content else []):
+            if part.function_call:
+                print(f"[adk tool call] {part.function_call.name}({part.function_call.args})")
+            elif part.function_response:
+                print(f"[adk tool result] {part.function_response.response}")
+            elif part.text:
+                print(f"Agent -> {part.text}\n")
+        tool = (event.custom_metadata or {}).get("acp_tool_call")
+        if tool:
+            print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
+
+
+async def main(args: list[str]) -> None:
     runner = InMemoryRunner(agent=agent.root_agent, app_name="adk_sandbox_coder")
     session = await runner.session_service.create_session(app_name="adk_sandbox_coder", user_id="user")
-    message = types.Content(role="user", parts=[types.Part(text=prompt)])
     try:
-        print(f"User -> {prompt}\n")
-        async for event in runner.run_async(user_id="user", session_id=session.id, new_message=message):
-            if event.partial:
-                continue
-            if event.error_message:
-                print(f"[error] {event.error_message}")
-            for part in (event.content.parts if event.content else []):
-                if part.function_call:
-                    print(f"[adk tool call] {part.function_call.name}({part.function_call.args})")
-                elif part.function_response:
-                    print(f"[adk tool result] {part.function_response.response}")
-                elif part.text:
-                    print(f"Agent -> {part.text}\n")
-            tool = (event.custom_metadata or {}).get("acp_tool_call")
-            if tool:
-                print(f"[agent tool] {tool.get('title')} ({tool.get('status')})")
+        if args == ["console"]:
+            while True:
+                try:
+                    line = await asyncio.to_thread(input, "User -> ")
+                except EOFError:
+                    print()
+                    break
+                if line.strip():
+                    await turn(runner, session.id, line)
+        else:
+            prompt = " ".join(args) or DEFAULT_PROMPT
+            print(f"User -> {prompt}\n")
+            await turn(runner, session.id, prompt)
 
         sandbox = agent.root_agent.sandbox_of(session.id)
+        if sandbox is None:
+            return
         print("\nWorkspace in memory:")
         for name in sandbox.list_files():
             print(f"  {name}")
@@ -75,4 +98,4 @@ async def main(prompt: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(" ".join(sys.argv[1:]) or DEFAULT_PROMPT))
+    asyncio.run(main(sys.argv[1:]))

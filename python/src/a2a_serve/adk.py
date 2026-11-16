@@ -740,7 +740,7 @@ class _Run:
         try:
             result = await tool.run_async(args=args, tool_context=tool_ctx)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            result, failed = {"error": f"{type(e).__name__}: {e}"}, True
+            result, failed = {"error": str(e) or type(e).__name__}, True
         response = result if isinstance(result, dict) else {"result": result}
         resp = self.agent._event(self.ctx)
         resp.content = types.Content(

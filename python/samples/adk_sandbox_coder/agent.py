@@ -51,6 +51,9 @@ GUARD_MODEL = os.environ.get("GUARD_MODEL", "gemini-2.5-flash")
 MAX_MODEL_CALLS = int(os.environ.get("MAX_MODEL_CALLS", "60"))
 MAX_GUARD_CALLS = int(os.environ.get("MAX_GUARD_CALLS", "40"))
 SANDBOX_IDLE = float(os.environ.get("SANDBOX_IDLE", "1800"))
+# The sandbox contains what the agent does, so by default it may run
+# anything; a narrower list, such as read,search,think,other, makes it ask.
+ALLOW_TOOLS = [k for k in os.environ.get("ALLOW_TOOLS", "*").split(",") if k]
 
 # ADK's Gemini model and the guard both use Vertex AI with the host's
 # application default credentials.
@@ -209,6 +212,9 @@ def opencode_config(model_url: str) -> dict:
         "$schema": "https://opencode.ai/config.json",
         "autoupdate": False,
         "share": "disabled",
+        # opencode asks before it edits or runs a command, and AcpAgent's
+        # allow_tools answers, so that one setting decides.
+        "permission": {"edit": "ask", "bash": "ask"},
         "model": "adk/agent-model",
         "small_model": "adk/agent-model",
         "provider": {
@@ -247,7 +253,6 @@ root_agent = AcpAgent(
         idle_timeout=SANDBOX_IDLE,
     ),
     session_cwd="/workspace",
-    # The sandbox contains what the agent does, so it may run anything.
-    allow_tools=["*"],
+    allow_tools=ALLOW_TOOLS,
     tools=[FunctionTool(file_ticket)],
 )
