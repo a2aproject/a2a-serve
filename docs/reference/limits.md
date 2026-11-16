@@ -34,6 +34,17 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | Exit after the server closes the provider's stdin | 10 seconds, then the server kills it |
 | Release archive of a provider | 512 MiB |
 
+## Messages
+
+| Limit | Value |
+| --- | --- |
+| Parts of a message | 1000 |
+| Text and data of a message | 1 MiB in all. A data part counts with its JSON. |
+| Metadata of a message and its parts | 64 KiB of JSON in all |
+| `extensions` of a message | 32, each at most 1 KiB |
+| `referenceTaskIds` of a message | 32, each at most 1 KiB |
+| Files of a message | The largest request body ([HTTP Routes](http-routes.md#request-limits)) |
+
 ## Approvals
 
 | Limit | Value |

@@ -37,6 +37,11 @@ func TestMessageOverLimitsIsRefused(t *testing.T) {
 		manyParts[i] = a2a.NewTextPart("x")
 	}
 	longText := a2a.NewTextPart(strings.Repeat("x", a2alimit.MaxText+1))
+	longData := a2a.NewDataPart(map[string]any{"k": strings.Repeat("x", a2alimit.MaxText)})
+	manyRefs := make([]a2a.TaskID, a2alimit.MaxReferenceTasks+1)
+	for i := range manyRefs {
+		manyRefs[i] = a2a.NewTaskID()
+	}
 	clients := []struct {
 		name   string
 		client *a2aclient.Client
@@ -46,18 +51,27 @@ func TestMessageOverLimitsIsRefused(t *testing.T) {
 		{name: "node", client: nodeClient(t, ts, "grok", token)},
 	}
 	messages := []struct {
-		name    string
-		parts   []*a2a.Part
-		wantMsg string
+		name       string
+		parts      []*a2a.Part
+		extensions []string
+		references []a2a.TaskID
+		wantMsg    string
 	}{
 		{name: "too many parts", parts: manyParts, wantMsg: "at most 1000 parts"},
 		{name: "too much text", parts: []*a2a.Part{longText}, wantMsg: "at most 1048576 bytes"},
+		{name: "null part", parts: []*a2a.Part{nil}, wantMsg: "part 1 of a message is null"},
+		{name: "null part after a text part", parts: []*a2a.Part{a2a.NewTextPart("hi"), nil}, wantMsg: "part 2 of a message is null"},
+		{name: "too much data", parts: []*a2a.Part{longData}, wantMsg: "the text and data of a message may have at most 1048576 bytes"},
+		{name: "too long extension", parts: []*a2a.Part{a2a.NewTextPart("hi")}, extensions: []string{strings.Repeat("x", a2alimit.MaxID+1)}, wantMsg: "each of the extensions"},
+		{name: "too many referenced tasks", parts: []*a2a.Part{a2a.NewTextPart("hi")}, references: manyRefs, wantMsg: "referenceTaskIds"},
 	}
 	for _, c := range clients {
 		for _, m := range messages {
 			t.Run(c.name+" "+m.name, func(t *testing.T) {
 				t.Parallel()
-				req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, m.parts...)}
+				msg := a2a.NewMessage(a2a.MessageRoleUser, m.parts...)
+				msg.Extensions, msg.ReferenceTasks = m.extensions, m.references
+				req := &a2a.SendMessageRequest{Message: msg}
 
 				_, err := c.client.SendMessage(context.Background(), req)
 				if !errors.Is(err, a2a.ErrInvalidParams) || !strings.Contains(err.Error(), m.wantMsg) {

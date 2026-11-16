@@ -24,15 +24,17 @@ import (
 
 func TestLimitsCheck(t *testing.T) {
 	t.Parallel()
-	limits := Limits{Parts: 3, Text: 5, Metadata: 12}
+	limits := Limits{Parts: 3, Text: 12, Metadata: 12, Extensions: 2, References: 2, ID: 4}
 	tests := []struct {
-		name     string
-		parts    []*a2a.Part
-		metadata map[string]any
-		wantErr  string
+		name       string
+		parts      []*a2a.Part
+		metadata   map[string]any
+		extensions []string
+		references []a2a.TaskID
+		wantErr    string
 	}{
 		{name: "within the limits", parts: []*a2a.Part{a2a.NewTextPart("ab"), a2a.NewTextPart("cde")}},
-		{name: "files and data don't count as text", parts: []*a2a.Part{a2a.NewTextPart("abcde"), a2a.NewRawPart([]byte("123456")), a2a.NewDataPart(map[string]any{"k": "123456"})}},
+		{name: "files don't count as text", parts: []*a2a.Part{a2a.NewTextPart("abcdefghijkl"), a2a.NewRawPart([]byte("123456"))}},
 		{
 			name:    "too many parts",
 			parts:   []*a2a.Part{a2a.NewTextPart("a"), a2a.NewRawPart([]byte("b")), a2a.NewDataPart(1), a2a.NewFileURLPart("https://example.com/f", "text/plain")},
@@ -40,8 +42,14 @@ func TestLimitsCheck(t *testing.T) {
 		},
 		{
 			name:    "too much text",
-			parts:   []*a2a.Part{a2a.NewTextPart("abc"), a2a.NewTextPart("def")},
-			wantErr: "the text of a message may have at most 5 bytes, got 6",
+			parts:   []*a2a.Part{a2a.NewTextPart("abcdef"), a2a.NewTextPart("ghijklm")},
+			wantErr: "the text and data of a message may have at most 12 bytes, got 13",
+		},
+		{name: "data within the limit", parts: []*a2a.Part{a2a.NewTextPart("ab"), a2a.NewDataPart(map[string]any{"k": "1"})}},
+		{
+			name:    "data counts toward the text",
+			parts:   []*a2a.Part{a2a.NewTextPart("ab"), a2a.NewDataPart(map[string]any{"k": "1234"})},
+			wantErr: "the text and data of a message may have at most 12 bytes, got 14",
 		},
 		{name: "metadata within the limit", parts: []*a2a.Part{a2a.NewTextPart("a")}, metadata: map[string]any{"k": "v"}},
 		{
@@ -50,12 +58,41 @@ func TestLimitsCheck(t *testing.T) {
 			metadata: map[string]any{"k": "v"},
 			wantErr:  "the metadata of a message and its parts may have at most 12 bytes, got 18",
 		},
+		{name: "null part", parts: []*a2a.Part{nil}, wantErr: "part 1 of a message is null"},
+		{name: "null part after a text part", parts: []*a2a.Part{a2a.NewTextPart("hi"), nil}, wantErr: "part 2 of a message is null"},
+		{name: "extensions and references within the limits", parts: []*a2a.Part{a2a.NewTextPart("a")}, extensions: []string{"e1", "e2"}, references: []a2a.TaskID{"t1", "t2"}},
+		{
+			name:       "too many extensions",
+			parts:      []*a2a.Part{a2a.NewTextPart("a")},
+			extensions: []string{"e1", "e2", "e3"},
+			wantErr:    "a message may have at most 2 extensions, got 3",
+		},
+		{
+			name:       "too long extension",
+			parts:      []*a2a.Part{a2a.NewTextPart("a")},
+			extensions: []string{"e1", "e2345"},
+			wantErr:    "each of the extensions of a message may have at most 4 bytes, got 5",
+		},
+		{
+			name:       "too many referenced tasks",
+			parts:      []*a2a.Part{a2a.NewTextPart("a")},
+			references: []a2a.TaskID{"t1", "t2", "t3"},
+			wantErr:    "a message may have at most 2 referenceTaskIds, got 3",
+		},
+		{
+			name:       "too long referenced task",
+			parts:      []*a2a.Part{a2a.NewTextPart("a")},
+			references: []a2a.TaskID{"t12345"},
+			wantErr:    "each of the referenceTaskIds of a message may have at most 4 bytes, got 6",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			msg := a2a.NewMessage(a2a.MessageRoleUser, tt.parts...)
 			msg.Metadata = tt.metadata
+			msg.Extensions = tt.extensions
+			msg.ReferenceTasks = tt.references
 			err := limits.Check(msg)
 			if tt.wantErr == "" {
 				if err != nil {

@@ -61,7 +61,7 @@ A body over the limit gets 413. When the time runs out, the request fails and th
 
 ## Message and response limits
 
-The A2A routes and `/n/…` take a message with at most 1000 parts. File and data parts count too. The text parts of a message may have at most 1 MiB of text together. The metadata of a message and its parts may have at most 64 KiB of JSON together. A message over a limit gets an invalid params error (JSON-RPC `-32602`) that names the limit.
+The A2A routes and `/n/…` limit the parts of a message, its text and data, its metadata, and its `extensions` and `referenceTaskIds`. File and data parts count toward the parts. The text parts and the JSON of the data parts count together, and the metadata of the message and its parts counts together. The largest request body bounds the files. [Limits](limits.md#messages) lists the values. A message over a limit gets an invalid params error (JSON-RPC `-32602`, REST 400) that names the limit. A message with a null part gets the same error.
 
 A node's reply to a task has the same limits. Its text, parts and artifacts count as one message. A reply over a limit gets 400 with an error that names the limit.
 
