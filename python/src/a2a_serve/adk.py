@@ -80,6 +80,10 @@ logger = logging.getLogger(__name__)
 MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
 
+TASK_FAILED_ERROR_CODE = "A2A_TASK_FAILED"
+"""The error code of a failed turn; adk-python's A2A client marks a failed
+task with the same code (A2A_TASK_FAILED_ERROR_CODE)."""
+
 MAX_SESSIONS = 10000
 """Bounds the sessions whose delivered history and pending question the
 agent remembers."""
@@ -505,7 +509,7 @@ class AcpAgent(BaseAgent):
         if partial:
             ev.partial = True
         if error:
-            ev.error_code, ev.error_message = "ACP_TASK_FAILED", error
+            ev.error_code, ev.error_message = TASK_FAILED_ERROR_CODE, error
         if metadata:
             ev.custom_metadata = metadata
         return ev
