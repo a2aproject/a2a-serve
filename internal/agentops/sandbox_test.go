@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -112,6 +113,32 @@ func TestPairSandboxRefusals(t *testing.T) {
 	}
 	if rules := rt.Config().Policy.Sandbox; len(rules) != 0 {
 		t.Fatalf("rules = %v, want none", rules)
+	}
+}
+
+func TestPairInviteOfAnExistingPairingKeepsItsSandbox(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, rt, _ := newSandboxService(t)
+	own := &controlapi.SandboxChange{Storage: agentdir.StorageOwn, Secrets: new([]string{"KEY"})}
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: own}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+
+	_, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: &controlapi.SandboxChange{Storage: agentdir.StorageReadOnly}})
+
+	if err == nil || !strings.Contains(err.Error(), "ben is already paired") {
+		t.Fatalf("Pair() of an existing pairing with another sandbox error = %v, want a refusal", err)
+	}
+	if got, want := agenterr.HintText(err), "change it with `a2a-serve pair set ben --storage read-only`"; got != want {
+		t.Fatalf("Pair() hint = %q, want %q", got, want)
+	}
+	wantRules := []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn, Secrets: []string{"KEY"}}}
+	if diff := cmp.Diff(wantRules, rt.Config().Policy.Sandbox); diff != "" {
+		t.Fatalf("rules after the refused Pair() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: own}); err != nil {
+		t.Fatalf("Pair() of an existing pairing with its own sandbox error = %v, want nil", err)
 	}
 }
 

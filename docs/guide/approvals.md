@@ -81,6 +81,8 @@ When several entries match a call, the most specific one decides: a tool or comm
 | `--deny-tools execute --allow-tools 'command:kubectl get *'` | `kubectl get` runs. Other commands are denied. |
 | `--allow-tools 'command:git *' --deny-tools 'command:git push *'` | Git commands run. `git push` is denied. |
 
+A new entry also decides the approvals that already wait, and the task's history shows which list answered, such as `Allow once by allow-tools`.
+
 `a2a-serve status` lists the rules, and `a2a-serve config unset allow-tools '<entry>'` removes one.
 
 ## Which decides

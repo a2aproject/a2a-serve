@@ -103,7 +103,7 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 
 | Command | Rule it edits |
 | --- | --- |
-| `a2a-serve pair invite <name>` and `pair set <name>` with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule. A pairing in a rule with other matchers moves to a rule of its own, which starts from that rule. |
+| `a2a-serve pair invite <name>` for a new pairing, and `pair set <name>`, with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule. A pairing in a rule with other matchers moves to a rule of its own, which starts from that rule. |
 | `a2a-serve pair rm <name>` | Removes the pairing from the rules. |
 | `a2a-serve config set --guest-storage <mode> --guest-secrets <names>` | The rule whose only matcher is `guests`. `--guest-secrets` replaces its list. `config unset guest-storage` and `guest-secrets` reset it. |
 | `a2a-serve config edit` | Any rule. |

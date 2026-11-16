@@ -17,7 +17,9 @@ package agentops
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -31,6 +33,27 @@ import (
 
 // errOwnerSandbox refuses a sandbox rule for an owner pairing.
 var errOwnerSandbox = agenterr.Invalidf("owners share your agent container, so --storage and --secrets don't apply to them; the sandbox rule of self in config.yaml (`a2a-serve config edit`) sets what it gets")
+
+// errChangesSandbox refuses an invite to the existing pairing name with
+// the sandbox change ch, which would apply to the devices that already
+// joined it.
+func errChangesSandbox(name string, ch controlapi.SandboxChange) error {
+	set := name
+	if ch.Storage != "" {
+		set += " --storage " + ch.Storage
+	}
+	if ch.Secrets != nil {
+		set += " --secrets " + strings.Join(*ch.Secrets, ",")
+	}
+	return agenterr.WithHint(agenterr.Invalidf("%s is already paired, and --storage and --secrets would change the sandbox of its devices too", name), agenterr.HintPairSet, set)
+}
+
+// keepsSandbox reports whether the change ch leaves the sandbox rules of
+// the pairing name as they are.
+func (s *Service) keepsSandbox(name string, ch controlapi.SandboxChange) bool {
+	p := s.deps.Runtime.Config().Policy
+	return reflect.DeepEqual(withSandboxRule(p, name, ch).Sandbox, p.Sandbox)
+}
 
 // withSandboxRule returns cfg's policy with the rule of the pairing name
 // changed by ch. A pairing in a rule with other matchers moves to a rule of

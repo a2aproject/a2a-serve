@@ -498,10 +498,10 @@ func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Pri
 	)
 	accepted := func(err error) { out, outErr = s.settle(ctx, rec, p, option, who, err) }
 	if send == nil || rec.Contact != "" {
-		accepted(s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) }))
+		accepted(s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option, who) }))
 		return out, outErr
 	}
-	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, option.ID)
+	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, option.ID, ShownAnswer(option, who))
 	if err != nil {
 		accepted(err)
 		return out, outErr
@@ -581,7 +581,7 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 	if !waiting {
 		return Closed, nil
 	}
-	err = s.send(ctx, taskID, contextID, q, p, option)
+	err = s.send(ctx, taskID, contextID, q, p, option, who)
 	if err == nil {
 		return Answered, nil
 	}
@@ -594,16 +594,17 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 	return 0, err
 }
 
-func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option) error {
+func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option, who string) error {
 	if rec.Contact != "" {
 		return s.remote.AnswerRemote(ctx, rec, q, option, p)
 	}
-	return s.send(ctx, a2a.TaskID(rec.TaskID), rec.ContextID, q, p, option)
+	return s.send(ctx, a2a.TaskID(rec.TaskID), rec.ContextID, q, p, option, who)
 }
 
-// send sends p's answer option to q, a question of the agent's own task.
-func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option) error {
-	msg, err := AnswerMessage(taskID, contextID, q, option.ID)
+// send sends p's answer option to q, a question of the agent's own task,
+// shown as answered by who.
+func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option, who string) error {
+	msg, err := AnswerMessage(taskID, contextID, q, option.ID, ShownAnswer(option, who))
 	if err != nil {
 		return err
 	}
