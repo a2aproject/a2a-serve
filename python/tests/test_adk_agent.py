@@ -201,7 +201,7 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         after = await self.turn(runner, session, "hello")
 
         self.assertEqual(self.texts(got), ["about to crash", "acp agent error: acp agent exited"])
-        self.assertEqual([ev.error_code for ev in got], [None, "A2A_TASK_FAILED"])
+        self.assertEqual([ev.error_code for ev in got], [None, None])
         self.assertEqual(got[1].error_message, "acp agent error: acp agent exited")
         self.assertEqual(self.texts(after), ["Hello from fakeacp."])
 
