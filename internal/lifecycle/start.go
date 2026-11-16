@@ -75,9 +75,9 @@ type StartOptions struct {
 }
 
 // Start runs the agent of dir. In the foreground it runs until ctx ends;
-// detached or as a service it returns once the agent serves, and an agent
-// which already serves is left running. As a service, an agent which
-// already serves without one fails [CheckServiceStart].
+// detached or as a service it returns once the agent serves. An agent which
+// already serves is left running. As a service, an agent which already
+// serves without one fails [CheckServiceStart].
 func Start(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
 	if opts.Mode == Foreground {
 		return foreground(ctx, dir, opts)
@@ -101,8 +101,15 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if err := dir.Init(); err != nil {
 		return err
 	}
-	// A second start must fail before it touches the running agent's log.
+	// A second start must stop before it touches the running agent's log.
+	// One whose agent serves succeeds, as a detached start does.
 	if err := checkNotRunning(dir); err != nil {
+		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		defer cancel()
+		if _, serr := controlapi.NewClient(dir).Status(pctx); serr != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cfg.Name)
 		return err
 	}
 	if err := logfile.Rotate(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {

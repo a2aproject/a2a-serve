@@ -105,3 +105,24 @@ func TestNormalizedNameIsNoted(t *testing.T) {
 		})
 	}
 }
+
+func TestStartOfARunningAgentNamesTheRunningAgent(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	serveFakeControl(t, d)
+
+	out, err := runCMD(t, "start", "opencode", "--name", "other", "--dir", d.Root)
+	if err != nil {
+		t.Fatalf("a2a-serve start opencode --name other error = %v", err)
+	}
+
+	if want := "✓ coder is already running; restart to apply name (a2a-serve restart)\n"; !strings.HasSuffix(out, want) {
+		t.Fatalf("a2a-serve start opencode --name other output = %q, want it to end with %q", out, want)
+	}
+}

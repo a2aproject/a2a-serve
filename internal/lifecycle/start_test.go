@@ -349,3 +349,29 @@ func exitedProcess() <-chan struct{} {
 	close(c)
 	return c
 }
+
+func TestStartForegroundWhileRunning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	release, err := dir.Lock()
+	if err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("release() error = %v", err)
+		}
+	})
+	serveControl(t, dir, &fakeControl{})
+
+	var out strings.Builder
+	if err := Start(t.Context(), dir, StartOptions{Mode: Foreground, Quiet: true, Out: &out}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+		t.Fatalf("Start() output = %q, want %q", out.String(), want)
+	}
+}

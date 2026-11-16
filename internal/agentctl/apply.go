@@ -51,6 +51,8 @@ type SecretChange struct {
 
 // Result describes a change of settings.
 type Result struct {
+	// Name is the agent's name: the running agent's while it runs, else
+	// the saved one.
 	Name    string            `json:"name"`
 	Path    string            `json:"path"`
 	Changes []agentdir.Change `json:"changes"`
@@ -243,6 +245,10 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		if release != nil {
 			defer func() { err = errors.Join(err, release()) }()
 		}
+	}
+	// A new name waits for a restart, so the running agent has the old one.
+	if res.Running && old.Name != "" {
+		res.Name = old.Name
 	}
 	if res.Running {
 		if err := applyMessengers(ctx, client, next, store, res); err != nil {
