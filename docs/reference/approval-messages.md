@@ -74,7 +74,7 @@ A Structured Input response for another question ID is refused the same way. A r
 Send `seq` whenever an answer may arrive twice, as with a retry after a timeout:
 
 ```bash
-a2a send --task-id <task-id> --data-part '{"option":"once","seq":2}'
+a2a send -a "$(a2a-serve status --url=local)" --task-id <task-id> --data-part '{"option":"once","seq":2}'
 ```
 
 Without `seq`, a repeated answer answers the next question of the task, if the task asked one meanwhile. Chat buttons, email links and the [inspector](../guide/inspector.md) answer only the question they show, so they need no `seq` from the person who answers.
