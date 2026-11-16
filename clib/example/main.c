@@ -81,14 +81,26 @@ static long long json_int(const char *s, const char *key) {
   return p == NULL ? -1 : atoll(p + strlen(pat));
 }
 
-// interrupted is set once a signal starts removing the sandbox, and closed
-// once the sandbox was removed.
-static atomic_int interrupted, closed;
+// interrupted is set once a signal starts removing the sandbox. closing
+// is 0 before the sandbox is closed, 1 while a thread closes it, and 2
+// once it is removed.
+static atomic_int interrupted, closing;
 
-// close_sandbox removes the sandbox at exit, also after an error, once.
+// close_sandbox removes the sandbox, once, and returns once it is removed,
+// whichever thread does it: at the end of main, at exit after an error,
+// or after a signal.
 static void close_sandbox(void) {
-  if (sandbox_handle != 0 && atomic_exchange(&closed, 1) == 0) {
+  if (sandbox_handle == 0) {
+    return;
+  }
+  int idle = 0;
+  if (atomic_compare_exchange_strong(&closing, &idle, 1)) {
     sb.free(sb.close(sandbox_handle));
+    atomic_store(&closing, 2);
+    return;
+  }
+  while (atomic_load(&closing) != 2) {
+    usleep(10000);
   }
 }
 
@@ -271,11 +283,7 @@ int main(int argc, char **argv) {
   acp.free(res);
   atomic_store(&stopping, 1);
   pthread_join(t, NULL);
-  if (atomic_exchange(&closed, 1) == 0) {
-    res = sb.close(sandbox_handle);
-    fail_on_error("a2a_sandbox_close", res);
-    sb.free(res);
-  }
+  close_sandbox();
   while (atomic_load(&interrupted)) {
     pause();
   }
