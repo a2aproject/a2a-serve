@@ -171,23 +171,43 @@ Guard log:
 
 The 9 model calls went through ADK's Gemini model, and `model_budget` counted them in the session state. opencode tried to reach the npm registry while it edited, and the guard model refused, which didn't stop the run.
 
-A conversation in the console, where opencode has to ask before it edits (the console doesn't echo piped input, so the answers are added here):
+A conversation in the console, where opencode has to ask before it edits or runs a command. The console doesn't echo piped input, so the answers are added here; the third `always` found no question left and went to opencode as a message:
 
 ```text
-$ printf 'Fix the bug in the mean function in stats.py. Reply with one sentence.\nonce\n' | ALLOW_TOOLS=read,search,think,other python main.py console
-User -> Fix the bug in the mean function in stats.py. Reply with one sentence.
+$ printf 'Fix the bugs in stats.py so that `python3 -m unittest -q` passes. Reply with one sentence.\nalways\nalways\nalways\n' \
+    | ALLOW_TOOLS=read,search,think,other python main.py console
+User -> Fix the bugs in stats.py so that `python3 -m unittest -q` passes. Reply with one sentence.
+[agent tool] glob (in_progress)
+[agent tool] workspace (completed)
 [agent tool] glob (in_progress)
 [agent tool] workspace (completed)
 [agent tool] read (in_progress)
+[agent tool] read (in_progress)
 [agent tool] workspace/stats.py (completed)
+[agent tool] workspace/test_stats.py (completed)
 [agent tool] edit (in_progress)
 Agent -> Permission required: /workspace/stats.py.
 Reply with one of: once, always, reject.
 
-User -> once
+User -> always
 [agent tool] workspace/stats.py (completed)
-Agent -> The bug in the `mean` function in `stats.py` has been fixed by removing the `+ 1` from the return statement.
+[agent tool] edit (in_progress)
+[agent tool] workspace/stats.py (completed)
+[agent tool] python3 -m unittest -q (in_progress)
+Agent -> Permission required: python3 -m unittest -q.
+Reply with one of: once, always, reject.
+
+User -> always
+[agent tool] python3 -m unittest -q (completed)
+Agent -> The bugs in `stats.py` have been fixed, and `python3 -m unittest -q` now passes.
+
+User -> always
+Agent -> Acknowledged. I will always strive to ensure that tests pass after making any changes.
+
+[...]
+Tests in the sandbox: exit 0
 ```
+
 
 ## Notes
 
