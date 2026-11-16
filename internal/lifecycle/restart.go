@@ -59,7 +59,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, ser
 		pid, err = 0, nil
 	}
 	if err != nil {
-		return err
+		return Unanswered(d, err)
 	}
 	mode, err := restartMode(services, d.ServiceName(), pid)
 	if errors.Is(err, ErrForeground) {

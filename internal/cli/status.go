@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
@@ -75,6 +76,7 @@ stopped, once its first start picked its port.`,
 			}
 			client := sf.controlClient(d)
 			st, err := client.Status(cmd.Context())
+			err = lifecycle.Unanswered(d, err)
 			if scope != "" {
 				return printStatusURL(cfg, d, st, err, scope)
 			}
