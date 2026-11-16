@@ -19,9 +19,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -109,6 +111,96 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		Rootless: rootless,
 	}
 	info := Info{Summary: "docker: " + what, Image: image}
+	var mem *memoryFiles
+	if spec.Memory != nil {
+		var err error
+		if mem, err = d.prepareMemory(ctx, spec, image, rootless); err != nil {
+			return nil, err
+		}
+		r.Mounts = append(r.Mounts, Mount{Src: memoryVolume(spec.Name), Dst: mem.dir})
+	}
+	closeMemory := func() error {
+		if mem == nil {
+			return nil
+		}
+		return errors.Join(RemoveContainer(context.WithoutCancel(ctx), mem.holder), removeVolume(ctx, memoryVolume(spec.Name)))
+	}
+	sb, err := d.prepare(ctx, spec, r, info)
+	if err != nil {
+		return nil, errors.Join(err, closeMemory())
+	}
+	if mem == nil {
+		return sb, nil
+	}
+	mem.agent = spec.Name
+	if r.Egress != nil {
+		mem.launcher = sandboxnet.ContainerLauncher
+		if r.Egress.Relay != "" {
+			mem.launcher = sandboxnet.RelayLauncher
+		}
+	}
+	return &memorySandbox{dockerSandbox: sb, memoryFiles: mem, closeMemory: closeMemory}, nil
+}
+
+// memorySandbox is a Docker sandbox with a file system in memory.
+type memorySandbox struct {
+	*dockerSandbox
+	*memoryFiles
+	closeMemory func() error
+}
+
+var _ Files = (*memorySandbox)(nil)
+
+func (s *memorySandbox) Start(ctx context.Context) (io.ReadWriteCloser, error) {
+	rwc, err := s.dockerSandbox.Start(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if p, ok := rwc.(*process); ok {
+		s.exited.Store(&p.exited)
+	}
+	return rwc, nil
+}
+
+func (s *memorySandbox) Close(ctx context.Context) error {
+	return errors.Join(s.dockerSandbox.Close(ctx), s.closeMemory())
+}
+
+// prepareMemory creates the volume of the file system in memory of spec,
+// starts the container that keeps it, and writes its files.
+func (d *Docker) prepareMemory(ctx context.Context, spec Spec, image string, rootless bool) (*memoryFiles, error) {
+	if !path.IsAbs(spec.Memory.Dir) || path.Clean(spec.Memory.Dir) == "/" {
+		return nil, fmt.Errorf("the file system in memory needs an absolute directory other than /, got %q", spec.Memory.Dir)
+	}
+	launcher, err := d.egressEnv().Launcher()
+	if err != nil {
+		return nil, fmt.Errorf("the file system in memory needs the launcher: %w", err)
+	}
+	volume := memoryVolume(spec.Name)
+	mem := &memoryFiles{holder: spec.Name + "-memory", dir: path.Clean(spec.Memory.Dir), user: containerUser(rootless)}
+	if err := RemoveContainer(ctx, mem.holder); err != nil {
+		return nil, err
+	}
+	if err := removeVolume(ctx, volume); err != nil {
+		return nil, err
+	}
+	if err := createVolume(ctx, volume, spec.Memory, spec.Labels); err != nil {
+		return nil, err
+	}
+	if err := startHolder(ctx, mem.holder, image, volume, mem.dir, launcher, spec.Labels); err != nil {
+		return nil, errors.Join(err, removeVolume(ctx, volume))
+	}
+	if err := mem.writeAll(ctx, spec.Memory.Files); err != nil {
+		return nil, errors.Join(err, RemoveContainer(ctx, mem.holder), removeVolume(ctx, volume))
+	}
+	return mem, nil
+}
+
+// prepare sets up the egress boundary and the exposed sockets of r, and
+// returns the sandbox that runs the command of spec in it.
+func (d *Docker) prepare(ctx context.Context, spec Spec, r *DockerRunner, info Info) (*dockerSandbox, error) {
+	image := r.Image
+	rootless := r.Rootless
 	closeEgress := func() error { return nil }
 	if spec.Network.Boundary != nil {
 		eg, closeFn, err := d.openEgress(ctx, spec, image, rootless)
@@ -163,16 +255,16 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 // container with relay, or else mounted read-only.
 func expose(r *DockerRunner, sockets []Socket, relay bool) {
 	for _, s := range sockets {
-		var path string
+		var inside string
 		switch {
 		case relay && (s.Path != "" || s.Addr != ""):
-			path = sandboxnet.ContainerSocketDir + "/" + sandboxnet.ServerSocketName
+			inside = sandboxnet.ContainerSocketDir + "/" + sandboxnet.ServerSocketName
 		case s.Path != "":
 			r.Mounts = append(r.Mounts, Mount{Src: filepath.Dir(s.Path), Dst: exposeDir, ReadOnly: true})
-			path = filepath.Join(exposeDir, filepath.Base(s.Path))
+			inside = filepath.Join(exposeDir, filepath.Base(s.Path))
 		}
-		if path != "" && s.Env != "" {
-			r.Env = append(r.Env, s.Env+"="+path)
+		if inside != "" && s.Env != "" {
+			r.Env = append(r.Env, s.Env+"="+inside)
 		}
 	}
 }

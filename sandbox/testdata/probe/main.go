@@ -15,12 +15,16 @@
 // Command probe runs in the containers of the tests of the sandbox package
 // and prints, one line per argument, what it finds: "read:<path>" prints
 // the file, "write:<path>" whether creating it works, "ls:<dir>" its
-// entries, and "dial:<host:port>" whether a TCP connection opens.
+// entries, "dial:<host:port>" whether a TCP connection opens,
+// "http:<host/path>" the body of a GET, "wait:" waits for the end of its
+// input, and "sleep:<duration>" sleeps.
 package main
 
 import (
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -61,6 +65,32 @@ func probe(kind, target string) string {
 			return "refused"
 		}
 		return "ok"
+	}
+	if kind == "sleep" {
+		d, err := time.ParseDuration(target)
+		if err != nil {
+			return "error"
+		}
+		time.Sleep(d)
+		return "slept"
+	}
+	if kind == "wait" {
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			return "error"
+		}
+		return "done"
+	}
+	if kind == "http" {
+		resp, err := http.Get("http://" + target)
+		if err != nil {
+			return "error"
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "error"
+		}
+		return string(body)
 	}
 	return "unknown"
 }

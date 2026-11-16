@@ -89,6 +89,9 @@ type BoundaryConfig struct {
 	CA     *CA
 	// UpstreamRoots verify the hosts of Inject; nil uses the system's.
 	UpstreamRoots *x509.CertPool
+	// Interceptor decides connections before the policy, and the requests
+	// of those it inspects; nil leaves them all to the policy.
+	Interceptor Interceptor
 }
 
 // Network tells what the policy needs to know about this host's network.
@@ -323,9 +326,26 @@ func (b *Boundary) handle(guest net.Conn) {
 		return
 	}
 	target := net.JoinHostPort(host, strconv.Itoa(int(port)))
+	action := b.connectAction(host, port)
+	// The resolution and the dial get their own time after the decision.
+	if err := guest.SetDeadline(time.Now().Add(dialTimeout + headTimeout)); err != nil {
+		return
+	}
 	ctx, cancel = context.WithTimeout(b.ctx, dialTimeout)
 	defer cancel()
-	g, rerr := b.authorize(ctx, host, port)
+	if action == ConnectInspect {
+		if err := guest.SetDeadline(time.Time{}); err != nil {
+			return
+		}
+		b.inspect(guest, br, host, port)
+		return
+	}
+	var g grant
+	if action == ConnectDeny {
+		rerr = refuse(403, "intercepted")
+	} else {
+		g, rerr = b.authorize(ctx, host, port, action == ConnectAllow)
+	}
 	if rerr != nil {
 		args := []any{"destination", target, "reason", rerr.reason}
 		if len(rerr.addrs) > 0 {
@@ -392,13 +412,19 @@ func (b *Boundary) handle(guest net.Conn) {
 // authorize decides a request for host and port. An allowed name may
 // resolve to private addresses, though not to this host or its link-local
 // and loopback addresses. Every other address must be allowed by a rule,
-// or be public with the internet mode.
-func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (grant, *refusal) {
+// or be public with the internet mode. With byInterceptor, the interceptor
+// allowed the request, which then reaches public addresses as with the
+// internet mode: it decides by the name alone, which the sandbox picks
+// along with the addresses the name resolves to.
+func (b *Boundary) authorize(ctx context.Context, host string, port uint16, byInterceptor bool) (grant, *refusal) {
 	p := b.cfg.Policy()
 	if addr, err := netip.ParseAddr(host); err == nil {
 		ap := []netip.AddrPort{netip.AddrPortFrom(addr, port)}
 		if r, ok := p.AddrRule(addr, port); ok {
 			return grant{rule: r.String(), addrs: ap}, nil
+		}
+		if byInterceptor && b.public(addr) {
+			return grant{rule: interceptorRule, addrs: ap}, nil
 		}
 		if p.Mode == egress.ModeInternet && b.public(addr) {
 			return grant{rule: egress.ModeInternet, addrs: ap}, nil
@@ -411,7 +437,7 @@ func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (gra
 	}
 	// Without the internet mode an unlisted name isn't even resolved, so
 	// that the agent can't send data out in DNS queries.
-	if !named && p.Mode != egress.ModeInternet {
+	if !named && p.Mode != egress.ModeInternet && !byInterceptor {
 		return grant{}, b.denied(p, host, "not-on-allowlist")
 	}
 	addrs, err := b.cfg.Resolver.LookupNetIP(ctx, "ip", host)
@@ -430,6 +456,8 @@ func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (gra
 			g.rule = cmp.Or(g.rule, ar.String())
 		case !named && p.Mode == egress.ModeInternet && b.public(a):
 			g.rule = cmp.Or(g.rule, egress.ModeInternet)
+		case !named && byInterceptor && b.public(a):
+			g.rule = cmp.Or(g.rule, interceptorRule)
 		default:
 			refused = append(refused, a)
 			continue
@@ -444,6 +472,9 @@ func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (gra
 	}
 	return g, nil
 }
+
+// interceptorRule names the decision of the interceptor in the log.
+const interceptorRule = "interceptor"
 
 // authorizeHostGateway decides a request for [egress.HostGateway]. A rule
 // that names it reaches the port on this host's loopback. The internet
@@ -560,7 +591,7 @@ func writeRefusal(c net.Conn, r *refusal) {
 // errorType maps a reason token to its RFC 9209 error type.
 func errorType(reason string) string {
 	switch reason {
-	case "not-on-allowlist", "port-not-allowed":
+	case "not-on-allowlist", "port-not-allowed", "intercepted":
 		return "http_request_denied"
 	case "ip-not-on-allowlist", "resolved-address-denied", "scoped-ip":
 		return "destination_ip_prohibited"

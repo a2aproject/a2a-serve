@@ -16,9 +16,20 @@
 
 package sandboxnet
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Launch runs only in a Linux container.
 func Launch(LaunchConfig) (int, error) {
+	return 0, errors.New("the sandbox launcher runs only on Linux")
+}
+
+// Hold runs only in a Linux container.
+func Hold() int { return 1 }
+
+// Exec runs only in a Linux container.
+func Exec(int, int, []string, []string, time.Duration) (int, error) {
 	return 0, errors.New("the sandbox launcher runs only on Linux")
 }

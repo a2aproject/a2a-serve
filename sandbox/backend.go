@@ -16,6 +16,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 )
@@ -48,6 +49,10 @@ type Spec struct {
 	// Scratch are paths in the sandbox which appear as empty directories,
 	// whose changes stay in the sandbox.
 	Scratch []string
+	// Memory, when set, gives the sandbox a file system in memory, which
+	// outlives restarts of the command until Close. The sandbox then
+	// implements [Files].
+	Memory *Memory
 	// Home is the host directory that the sandbox mounts as the home of the
 	// process.
 	Home    string
@@ -122,6 +127,9 @@ func (Local) Probe(context.Context) (Capabilities, error) {
 func (Local) Prepare(_ context.Context, spec Spec) (Sandbox, error) {
 	if spec.Network.Boundary != nil {
 		return nil, &boundaryError{why: "the command runs on the host"}
+	}
+	if spec.Memory != nil {
+		return nil, errors.New("the local sandbox has no file system in memory; use the Docker sandbox")
 	}
 	c := spec.Command
 	c.Env = slices.Clone(c.Env)

@@ -17,46 +17,16 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/a2aproject/a2a-serve/sandbox/sandboxnet"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:]))
-}
-
-func run(args []string) int {
-	if len(args) == 0 || args[0] != "sandbox-init" {
+	if len(os.Args) < 2 || os.Args[1] != "sandbox-init" {
 		fmt.Fprintln(os.Stderr, "launcher: want sandbox-init")
-		return 2
+		os.Exit(2)
 	}
-	args = args[1:]
-	check := len(args) > 0 && args[0] == "--check"
-	if check {
-		args = args[1:]
-	}
-	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "launcher: want <socket> <uid> <gid>")
-		return 2
-	}
-	uid, uerr := strconv.Atoi(args[1])
-	gid, gerr := strconv.Atoi(args[2])
-	if uerr != nil || gerr != nil {
-		fmt.Fprintln(os.Stderr, "launcher: invalid uid or gid")
-		return 2
-	}
-	code, err := sandboxnet.Launch(sandboxnet.LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: os.Environ(), Check: check})
-	if setupErr, ok := errors.AsType[*sandboxnet.SetupError](err); ok {
-		fmt.Fprintf(os.Stderr, "a2a-init: setting up the sandbox's network: %v\n", setupErr)
-		return sandboxnet.SetupFailedExit
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "launcher:", err)
-		return 1
-	}
-	return code
+	os.Exit(sandboxnet.RunInit(os.Args[2:], os.Stderr))
 }

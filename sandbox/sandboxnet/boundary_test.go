@@ -112,8 +112,10 @@ func TestAuthorize(t *testing.T) {
 		policy egress.Policy
 		host   string
 		port   uint16
-		want   grant
-		reason string
+		// byInterceptor is set when the interceptor allowed the request.
+		byInterceptor bool
+		want          grant
+		reason        string
 	}{
 		{name: "public name", policy: mustPolicy(t, ""), host: "example.com", port: 443,
 			want: grant{rule: "internet", addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.34:443"), netip.MustParseAddrPort("[2606:2800:220:1::1]:443")}}},
@@ -169,6 +171,20 @@ func TestAuthorize(t *testing.T) {
 		{name: "allowlist limits the host gateway to its rules", policy: mustPolicy(t, egress.ModeAllowlist, egress.HostGateway+":11434"), host: egress.HostGateway, port: 3000, reason: "port-not-allowed"},
 		{name: "allowlist allows a listed host gateway", policy: mustPolicy(t, egress.ModeAllowlist, egress.HostGateway), host: egress.HostGateway, port: 3000,
 			want: grant{rule: egress.HostGateway, addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:3000")}}},
+		{name: "interceptor opens a public name past the allowlist", policy: mustPolicy(t, egress.ModeAllowlist), host: "example.com", port: 443, byInterceptor: true,
+			want: grant{rule: "interceptor", addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.34:443"), netip.MustParseAddrPort("[2606:2800:220:1::1]:443")}}},
+		{name: "interceptor opens a public literal", policy: mustPolicy(t, egress.ModeAllowlist), host: "93.184.216.34", port: 443, byInterceptor: true,
+			want: grant{rule: "interceptor", addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.34:443")}}},
+		{name: "interceptor drops the private addresses of a name", policy: mustPolicy(t, egress.ModeAllowlist), host: "mixed.example", port: 443, byInterceptor: true,
+			want: grant{rule: "interceptor", addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.35:443")}}},
+		{name: "interceptor can't open a name rebound to the LAN", policy: mustPolicy(t, egress.ModeAllowlist), host: "rebind.test", port: 443, byInterceptor: true, reason: "resolved-address-denied"},
+		{name: "interceptor can't open the tailnet", policy: mustPolicy(t, egress.ModeAllowlist), host: "tailnet.test", port: 443, byInterceptor: true, reason: "resolved-address-denied"},
+		{name: "interceptor can't open a LAN literal", policy: mustPolicy(t, egress.ModeAllowlist), host: "192.168.1.1", port: 80, byInterceptor: true, reason: "ip-not-on-allowlist"},
+		{name: "interceptor can't open a metadata service", policy: mustPolicy(t, egress.ModeAllowlist), host: "meta.corp", port: 80, byInterceptor: true, reason: "resolved-address-denied"},
+		{name: "interceptor can't open this host", policy: mustPolicy(t, egress.ModeAllowlist), host: "me.test", port: 22, byInterceptor: true, reason: "resolved-address-denied"},
+		{name: "interceptor can't open the host gateway", policy: mustPolicy(t, egress.ModeAllowlist), host: egress.HostGateway, port: 3000, byInterceptor: true, reason: "not-on-allowlist"},
+		{name: "a rule still opens a private name the interceptor allows", policy: mustPolicy(t, egress.ModeAllowlist, "nas.lan"), host: "nas.lan", port: 22, byInterceptor: true,
+			want: grant{rule: "nas.lan", addrs: []netip.AddrPort{netip.MustParseAddrPort("192.168.1.20:22")}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -180,7 +196,7 @@ func TestAuthorize(t *testing.T) {
 				Network:     fakeNetwork{local: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/24"), netip.MustParsePrefix("2001:470:1::5/64")}},
 				Log:         slog.New(slog.DiscardHandler),
 			}}
-			got, rerr := b.authorize(context.Background(), tc.host, tc.port)
+			got, rerr := b.authorize(context.Background(), tc.host, tc.port, tc.byInterceptor)
 			reason := ""
 			if rerr != nil {
 				reason = rerr.reason

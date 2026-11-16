@@ -16,7 +16,6 @@ package sandboxnet
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -88,72 +87,50 @@ func (b *Boundary) injection(host string, port uint16) (Injection, bool) {
 // it terminates the container's TLS and forwards each request to the
 // checked addresses of g with the header added.
 func (b *Boundary) intercept(guest net.Conn, br *bufio.Reader, g grant, inj Injection) {
-	cert, err := b.cfg.CA.leaf(inj.Host)
-	if err != nil {
+	if _, err := b.cfg.CA.leaf(inj.Host); err != nil {
 		b.log.write(slog.LevelError, "egress failed", "destination", g.target, "reason", "certificate-failed", "error", err)
 		writeRefusal(guest, refuse(502, "certificate-failed"))
 		return
 	}
-	b.cfg.Blocks.allowed(g.target)
 	b.log.write(slog.LevelDebug, "egress allowed", "destination", g.target, "rule", g.rule, "inject", strings.Join(inj.Secrets, ","))
-	if _, err := io.WriteString(guest, "HTTP/1.1 200 OK\r\n\r\n"); err != nil {
-		return
+	upstream := b.upstreamTransport(g, inj.Host)
+	defer upstream.CloseIdleConnections()
+	b.serveHTTP(guest, br, g.target, inj.Host, true, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.forward(w, r, inj, g.target, upstream)
+	}))
+}
+
+// terminateTLS answers the TLS connection of the container to host with a
+// certificate of the CA.
+func (b *Boundary) terminateTLS(conn net.Conn, target, host string) (*tls.Conn, bool) {
+	if b.cfg.CA == nil {
+		b.log.write(slog.LevelError, "egress failed", "destination", target, "reason", "certificate-failed", "error", "the boundary has no CA")
+		return nil, false
 	}
-	buffered, err := br.Peek(br.Buffered())
+	cert, err := b.cfg.CA.leaf(host)
 	if err != nil {
-		return
+		b.log.write(slog.LevelError, "egress failed", "destination", target, "reason", "certificate-failed", "error", err)
+		return nil, false
 	}
-	conn := &prefixConn{Conn: guest, r: io.MultiReader(bytes.NewReader(bytes.Clone(buffered)), guest), stall: writeStallTimeout}
 	tc := tls.Server(conn, &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"h2", "http/1.1"},
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			// A name other than the requested host would let the container
 			// pick which certificate the boundary presents.
-			if name, err := egress.NormalizeHost(hello.ServerName); hello.ServerName != "" && (err != nil || name != inj.Host) {
+			if name, err := egress.NormalizeHost(hello.ServerName); hello.ServerName != "" && (err != nil || name != host) {
 				return nil, errors.New("the TLS server name differs from the requested host")
 			}
 			return cert, nil
 		},
 	})
 	ctx, cancel := context.WithTimeout(b.ctx, headTimeout)
-	err = tc.HandshakeContext(ctx)
-	cancel()
-	if err != nil {
-		b.log.write(slog.LevelWarn, "egress failed", "destination", g.target, "reason", "tls-failed", "error", err)
-		return
+	defer cancel()
+	if err := tc.HandshakeContext(ctx); err != nil {
+		b.log.write(slog.LevelWarn, "egress failed", "destination", target, "reason", "tls-failed", "error", err)
+		return nil, false
 	}
-	upstream := b.upstreamTransport(g, inj.Host)
-	defer upstream.CloseIdleConnections()
-	var handlers sync.WaitGroup
-	ln := newOneConnListener(tc)
-	srv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			handlers.Add(1)
-			defer handlers.Done()
-			// A handler that outlives its request's limit is stuck writing
-			// to a stream whose container doesn't take the data, which no
-			// context ends; closing the connection does.
-			stuck := time.AfterFunc(injectTimeout+writeStallTimeout, func() { closeConn(guest) })
-			defer stuck.Stop()
-			b.forward(w, r, inj, g.target, upstream)
-		}),
-		ReadHeaderTimeout: headTimeout,
-		IdleTimeout:       injectIdleTimeout,
-		MaxHeaderBytes:    maxHead,
-		HTTP2:             &http.HTTP2Config{MaxConcurrentStreams: maxInjectRequests, WriteByteTimeout: writeStallTimeout},
-		ErrorLog:          log.New(io.Discard, "", 0),
-		BaseContext:       func(net.Listener) context.Context { return b.ctx },
-		ConnState: func(_ net.Conn, s http.ConnState) {
-			if s == http.StateClosed || s == http.StateHijacked {
-				ln.closeOnce()
-			}
-		},
-	}
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, net.ErrClosed) {
-		b.log.write(slog.LevelWarn, "egress failed", "destination", g.target, "reason", "serve-failed", "error", err)
-	}
-	handlers.Wait()
+	return tc, true
 }
 
 // forward sends the request r of the container to the host of inj.

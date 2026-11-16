@@ -24,7 +24,9 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/aojea/agents.net/sdk/pkg/tun2connect"
@@ -345,4 +347,58 @@ func supervise(agent int, sig <-chan os.Signal) int {
 		}
 	}
 	return 0
+}
+
+// Hold blocks until a signal ends it, as PID 1 of a container that only
+// keeps its volumes mounted.
+func Hold() int {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	<-sig
+	return 0
+}
+
+// Exec drops every capability, switches to uid and gid, and runs argv,
+// for commands that run next to the agent in its container. Without a
+// timeout it replaces this process. With one, it runs argv in a process
+// group of its own, which it kills once timeout passes, and returns the
+// exit code: [ExecTimedOutExit] after the kill.
+func Exec(uid, gid int, argv, env []string, timeout time.Duration) (int, error) {
+	if len(argv) == 0 {
+		return 0, errors.New("no command to run")
+	}
+	path, err := exec.LookPath(argv[0])
+	if err != nil {
+		return 0, err
+	}
+	if err := dropPrivileges(uid, gid); err != nil {
+		return 0, fmt.Errorf("dropping privileges: %w", err)
+	}
+	if timeout <= 0 {
+		return 0, syscall.Exec(path, argv, env)
+	}
+	cmd := exec.Command(path, argv[1:]...)
+	cmd.Args[0] = argv[0]
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("starting %s: %w", argv[0], err)
+	}
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(timeout, func() {
+		timedOut.Store(true)
+		if err := unix.Kill(-cmd.Process.Pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+			fmt.Fprintf(os.Stderr, "a2a-init: stopping %s: %v\n", argv[0], err)
+		}
+	})
+	err = cmd.Wait()
+	timer.Stop()
+	if timedOut.Load() {
+		return ExecTimedOutExit, fmt.Errorf("%s ran out of its %s", argv[0], timeout)
+	}
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		return ee.ExitCode(), nil
+	}
+	return 0, err
 }

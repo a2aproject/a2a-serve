@@ -59,18 +59,19 @@ func NewBoundaries(dir string, nameLen int, alphabet string, blocks *sandboxnet.
 
 // BoundaryRules decide the connections of a container: policy at each
 // connection, and the headers of inject, whose hosts get certificates that
-// ca signs.
+// ca signs. Interceptor, when set, decides connections before the policy.
 type BoundaryRules struct {
-	Policy func() egress.Policy
-	Inject []sandboxnet.Injection
-	CA     *sandboxnet.CA
+	Policy      func() egress.Policy
+	Inject      []sandboxnet.Injection
+	CA          *sandboxnet.CA
+	Interceptor sandboxnet.Interceptor
 }
 
 // Opener returns the function that opens the boundary of the container
 // named name with rules.
 func (e *Boundaries) Opener(name string, rules BoundaryRules) OpenEgress {
 	return func(gateway HostGatewayFunc, relay bool) (EgressEndpoint, error) {
-		cfg := sandboxnet.BoundaryConfig{Sandbox: name, Policy: rules.Policy, HostGateway: gateway, Blocks: e.blocks, Inject: rules.Inject, CA: rules.CA}
+		cfg := sandboxnet.BoundaryConfig{Sandbox: name, Policy: rules.Policy, HostGateway: gateway, Blocks: e.blocks, Inject: rules.Inject, CA: rules.CA, Interceptor: rules.Interceptor}
 		if relay {
 			return e.openRelayed(cfg)
 		}
