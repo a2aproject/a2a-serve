@@ -336,7 +336,7 @@ func TestConformanceQueuedTaskFailsWhenTurnAheadAsks(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	first := send(t, c, userText("remember blue", "", ""))
-	asking := sendAsync(t, c, userText("ask 500ms", "", first.ContextID))
+	asking := sendAsync(t, c, userText("ask 3s", "", first.ContextID))
 	waitState(t, c, asking.ID, a2a.TaskStateWorking)
 	queued := sendAsync(t, c, userText("remember red", "", first.ContextID))
 
