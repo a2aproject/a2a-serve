@@ -463,10 +463,7 @@ func newPeer(t *testing.T) testPeer {
 // returns their status.
 func ingressTryer(t *testing.T, forwardedFor string) (f *front.Front, serve func(segment string) int) {
 	t.Helper()
-	// The rate limits don't refill while the test runs, however slowly it
-	// sends its requests.
-	frozen := time.Now()
-	f = front.New(info, meshbackend.Routes{}, echo(t, "control"), echo(t, "signin"), front.WithClock(func() time.Time { return frozen }))
+	f, _ = newFront(t)
 	f.Open(upstream(t))
 	return f, func(segment string) int {
 		req := httptest.NewRequest(http.MethodGet, "/ingress/"+url.PathEscape(segment)+"/a2a/coder/tasks", nil)

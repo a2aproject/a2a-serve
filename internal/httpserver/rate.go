@@ -51,12 +51,6 @@ func NewKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) 
 	return newKeyedRate(limit, burst, maxKeys, key, time.Now)
 }
 
-// NewKeyedRateClock is [NewKeyedRate] with the clock now, such as one that
-// a test controls.
-func NewKeyedRateClock(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string, now func() time.Time) *KeyedRate {
-	return newKeyedRate(limit, burst, maxKeys, key, now)
-}
-
 func newKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string, now func() time.Time) *KeyedRate {
 	return &KeyedRate{
 		limit: limit, burst: burst, maxKeys: maxKeys, key: key, now: now,
