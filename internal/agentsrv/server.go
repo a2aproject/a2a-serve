@@ -530,7 +530,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		s.ends = newTaskEnds(s.bus, s.approvals, s.unattended)
 		s.pairings = pairings.New(pairings.Deps{
 			Store:     s.store,
-			BaseURL:   s.bestURL,
+			BaseURL:   s.peopleURL,
 			Ads:       s.ads,
 			LinkHints: s.supervisor.LinkHints,
 			Mailbox:   s.nodes.Mailbox,
@@ -810,6 +810,23 @@ func (s *Server) bestURL() string {
 	case public != "":
 		return public
 	case private != "":
+		return private
+	}
+	return local
+}
+
+// peopleURL is the URL that people can open from their own machines: public,
+// then private unless the network provider says it works only from other
+// agents, then local.
+func (s *Server) peopleURL() string {
+	local, private, public := s.URLs()
+	if public != "" {
+		return public
+	}
+	if n, ok := s.private.(network.PrivateNoter); ok && n.PrivateNote() != "" {
+		return local
+	}
+	if private != "" {
 		return private
 	}
 	return local
