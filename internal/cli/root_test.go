@@ -15,6 +15,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -230,6 +232,49 @@ func TestUnknownCommandSuggestions(t *testing.T) {
 			got := classify(err, cmd)
 			if diff := cmp.Diff([]any{tc.wantErr, tc.wantHint, 2}, []any{got.Message, got.Hint, got.Exit}); diff != "" {
 				t.Fatalf("a2a-serve %s wrong message, hint and exit (-want +got) diff = %s", strings.Join(tc.args, " "), diff)
+			}
+		})
+	}
+}
+
+func TestFlagErrorsFollowOutput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown flag", args: []string{"status", "--bogus", "-o", "json"}, want: "unknown flag: --bogus"},
+		{name: "invalid number", args: []string{"config", "set", "--port", "abc", "-o", "json"}, want: `invalid argument "abc" for "--port" flag: want a number`},
+		{name: "invalid duration", args: []string{"status", "--timeout", "soon", "-o", "json"}, want: `invalid argument "soon" for "--timeout" flag: want a duration such as 30s or 2m`},
+		{name: "invalid jsonl", args: []string{"status", "--bogus", "--output=jsonl"}, want: "unknown flag: --bogus"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+			root := newRootCmd(cfg)
+			root.SetOut(io.Discard)
+			args := append(tc.args, "--dir", newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root)
+			root.SetArgs(args)
+			cmd, err := root.ExecuteC()
+			if err == nil {
+				t.Fatalf("a2a-serve %s error = nil, want a usage error", strings.Join(tc.args, " "))
+			}
+
+			if exit := cfg.renderError(err, cmd, args); exit != 2 {
+				t.Fatalf("renderError() = %d, want 2", exit)
+			}
+
+			var got struct {
+				Error struct{ Code, Message string }
+			}
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("parsing the output %q: %v", buf.String(), err)
+			}
+			if got.Error.Code != clierr.CodeUsage || got.Error.Message != tc.want {
+				t.Fatalf("renderError() printed %+v, want %s with %q", got.Error, clierr.CodeUsage, tc.want)
 			}
 		})
 	}

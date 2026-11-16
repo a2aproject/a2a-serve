@@ -24,10 +24,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -157,7 +159,7 @@ func Execute(args []string) int {
 	root := newRootCmd(cfg)
 	root.SetArgs(args)
 	if cmd, err := root.ExecuteC(); err != nil {
-		return cfg.renderError(err, cmd)
+		return cfg.renderError(err, cmd, args)
 	}
 	return 0
 }
@@ -216,10 +218,16 @@ func classify(err error, cmd *cobra.Command) *clierr.Error {
 	return &hinted
 }
 
-func (g *globalConfig) renderError(err error, cmd *cobra.Command) int {
+// renderError prints err of cmd, run with args, and returns the exit code.
+func (g *globalConfig) renderError(err error, cmd *cobra.Command, args []string) int {
 	ce := classify(err, cmd)
 	if ce.Silent() {
 		return ce.Exit
+	}
+	// A flag that doesn't parse stops cobra before it sets the output
+	// mode, so the mode comes from the command line.
+	if mode := outputOf(args); !g.IsJSON() && (mode == output.ModeJson || mode == output.ModeJSONL) {
+		g.Mode = mode
 	}
 	if g.IsJSON() {
 		if perr := g.PrintJSON(ce); perr != nil {
@@ -232,6 +240,55 @@ func (g *globalConfig) renderError(err error, cmd *cobra.Command) int {
 		fmt.Fprintf(os.Stderr, "hint: %s\n", ce.Hint)
 	}
 	return ce.Exit
+}
+
+// outputOf returns the value of -o or --output in args, the command line,
+// or "" without one.
+func outputOf(args []string) output.Mode {
+	var mode string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		next := func() string {
+			if i+1 < len(args) {
+				i++
+				return args[i]
+			}
+			return ""
+		}
+		switch {
+		case a == "--":
+			return output.Mode(mode)
+		case a == "--output" || a == "-o":
+			mode = next()
+		case strings.HasPrefix(a, "--output="):
+			mode = strings.TrimPrefix(a, "--output=")
+		case strings.HasPrefix(a, "-o"):
+			mode = strings.TrimPrefix(strings.TrimPrefix(a, "-o"), "=")
+		}
+	}
+	return output.Mode(mode)
+}
+
+// flagValueError rewords the error of a flag value that doesn't parse as
+// a number, a duration or a boolean, which names the Go parser.
+func flagValueError(err error) error {
+	var ive *pflag.InvalidValueError
+	if !errors.As(err, &ive) {
+		return err
+	}
+	var want string
+	var ne *strconv.NumError
+	switch {
+	case errors.As(err, &ne) && ne.Func == "ParseBool":
+		want = "want true or false"
+	case errors.As(err, &ne):
+		want = "want a number"
+	case strings.HasPrefix(ive.Unwrap().Error(), "time: "):
+		want = "want a duration such as 30s or 2m"
+	default:
+		return err
+	}
+	return fmt.Errorf("invalid argument %q for %q flag: %s", ive.GetValue(), "--"+ive.GetFlag().Name, want)
 }
 
 // newRootCmd returns the `a2a-serve` command. The a2a CLI runs it as
@@ -326,7 +383,7 @@ func withSuggestions(c *cobra.Command, args []string, msg string) string {
 func markUsageErrors(cmd *cobra.Command) {
 	cmd.SuggestionsMinimumDistance = suggestionDistance
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return clierr.Usage(err.Error())
+		return clierr.Usage(flagValueError(err).Error())
 	})
 	// Cobra checks required flags and flag groups after PreRunE and returns
 	// its errors as they are, so they are checked here first.
