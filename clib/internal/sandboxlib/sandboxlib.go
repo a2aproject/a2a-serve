@@ -150,6 +150,21 @@ func (l *Library) open(spec Spec) (int64, sandbox.Info, error) {
 	if spec.Name == "" {
 		return 0, sandbox.Info{}, errors.New("the sandbox needs a name")
 	}
+	// Docker takes a relative bind source for the name of a volume.
+	if spec.Launcher != "" {
+		abs, err := filepath.Abs(spec.Launcher)
+		if err != nil {
+			return 0, sandbox.Info{}, err
+		}
+		spec.Launcher = abs
+	}
+	for i, m := range spec.Mounts {
+		abs, err := filepath.Abs(m.Src)
+		if err != nil {
+			return 0, sandbox.Info{}, err
+		}
+		spec.Mounts[i].Src = abs
+	}
 	spec.Labels = maps.Clone(spec.Labels)
 	if spec.Labels == nil {
 		spec.Labels = map[string]string{}

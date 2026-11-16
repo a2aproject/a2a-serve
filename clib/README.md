@@ -16,6 +16,30 @@ The script also builds `a2a-sandbox-init`, the launcher that runs as PID 1 of th
 
 Each library has its own Go runtime, so a process can load both. They share nothing in memory. The sandbox library hands the stdio of a command to the ACP library as a file descriptor.
 
+## Example in C
+
+[`example/main.c`](example/main.c) runs an ACP agent in a sandbox with a workspace in memory, using only the two libraries. It answers the ACP library's `start` question with the descriptor that `a2a_sandbox_start` returns.
+
+```sh
+clib/build.sh
+gcc -o /tmp/example clib/example/main.c -ldl -lpthread
+mkdir -p /tmp/fakeacp
+CGO_ENABLED=0 go build -o /tmp/fakeacp/fakeacp ./internal/agentsrv/testdata/fakeacp
+printf 'FROM scratch\nCOPY fakeacp /fakeacp\n' | docker build -q -t fakeacp -f - /tmp/fakeacp
+/tmp/example python/src/a2a_serve/_lib fakeacp /fakeacp "read seed.txt"
+```
+
+fakeacp is the scripted agent of the tests, and `read seed.txt` makes it reply with that file, which the example wrote into the workspace. The output ends with:
+
+```text
+event: {"event":{"artifactUpdate":{... "parts":[{"text":"seeded from C"}] ...}}}
+event: {"event":{"statusUpdate":{... "state":"TASK_STATE_COMPLETED" ...}}}
+workspace: {"files":[".fakeacp/....json","seed.txt"]}
+done
+```
+
+The second and third arguments are the image and the agent's path in it. An agent such as `opencode acp` also needs a model it can reach; the sample in [`python/samples/adk_sandbox_coder`](../python/samples/adk_sandbox_coder) shows how to give it one.
+
 ## Calling convention
 
 Every function returns a JSON object as a `char*`. Free it with `a2a_sandbox_free` or `a2a_acp_free`. A failed call returns `{"error": "..."}`. Byte strings are base64 in JSON.

@@ -112,6 +112,11 @@ class AcpAgent(BaseAgent):
                 )
             return self._executor
 
+    def busy_sessions(self) -> set[str]:
+        """Returns the IDs of the ADK sessions with an invocation in progress."""
+        with self._lock:
+            return set(self._runs)
+
     def close(self) -> None:
         """Stops the agents; runs in progress fail."""
         with self._lock:

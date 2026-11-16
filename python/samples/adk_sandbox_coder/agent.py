@@ -165,6 +165,9 @@ class SessionInterceptor:
         self.guard_calls = 0
         self.last_used = time.monotonic()
         self._verdicts: dict[str, bool] = {}
+        # Questions in flight, by action: connections that want the same
+        # destination at once wait for one answer.
+        self._asking: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
         self._guard_slots = threading.BoundedSemaphore(GUARD_CONCURRENCY)
 
@@ -233,17 +236,38 @@ class SessionInterceptor:
         )
 
     def _ask_guard(self, action: str) -> bool:
-        with self._lock:
-            if action in self._verdicts:
-                return self._verdicts[action]
-            if self.guard_calls >= MAX_GUARD_CALLS:
-                self._note(f"guard budget of {MAX_GUARD_CALLS} spent; denying")
+        while True:
+            with self._lock:
+                if action in self._verdicts:
+                    return self._verdicts[action]
+                asking = self._asking.get(action)
+                if asking is None:
+                    if self.guard_calls >= MAX_GUARD_CALLS:
+                        self._note(f"guard budget of {MAX_GUARD_CALLS} spent; denying")
+                        return False
+                    asking = self._asking[action] = threading.Event()
+                    break
+            # Another connection asks; its answer, or its failure, comes soon.
+            if not asking.wait(timeout=GUARD_WAIT + 30):
                 return False
-            self.guard_calls += 1
+            with self._lock:
+                if action not in self._verdicts:
+                    return False
+        try:
+            return self._decide(action)
+        finally:
+            with self._lock:
+                del self._asking[action]
+            asking.set()
+
+    def _decide(self, action: str) -> bool:
+        """Asks the guard model about action, and keeps its answer."""
         if not self._guard_slots.acquire(timeout=GUARD_WAIT):
             self._note("the guard model is busy with this session; denying")
             return False
         try:
+            with self._lock:
+                self.guard_calls += 1
             prompt = (
                 "You guard the network of a sandbox where a coding agent fixes a small Python project. "
                 "It needs no network besides its model. Allow only package indexes and source hosts it "
@@ -301,6 +325,9 @@ class SandboxedCoder:
         with self._lock:
             sb = self.sandboxes.get(session_id)
             interceptor = self.interceptors.get(session_id)
+            if interceptor is not None:
+                # Under the lock, so that the reaper doesn't take it now.
+                interceptor.last_used = time.monotonic()
         if sb is None:
             log = self.log.setdefault(session_id, [])
             interceptor = SessionInterceptor(self.agent, session_id, log)
@@ -333,8 +360,9 @@ class SandboxedCoder:
     def _reap(self) -> None:
         while not self._closed.wait(min(60.0, SANDBOX_IDLE)):
             now = time.monotonic()
+            busy = self.agent.busy_sessions()
             with self._lock:
-                idle = [k for k, i in self.interceptors.items() if now - i.last_used > SANDBOX_IDLE]
+                idle = [k for k, i in self.interceptors.items() if now - i.last_used > SANDBOX_IDLE and k not in busy]
                 boxes = [(k, self.sandboxes.pop(k)) for k in idle]
                 for k in idle:
                     self.interceptors.pop(k, None)
