@@ -164,6 +164,11 @@ func TestEventOverMessageLimitsRefused(t *testing.T) {
 			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewTextPart("a")}, Metadata: map[string]any{"k": strings.Repeat("m", a2alimit.MaxMetadata)}}}},
 			wantErr: fmt.Sprintf("the metadata of a reply and its parts may have at most %d bytes, got %d", a2alimit.MaxMetadata, a2alimit.MaxMetadata+8),
 		},
+		{
+			name:    "null part in an artifact",
+			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewTextPart("a"), nil}}}},
+			wantErr: "part 2 of a reply is null",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

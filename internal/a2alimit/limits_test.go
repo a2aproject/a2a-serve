@@ -50,6 +50,8 @@ func TestLimitsCheck(t *testing.T) {
 			metadata: map[string]any{"k": "v"},
 			wantErr:  "the metadata of a message and its parts may have at most 12 bytes, got 18",
 		},
+		{name: "null part", parts: []*a2a.Part{nil}, wantErr: "part 1 of a message is null"},
+		{name: "null part after a text part", parts: []*a2a.Part{a2a.NewTextPart("hi"), nil}, wantErr: "part 2 of a message is null"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

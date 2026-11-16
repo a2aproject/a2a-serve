@@ -52,6 +52,8 @@ func TestMessageOverLimitsIsRefused(t *testing.T) {
 	}{
 		{name: "too many parts", parts: manyParts, wantMsg: "at most 1000 parts"},
 		{name: "too much text", parts: []*a2a.Part{longText}, wantMsg: "at most 1048576 bytes"},
+		{name: "null part", parts: []*a2a.Part{nil}, wantMsg: "part 1 of a message is null"},
+		{name: "null part after a text part", parts: []*a2a.Part{a2a.NewTextPart("hi"), nil}, wantMsg: "part 2 of a message is null"},
 	}
 	for _, c := range clients {
 		for _, m := range messages {

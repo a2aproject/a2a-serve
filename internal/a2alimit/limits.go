@@ -67,7 +67,8 @@ func (l Limits) Check(msg *a2a.Message) error {
 }
 
 // CheckParts is [Limits.Check] for what, named in the error, with parts
-// and metadata. The metadata of the parts counts too.
+// and metadata. The metadata of the parts counts too. It refuses a null
+// part, so that later code can read every part.
 func (l Limits) CheckParts(what string, parts []*a2a.Part, metadata ...map[string]any) error {
 	if len(parts) > l.Parts {
 		return a2a.NewError(a2a.ErrInvalidParams, fmt.Sprintf("%s may have at most %d parts, got %d", what, l.Parts, len(parts)))
@@ -80,9 +81,9 @@ func (l Limits) CheckParts(what string, parts []*a2a.Part, metadata ...map[strin
 		}
 		meta += n
 	}
-	for _, p := range parts {
+	for i, p := range parts {
 		if p == nil {
-			continue
+			return a2a.NewError(a2a.ErrInvalidParams, fmt.Sprintf("part %d of %s is null", i+1, what))
 		}
 		if t, ok := p.Content.(a2a.Text); ok {
 			text += len(t)
