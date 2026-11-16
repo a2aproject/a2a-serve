@@ -85,6 +85,8 @@ static long long json_int(const char *s, const char *key) {
 // is 0 before the sandbox is closed, 1 while a thread closes it, and 2
 // once it is removed.
 static atomic_int interrupted, closing;
+// close_error holds the result of a failed close, for main to report.
+static char close_error[1024];
 
 // close_sandbox removes the sandbox, once, and returns once it is removed,
 // whichever thread does it: at the end of main, at exit after an error,
@@ -95,7 +97,11 @@ static void close_sandbox(void) {
   }
   int idle = 0;
   if (atomic_compare_exchange_strong(&closing, &idle, 1)) {
-    sb.free(sb.close(sandbox_handle));
+    char *res = sb.close(sandbox_handle);
+    if (strncmp(res, "{\"error\"", 8) == 0) {
+      snprintf(close_error, sizeof close_error, "%s", res);
+    }
+    sb.free(res);
     atomic_store(&closing, 2);
     return;
   }
@@ -286,6 +292,10 @@ int main(int argc, char **argv) {
   close_sandbox();
   while (atomic_load(&interrupted)) {
     pause();
+  }
+  if (close_error[0] != '\0') {
+    fprintf(stderr, "a2a_sandbox_close: %s\n", close_error);
+    return 1;
   }
   printf("done\n");
   return 0;
