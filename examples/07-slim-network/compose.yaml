@@ -5,9 +5,33 @@ services:
     command: ["/slim", "--config", "/slim-node.yaml"]
     ports:
       - "127.0.0.1:46357:46357"
-    volumes:
-      - ./slim-node.yaml:/slim-node.yaml:ro
+    configs:
+      - source: slim-node
+        target: /slim-node.yaml
     healthcheck:
       test: ["CMD", "/slim", "--version"]
       interval: 2s
       retries: 10
+
+configs:
+  slim-node:
+    # A SLIM node for agents on one machine: plain-text gRPC on loopback. A
+    # node that other machines reach needs TLS; see the SLIM documentation.
+    content: |
+      tracing:
+        log_level: info
+
+      runtime:
+        n_cores: 0
+        thread_name: "slim-data-plane"
+        drain_timeout: 10s
+
+      services:
+        slim/0:
+          node_id: slim-example
+          dataplane:
+            servers:
+              - endpoint: "0.0.0.0:46357"
+                tls:
+                  insecure: true
+            clients: []
