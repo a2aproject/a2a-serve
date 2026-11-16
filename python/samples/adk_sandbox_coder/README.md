@@ -7,6 +7,53 @@ This sample runs `opencode acp` as an ADK agent written in Python. Every ADK ses
 - **ADK tools reach the agent over MCP.** `http://adk-tools.internal/mcp` is answered in process by `AcpAgent.handle_mcp`. `file_ticket` runs in the ADK invocation, and its call, response and state change are events of the session.
 - **A guard model decides the rest.** Any other connection, or plain HTTP request, goes to Gemini, which answers allow or deny.
 
+## How it works
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant ADK as ADK runner
+    participant Agent as AcpAgent
+    participant Box as sandbox (boundary)
+    participant Harness as opencode (in the sandbox)
+
+    Note over Agent,Harness: first message of an ADK session
+    User->>ADK: prompt
+    ADK->>Agent: run invocation
+    Agent->>Box: start opencode, workspace in memory
+    Agent->>Harness: session/new with the MCP server adk, session/prompt
+    Harness->>Box: POST http://llm.internal/v1/chat/completions
+    Box->>Agent: request (interceptor)
+    Agent-->>Box: forward to Vertex AI with a token
+    Harness->>Box: MCP tools/call file_ticket at adk-tools.internal
+    Box->>Agent: request (interceptor)
+    Agent->>ADK: function call event
+    Agent->>Agent: run file_ticket with the invocation's tool context
+    Agent->>ADK: function response event with the state delta
+    Agent-->>Harness: tool result
+    Harness->>Box: CONNECT registry.npmjs.org:443
+    Box->>Agent: connect (interceptor)
+    Agent-->>Box: deny (guard model)
+    Harness-->>Agent: reply
+    Agent-->>User: reply
+```
+
+## Compared with adk-go's acpagent
+
+`a2a_serve.adk.AcpAgent` follows the `exp/acpagent` package of adk-go:
+
+| acpagent (Go) | AcpAgent (Python) |
+|---|---|
+| `Command`, `Dir`, `Env`, or `Start` for a harness in a sandbox | `argv`, or `start`, which returns the descriptor of the harness's stdio, here from a `Sandbox` |
+| Each ADK session maps to its own ACP session; the harness gets only the messages it hasn't seen | The same: an ACP session per ADK session, and the messages of others since the agent's last turn, marked with their author |
+| `AllowTools`, `DenyTools` answer permission requests by ACP tool kind | `allow_tools`, `deny_tools` |
+| Other questions end the invocation, and the user's next message answers them | The same; the question is the invocation's last event, with `acp_input_required` in its metadata |
+| `Tools` served over MCP on a loopback port; calls and responses are events of the invocation | `tools` served over MCP at `mcp_url`, which the sandbox's interceptor answers in process, so nothing listens on the host; calls and responses are events of the invocation |
+| An abandoned run cancels the harness's work | The same, also when the run ends before its first event |
+| One harness process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message |
+
+The tests in [`python/tests/test_adk_agent.py`](../../tests/test_adk_agent.py) follow those of acpagent: conversation, permissions, answers in a later invocation, tools, tools after an abandoned run, tools per session, and the config checks.
+
 ## Requirements
 
 - Linux with Docker and `/dev/net/tun`.

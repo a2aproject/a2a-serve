@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
@@ -48,6 +49,9 @@ from .acp import Executor
 
 MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
+
+MAX_SESSIONS = 10000
+"""Bounds the sessions whose delivered history the agent remembers."""
 
 TOOL_TIMEOUT = 240.0
 """Bounds a tool call of the coding agent, in seconds. It stays below the
@@ -84,6 +88,45 @@ class AcpAgent(BaseAgent):
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _runs: dict[str, "_Run"] = PrivateAttr(default_factory=dict)
     _pending: dict[str, str] = PrivateAttr(default_factory=dict)
+    # The last session event sent to the agent, by session.
+    _delivered: OrderedDict[str, str] = PrivateAttr(default_factory=OrderedDict)
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        if bool(self.argv) == (self.start is not None):
+            raise ValueError("AcpAgent needs either argv or start")
+        names = [t.name for t in self.tools]
+        if len(names) != len(set(names)):
+            raise ValueError(f"AcpAgent tools have duplicate names: {sorted(names)}")
+
+    def _unseen(self, ctx: InvocationContext) -> str:
+        """Returns the messages of the session since the agent's last turn.
+
+        The agent keeps its own history, so it gets only what it wasn't
+        sent before: what others said meanwhile, such as other agents of a
+        workflow, and the user's message. Messages of others are marked
+        with their author.
+        """
+        events = [e for e in ctx.session.events if not e.partial]
+        with self._lock:
+            delivered = self._delivered.get(ctx.session.id, "")
+        last = max((i for i, e in enumerate(events) if e.author == self.name or e.id == delivered), default=-1)
+        if events:
+            with self._lock:
+                self._delivered[ctx.session.id] = events[-1].id
+                self._delivered.move_to_end(ctx.session.id)
+                while len(self._delivered) > MAX_SESSIONS:
+                    self._delivered.popitem(last=False)
+        lines = []
+        for e in events[last + 1 :]:
+            text = _text(e.content)
+            if not text:
+                continue
+            lines.append(text if e.author == "user" else f"[{e.author}] {text}")
+        user = _text(ctx.user_content)
+        if user and (not lines or lines[-1] != user):
+            lines.append(user)
+        return "\n\n".join(lines)
 
     def executor(self) -> Executor:
         """Returns the executor, starting it on the first call."""
@@ -128,13 +171,13 @@ class AcpAgent(BaseAgent):
         self, ctx: InvocationContext
     ) -> AsyncGenerator[Event, None]:
         key = ctx.session.id
-        text = ""
-        if ctx.user_content and ctx.user_content.parts:
-            text = "".join(p.text or "" for p in ctx.user_content.parts)
+        task_id = self._pending.pop(key, "")
+        # An answer to a question goes to the agent as typed; other messages
+        # carry what the agent hasn't seen since its last turn.
+        text = _text(ctx.user_content) if task_id else self._unseen(ctx)
         run = _Run(self, ctx)
         with self._lock:
             self._runs[key] = run
-        task_id = self._pending.pop(key, "")
         executor = await asyncio.to_thread(self.executor)
         pump = threading.Thread(target=run.pump, args=(executor, text, key, task_id), name="acp-stream", daemon=True)
         pump.start()
@@ -183,14 +226,6 @@ class AcpAgent(BaseAgent):
         state = status.get("state", "")
         parts = (status.get("message") or {}).get("parts", [])
         message = "".join(p.get("text", "") for p in parts)
-        for p in parts:
-            tool = (
-                (p.get("data") or {}).get("toolCall")
-                if isinstance(p.get("data"), dict)
-                else None
-            )
-            if tool:
-                return [self._event(ctx, metadata={"acp_tool_call": tool})]
         if state == "TASK_STATE_COMPLETED":
             return [self._event(ctx, text="".join(reply))]
         if state == "TASK_STATE_INPUT_REQUIRED":
@@ -202,6 +237,11 @@ class AcpAgent(BaseAgent):
             ]
         if state in ("TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"):
             return [self._event(ctx, error=message or state)]
+        # A question carries its tool call too, so tool updates come after it.
+        for p in parts:
+            data = p.get("data")
+            if isinstance(data, dict) and data.get("toolCall"):
+                return [self._event(ctx, metadata={"acp_tool_call": data["toolCall"]})]
         return []
 
     def _event(
@@ -440,6 +480,12 @@ class _Run:
         resp.actions = actions
         await self.emit(resp)
         return result
+
+
+def _text(content: types.Content | None) -> str:
+    if content is None or not content.parts:
+        return ""
+    return "".join(p.text or "" for p in content.parts if not p.thought)
 
 
 def _mcp_tool(tool: BaseTool) -> dict:
