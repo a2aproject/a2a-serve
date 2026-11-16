@@ -4,7 +4,8 @@ An a2a-serve agent serves these routes on every listener, and a relay serves the
 
 | Route | |
 | --- | --- |
-| `GET /`, `GET /.well-known/agent-card.json` | the agent card, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-allow-incoming paired`, and on the public URL unless `--public-allow-incoming anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
+| `GET /`, `GET /.well-known/agent-card.json`, `GET /.well-known/agent.json` | the agent card, without a token, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-allow-incoming paired`, and on the public URL unless `--public-allow-incoming anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
+| `GET /healthz` | `{"status": "ok"}`, without a token |
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
@@ -15,6 +16,8 @@ An a2a-serve agent serves these routes on every listener, and a relay serves the
 | `/mailbox/api/…` | the node API used by `a2a-serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
+
+The A2A routes serve A2A protocol version 1.0. Clients send `A2A-Version: 1.0` with each request. A request without the header asks for version 0.3 and fails with `requested "0.3", served "1.0"`.
 
 ## Sign-in schemes
 
@@ -82,6 +85,8 @@ The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show
 | 401 | -31401 | `UNAUTHENTICATED` | `UNAUTHENTICATED` |
 | 403 | -31403 | `PERMISSION_DENIED` | `UNAUTHORIZED` |
 | 413 | -32600 | `INVALID_ARGUMENT` | `INVALID_REQUEST` |
+
+The other routes answer errors with a JSON body `{"error": "<message>"}`. Two errors come from Go's HTTP server and have a plain text body: 404 for a path that no route serves, and 403 for a cross-site request.
 
 ## Signatures and headers
 
