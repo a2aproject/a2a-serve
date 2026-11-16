@@ -48,9 +48,14 @@ StartFunc = Callable[[str], int]
 """Starts the agent of a key (the A2A context with per_context) and returns
 the file descriptor of its stdio, which the library then owns."""
 
+SessionFunc = Callable[[str], dict[str, Any]]
+"""Returns the parameters of the ACP session of an A2A context:
+{"cwd", "mcp_servers"}, where an empty cwd keeps session_cwd."""
+
 _lib: _native.Library | None = None
 _pump: _native.EventPump | None = None
 _starters: dict[str, StartFunc] = {}
+_sessions: dict[str, SessionFunc] = {}
 _lock = threading.Lock()
 
 
@@ -64,6 +69,11 @@ def _library() -> _native.Library:
 
 
 def _dispatch(kind: str, data: dict) -> dict:
+    if kind == "session":
+        session = _sessions.get(data["id"])
+        if session is None:
+            return {"error": "the executor has no session function"}
+        return session(data["key"])
     if kind != "start":
         return {"error": f"unknown question {kind}"}
     starter = _starters.get(data["id"])
@@ -87,6 +97,7 @@ class Executor:
         max_agents: int = 0,
         session_cwd: str = "",
         mcp_servers: list[dict[str, Any]] | None = None,
+        session: SessionFunc | None = None,
         allow: list[str] | None = None,
         deny: list[str] | None = None,
         settings: dict[str, Any] | None = None,
@@ -107,6 +118,8 @@ class Executor:
           session_cwd: the working directory of the ACP sessions, as the agent
             sees it.
           mcp_servers: the MCP servers of the sessions, in the ACP schema.
+          session: returns the parameters of each new session instead of
+            session_cwd and mcp_servers; see SessionFunc.
           allow: the ACP tool kinds the agent may run without asking.
           deny: the tool kinds it may never run.
           settings: session settings, such as {"model": "provider/model"}.
@@ -119,6 +132,7 @@ class Executor:
             "idle_timeout_ms": int(idle_timeout * 1000),
             "max_agents": max_agents,
             "session": {"cwd": session_cwd, "mcp_servers": mcp_servers or []},
+            "ask_session": session is not None,
             "allow": allow or [],
             "deny": deny or [],
             "settings": settings or {},
@@ -139,10 +153,13 @@ class Executor:
         cfg["id"] = self._id
         if start is not None:
             _starters[self._id] = start
+        if session is not None:
+            _sessions[self._id] = session
         try:
             self.handle: int = lib.call("new", json.dumps(cfg))["handle"]
         except Exception:
             _starters.pop(self._id, None)
+            _sessions.pop(self._id, None)
             raise
 
     def stream(
@@ -232,4 +249,5 @@ class Executor:
 
     def close(self) -> None:
         _starters.pop(self._id, None)
+        _sessions.pop(self._id, None)
         _library().call("close", self.handle)

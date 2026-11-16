@@ -66,7 +66,7 @@ sequenceDiagram
 | Each ADK session maps to its own ACP session; the agent gets only the messages it hasn't seen | The same: an ACP session per ADK session, and what the agent wasn't sent, with the messages of others marked with their author |
 | `AllowTools`, `DenyTools` answer permission requests by ACP tool kind | `allow_tools`, `deny_tools` |
 | Other questions end the invocation, and the user's next message answers them | The same; the question is the invocation's last event, with `acp_input_required` in its metadata |
-| `Tools` served over MCP on a loopback port, also to a local `Command`; calls and responses are events of the invocation | `tools` served over MCP at `mcp_url`, which the sandbox's interceptor answers in process, so nothing listens on the host; calls and responses are events of the invocation. A local `argv` gets no tools, and AcpAgent refuses that config |
+| `Tools` served over MCP on a loopback port, also to a local `Command`; calls and responses are events of the invocation | `tools` served over MCP at `mcp_url`, which the sandbox's interceptor answers in process, so nothing listens on the host; calls and responses are events of the invocation. A local `argv` gets them on 127.0.0.1, at a URL with a random token per session |
 | An abandoned run cancels the agent's work | The same, also when the run ends before its first event |
 | One agent process for every session | One per ADK session, so that each session gets its own sandbox; it stops when idle and starts again on the next message |
 | The agent uses the model of its own configuration | `model` answers the agent's model calls with an ADK model, with the model callbacks, once the agent's configuration names `model_url` as its provider, as `agent.py` does for opencode |

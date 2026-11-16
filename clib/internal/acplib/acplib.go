@@ -76,6 +76,9 @@ type Config struct {
 		Cwd        string            `json:"cwd"`
 		MCPServers []json.RawMessage `json:"mcp_servers"`
 	} `json:"session"`
+	// AskSession makes every new ACP session a "session" question to the
+	// caller, whose answer {"cwd", "mcp_servers"} replaces Session's.
+	AskSession bool `json:"ask_session"`
 	// Allow and Deny answer permission requests by ACP tool kind, as
 	// a2aacp.ToolRules does; others pause the task in input-required.
 	Allow []string `json:"allow"`
@@ -164,7 +167,10 @@ func (l *Library) newExecutor(cfg Config) (int64, error) {
 		AutoAnswer:        a2aacp.ToolRules{Allow: cfg.Allow, Deny: cfg.Deny},
 		InactivityTimeout: ms(cfg.InactivityTimeoutMS),
 		QuestionTimeout:   ms(cfg.QuestionTimeoutMS),
-		Session: func(context.Context, *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
+		Session: func(ctx context.Context, execCtx *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
+			if cfg.AskSession {
+				return l.askSession(ctx, cfg, execCtx.ContextID)
+			}
 			return a2aacp.SessionParams{Cwd: cfg.Session.Cwd, MCPServers: cfg.Session.MCPServers}, nil
 		},
 	}
@@ -183,6 +189,30 @@ func (l *Library) newExecutor(cfg Config) (int64, error) {
 	handler := a2asrv.NewHandler(exec, a2asrv.WithTaskStore(newBoundedStore(MaxTasks)))
 	l.executors.Set(h, &executor{exec: exec, handler: handler})
 	return h, nil
+}
+
+// askSession asks the caller for the parameters of the ACP session of the
+// A2A context key, with Session's working directory when the answer has none.
+func (l *Library) askSession(ctx context.Context, cfg Config, key string) (a2aacp.SessionParams, error) {
+	answer, err := l.Calls.Ask(ctx, "session", map[string]any{"id": cfg.ID, "key": key}, StartTimeout)
+	if err != nil {
+		return a2aacp.SessionParams{}, fmt.Errorf("asking the caller for the session: %w", err)
+	}
+	var a struct {
+		Cwd        string            `json:"cwd"`
+		MCPServers []json.RawMessage `json:"mcp_servers"`
+		Error      string            `json:"error"`
+	}
+	if err := json.Unmarshal(answer, &a); err != nil {
+		return a2aacp.SessionParams{}, fmt.Errorf("reading the session answer: %w", err)
+	}
+	if a.Error != "" {
+		return a2aacp.SessionParams{}, fmt.Errorf("the caller refused the session: %s", a.Error)
+	}
+	if a.Cwd == "" {
+		a.Cwd = cfg.Session.Cwd
+	}
+	return a2aacp.SessionParams{Cwd: a.Cwd, MCPServers: a.MCPServers}, nil
 }
 
 // startExternal asks the caller to start the agent of key for the

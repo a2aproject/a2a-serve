@@ -64,6 +64,17 @@ class ExecutorTest(unittest.TestCase):
             finally:
                 ex.close()
 
+    def test_session_params_per_context(self):
+        with tempfile.TemporaryDirectory() as d:
+            ex = Executor(argv=[FAKEACP], cwd=d, per_context=True, session=lambda key: {"mcp_servers": [{"type": "http", "name": "adk", "url": f"http://127.0.0.1:1/mcp/{key}", "headers": []}]})
+            try:
+                first = reply_of(ex.stream("mcp", context_id="c1"))[0]
+                second = reply_of(ex.stream("mcp", context_id="c2"))[0]
+            finally:
+                ex.close()
+
+        self.assertEqual([json.loads(first)[0]["url"], json.loads(second)[0]["url"]], ["http://127.0.0.1:1/mcp/c1", "http://127.0.0.1:1/mcp/c2"])
+
     def test_bad_config(self):
         with self.assertRaises(ValueError):
             Executor()

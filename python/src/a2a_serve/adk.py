@@ -34,7 +34,9 @@ answer arrives in one piece, once the model is done.
 `tools` gives the coding agent ADK tools over MCP at `mcp_url`. A tool runs
 in the invocation in progress in its session, and its call and response
 are events of the invocation, so its state changes are saved as those of
-any other tool.
+any other tool. An agent that `argv` runs gets the tools from a server on
+127.0.0.1 instead, as acpagent serves them: each session at a URL with a
+random token of its own.
 
 Nothing listens on the host for either: the sandbox's boundary hands the
 requests to the hosts of `model_url` and `mcp_url` to `handle_model` and
@@ -46,8 +48,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import http.server
 import json
 import logging
+import secrets
 import threading
 import time
 import urllib.parse
@@ -79,6 +83,10 @@ logger = logging.getLogger(__name__)
 
 MCP_SERVER_NAME = "adk"
 """The name under which the coding agent sees the tools."""
+
+MAX_MCP_BODY = 16 << 20
+"""Bounds the body of an MCP request to the tool server of a local agent, as
+the sandbox bounds the requests it intercepts."""
 
 MAX_SESSIONS = 10000
 """Bounds the sessions whose delivered history and pending question the
@@ -152,7 +160,8 @@ class AcpAgent(BaseAgent):
     tools: list[BaseTool] = Field(default_factory=list)
     """ADK tools the agent may call over MCP; see the module documentation."""
     mcp_url: str = "http://adk-tools.internal/mcp"
-    """The URL of the tools, which an interceptor answers with handle_mcp."""
+    """The URL of the tools, which an interceptor answers with handle_mcp.
+    An agent that argv runs gets a URL on 127.0.0.1 instead."""
     sandbox: SandboxConfig | None = None
     """Runs the agent of each ADK session in a sandbox of its own. Set
     exactly one of argv, start and sandbox."""
@@ -175,6 +184,9 @@ class AcpAgent(BaseAgent):
     """Fails a turn whose agent is silent so long."""
 
     _executor: Executor | None = PrivateAttr(default=None)
+    # The tool server of a local agent, and its sessions by token.
+    _tool_server: http.server.ThreadingHTTPServer | None = PrivateAttr(default=None)
+    _tool_tokens: OrderedDict[str, str] = PrivateAttr(default_factory=OrderedDict)
     _llm: BaseLlm | None = PrivateAttr(default=None)
     # The sandboxes and their routers, by session, with sandbox.
     _sandboxes: dict[str, Sandbox] = PrivateAttr(default_factory=dict)
@@ -192,8 +204,8 @@ class AcpAgent(BaseAgent):
         super().model_post_init(context)
         if [bool(self.argv), self.start is not None, self.sandbox is not None].count(True) != 1:
             raise ValueError("AcpAgent needs exactly one of argv, start and sandbox")
-        if self.argv and (self.tools or self.model is not None):
-            raise ValueError("AcpAgent serves tools and a model only to an agent in a sandbox, or one that start runs behind an interceptor")
+        if self.argv and self.model is not None:
+            raise ValueError("AcpAgent serves a model only to an agent in a sandbox, or one that start runs behind an interceptor")
         if isinstance(self.model, BaseLlm):
             self._llm = self.model
         elif isinstance(self.model, str):
@@ -244,7 +256,11 @@ class AcpAgent(BaseAgent):
         with self._lock:
             if self._executor is None:
                 mcp = []
-                if self.tools:
+                session = None
+                if self.tools and self.argv:
+                    self._tool_server = _serve_tools(self)
+                    session = self._local_session
+                elif self.tools:
                     mcp = [
                         {
                             "type": "http",
@@ -262,6 +278,7 @@ class AcpAgent(BaseAgent):
                     idle_timeout=self.idle_timeout,
                     session_cwd=self.session_cwd,
                     mcp_servers=mcp,
+                    session=session,
                     allow=self.allow_tools,
                     deny=self.deny_tools,
                     inactivity_timeout=self.inactivity_timeout,
@@ -279,13 +296,36 @@ class AcpAgent(BaseAgent):
         self._closed.set()
         with self._lock:
             executor, self._executor = self._executor, None
+            server, self._tool_server = self._tool_server, None
+            self._tool_tokens.clear()
             boxes = list(self._sandboxes.values())
             self._sandboxes.clear()
             self._routers.clear()
         if executor is not None:
             executor.close()
+        if server is not None:
+            server.shutdown()
+            server.server_close()
         for sb in boxes:
             sb.close()
+
+    def _local_session(self, session_id: str) -> dict[str, Any]:
+        """Returns the ACP session parameters of a local agent: the URL of
+        the tools with a new random token of the session."""
+        token = secrets.token_urlsafe(24)
+        with self._lock:
+            if self._tool_server is None:
+                return {"error": "the agent is closed"}
+            self._tool_tokens[token] = session_id
+            while len(self._tool_tokens) > MAX_SESSIONS:
+                self._tool_tokens.popitem(last=False)
+            host, port = self._tool_server.server_address[:2]
+        url = f"http://{host}:{port}/mcp/{token}"
+        return {"mcp_servers": [{"type": "http", "name": MCP_SERVER_NAME, "url": url, "headers": []}]}
+
+    def _tool_session(self, token: str) -> str | None:
+        with self._lock:
+            return self._tool_tokens.get(token)
 
     def sandbox_of(self, session_id: str) -> Sandbox | None:
         """Returns the sandbox of an ADK session, with sandbox, to read and
@@ -862,6 +902,54 @@ def _on_branch(ev: Event, branch: str | None) -> bool:
     """Reports whether ev belongs to the history of branch, as ADK decides
     for the history it gives a model."""
     return not ev.branch or not branch or branch == ev.branch or branch.startswith(ev.branch + ".")
+
+
+def _serve_tools(agent: AcpAgent) -> http.server.ThreadingHTTPServer:
+    """Starts the tool server of a local agent on 127.0.0.1, which answers
+    POST /mcp/<token> with handle_mcp for the session of the token."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _answer(self, method: str) -> None:
+            prefix, _, token = self.path.partition("/mcp/")
+            session_id = agent._tool_session(token) if not prefix else None  # pylint: disable=protected-access
+            if session_id is None:
+                self._reply(404, {}, b"")
+                return
+            length = self.headers.get("Content-Length")
+            if method == "POST" and length is None:
+                self._reply(411, {}, b"")
+                return
+            if length is not None and (not length.isdigit() or int(length) > MAX_MCP_BODY):
+                self._reply(413, {}, b"")
+                return
+            body = self.rfile.read(int(length)) if length else b""
+            self._reply(*agent.handle_mcp(session_id, method, body))
+
+        def _reply(self, status: int, headers: dict[str, str], body: bytes) -> None:
+            self.send_response(status)
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self) -> None:  # pylint: disable=invalid-name
+            self._answer("POST")
+
+        def do_GET(self) -> None:  # pylint: disable=invalid-name
+            self._answer("GET")
+
+        def do_DELETE(self) -> None:  # pylint: disable=invalid-name
+            self._answer("DELETE")
+
+        def log_message(self, format: str, *args: Any) -> None:  # pylint: disable=redefined-builtin
+            # The path carries the session's token.
+            logger.debug("tool server: %s", self.command)
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, name="acp-tools", daemon=True).start()
+    return server
 
 
 def _streaming(ctx: InvocationContext) -> bool:

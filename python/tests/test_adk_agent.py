@@ -321,6 +321,52 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         _, _, out = agent.handle_mcp(session_id, "POST", body.encode())
         return json.loads(out)["result"]
 
+    async def test_tools_for_local_command(self):
+        import urllib.error
+        import urllib.request
+
+        from google.adk.runners import InMemoryRunner
+
+        from a2a_serve.adk import AcpAgent
+
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        agent = AcpAgent(name="coder", argv=[FAKEACP], session_cwd=d, tools=[self.ticket_tool()])
+        self.addCleanup(agent.close)
+        runner = InMemoryRunner(agent=agent, app_name="test")
+        first, second = await self.session(runner), await self.session(runner)
+
+        servers = [json.loads(self.texts(await self.turn(runner, s, "mcp"))[0]) for s in (first, second)]
+        urls = [srv[0]["url"] for srv in servers]
+        results = []
+
+        def post(url, body):
+            req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    return resp.status, json.loads(resp.read())
+            except urllib.error.HTTPError as e:
+                return e.code, None
+
+        call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "file_ticket", "arguments": {"title": "fix the build"}}}).encode()
+
+        def call_tool():
+            t = threading.Thread(target=lambda: results.append(post(urls[0], call)))
+            t.start()
+            self.addCleanup(t.join)
+
+        await self.turn(runner, first, "slow 2s", on_partial=call_tool)
+        stored = await runner.session_service.get_session(app_name="test", user_id="u", session_id=first.id)
+        base = urls[0].rsplit("/", 1)[0]
+
+        self.assertTrue(all(u.startswith("http://127.0.0.1:") for u in urls), urls)
+        self.assertNotEqual(urls[0], urls[1])
+        self.assertEqual(results[0][0], 200)
+        self.assertEqual(results[0][1]["result"]["structuredContent"], {"id": "T-1"})
+        self.assertEqual(stored.state.get("tickets"), ["fix the build"])
+        self.assertEqual(post(base + "/not-a-token", call)[0], 404)
+        self.assertEqual(post(urls[0], b"")[0], 400)
+
     async def test_tools(self):
         agent, runner = self.agent(tools=[self.ticket_tool()])
         session = await self.session(runner)
@@ -430,7 +476,7 @@ class ValidationTest(unittest.TestCase):
         for name, kwargs in [
             ("neither argv nor start", {}),
             ("both argv and start", {"argv": ["agent"], "start": lambda key: 0}),
-            ("tools without an interceptor", {"argv": ["agent"], "tools": [FunctionTool(tool)]}),
+            ("model without an interceptor", {"argv": ["agent"], "model": "gemini-2.5-flash"}),
             (
                 "duplicate tools",
                 {"argv": ["agent"], "tools": [FunctionTool(tool), FunctionTool(tool)]},

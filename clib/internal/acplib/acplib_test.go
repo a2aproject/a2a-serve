@@ -188,3 +188,33 @@ func TestExecutorFailsWithoutAnswer(t *testing.T) {
 		t.Fatalf("Reply(99) = %s, want an error", m)
 	}
 }
+
+func TestExecutorAsksSessionParams(t *testing.T) {
+	t.Parallel()
+	l := New()
+	cfg := fmt.Sprintf(`{"id": "e1", "agent": {"argv": [%q], "dir": %q}, "per_context": true, "ask_session": true}`, fakeACP, t.TempDir())
+	h := int64(decode(t, l.NewExecutor(cfg))["handle"].(float64))
+	t.Cleanup(func() { decode(t, l.CloseExecutor(h)) })
+	asked := make(chan map[string]any, 4)
+	go func() {
+		for range 2 {
+			ev := decode(t, l.NextEvent(30*time.Second))
+			data := ev["data"].(map[string]any)
+			asked <- map[string]any{"type": ev["type"], "id": data["id"], "key": data["key"]}
+			answer := fmt.Sprintf(`{"mcp_servers": [{"type": "http", "name": "adk", "url": "http://127.0.0.1:1/mcp/%s", "headers": []}]}`, data["key"])
+			decode(t, l.Reply(int64(ev["id"].(float64)), answer))
+		}
+	}()
+
+	first, _ := collect(t, l, send(t, l, h, "ctx-1", "mcp"))
+	second, _ := collect(t, l, send(t, l, h, "ctx-2", "mcp"))
+
+	if !strings.Contains(first, "/mcp/ctx-1") || !strings.Contains(second, "/mcp/ctx-2") {
+		t.Fatalf("Send(mcp) = %q, %q, want the MCP server of each session's answer", first, second)
+	}
+	got := []map[string]any{<-asked, <-asked}
+	want := []map[string]any{{"type": "session", "id": "e1", "key": "ctx-1"}, {"type": "session", "id": "e1", "key": "ctx-2"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("session questions wrong result (-want +got) diff = %s", diff)
+	}
+}

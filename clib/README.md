@@ -141,4 +141,6 @@ A config:
 
 `agent: {"argv", "dir", "env"}` runs the agent on this host. With `external`, the library asks the caller to start each agent with a `start` question, which carries the config's `id` and the agent's `key`, the A2A context with `per_context`. Answer `{"fd": N}` with the agent's stdio, such as the `fd` of `a2a_sandbox_start`, and the library takes it over.
 
+`session` sets the working directory and the MCP servers of every ACP session. With `ask_session`, the library asks the caller for them instead, with a `session` question for each new session, which carries the config's `id` and the session's `key`. Answer `{"cwd", "mcp_servers"}`, or `{"error"}` to refuse the session. An empty `cwd` keeps the one of `session`.
+
 `allow` and `deny` answer the agent's permission requests by ACP tool kind. Other requests leave the task in input-required, and the next message to the task answers them.
