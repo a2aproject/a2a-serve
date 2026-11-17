@@ -75,6 +75,8 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | --- | --- |
 | Open requests and streams of one member | 32 on each URL of the agent. Past that, a request fails with 429. You have no limit. |
 | Writing a response | 1 minute without progress, and 10 minutes in all. A stream stays open while its client reads it. |
+| Downloads of `a2a` and `a2a-serve` from the agent | 8 at once on each URL of the agent, and 2 from one client. Past that, a download waits up to 30 seconds for its turn, then fails with 503. |
+| Writing a download | 1 minute without progress, and 10 minutes in all |
 
 ## Schedules
 

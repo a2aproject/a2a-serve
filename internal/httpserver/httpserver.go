@@ -112,6 +112,12 @@ type KeyedLimiter struct {
 	// keys counts the requests of each key; a key leaves it when its last
 	// request ends.
 	keys map[string]int
+	// freed is closed, and replaced, when a request ends.
+	freed chan struct{}
+	// waiting and waitingKeys count the requests of [KeyedLimiter.WaitHandler]
+	// that wait for room, in total and for each key.
+	waiting     int
+	waitingKeys map[string]int
 }
 
 // NewKeyedLimiter returns a limiter of total requests at once, and of
@@ -119,7 +125,7 @@ type KeyedLimiter struct {
 // come from clients that can't be told apart, and count only toward the
 // total.
 func NewKeyedLimiter(total, perKey int, key func(*http.Request) string) *KeyedLimiter {
-	return &KeyedLimiter{total: total, perKey: perKey, key: key, keys: map[string]int{}}
+	return &KeyedLimiter{total: total, perKey: perKey, key: key, keys: map[string]int{}, freed: make(chan struct{}), waitingKeys: map[string]int{}}
 }
 
 // Handler serves next within the limits, and answers requests over the
@@ -127,7 +133,7 @@ func NewKeyedLimiter(total, perKey int, key func(*http.Request) string) *KeyedLi
 func (l *KeyedLimiter) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := l.key(r)
-		if code := l.acquire(key); code != 0 {
+		if code, _ := l.acquire(key); code != 0 {
 			msg := BusyMessage
 			if code == http.StatusTooManyRequests {
 				msg = "too many requests at once from this client; try again later"
@@ -141,27 +147,99 @@ func (l *KeyedLimiter) Handler(next http.Handler) http.Handler {
 	})
 }
 
-// acquire takes a slot for key, or returns the status of a refusal.
-func (l *KeyedLimiter) acquire(key string) int {
+// WaitHandler serves next within the limits. A request over a limit waits
+// up to wait for room, and is then answered with 503. As many requests may
+// wait as may be served, in total and for each key; the rest get 503 at
+// once.
+func (l *KeyedLimiter) WaitHandler(wait time.Duration, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := l.key(r)
+		if !l.waitFor(r.Context(), key, wait) {
+			SetBusy(w.Header())
+			jsonhttp.Error(w, http.StatusServiceUnavailable, BusyMessage)
+			return
+		}
+		defer l.release(key)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// waitFor takes a slot for key, waiting up to wait for one, and reports
+// whether it did.
+func (l *KeyedLimiter) waitFor(ctx context.Context, key string, wait time.Duration) bool {
+	code, freed := l.acquire(key)
+	if code == 0 {
+		return true
+	}
+	if !l.startWaiting(key) {
+		return false
+	}
+	defer l.stopWaiting(key)
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for {
+		select {
+		case <-freed:
+		case <-timer.C:
+			return false
+		case <-ctx.Done():
+			return false
+		}
+		if code, freed = l.acquire(key); code == 0 {
+			return true
+		}
+	}
+}
+
+func (l *KeyedLimiter) startWaiting(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.waiting >= l.total || (key != "" && l.waitingKeys[key] >= l.perKey) {
+		return false
+	}
+	l.waiting++
+	if key != "" {
+		l.waitingKeys[key]++
+	}
+	return true
+}
+
+func (l *KeyedLimiter) stopWaiting(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.waiting--
+	if key == "" {
+		return
+	}
+	if l.waitingKeys[key]--; l.waitingKeys[key] == 0 {
+		delete(l.waitingKeys, key)
+	}
+}
+
+// acquire takes a slot for key, or returns the status of a refusal and the
+// channel that is closed when a slot may be free.
+func (l *KeyedLimiter) acquire(key string) (int, <-chan struct{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	switch {
 	case key != "" && l.keys[key] >= l.perKey:
-		return http.StatusTooManyRequests
+		return http.StatusTooManyRequests, l.freed
 	case l.inUse >= l.total:
-		return http.StatusServiceUnavailable
+		return http.StatusServiceUnavailable, l.freed
 	}
 	l.inUse++
 	if key != "" {
 		l.keys[key]++
 	}
-	return 0
+	return 0, nil
 }
 
 func (l *KeyedLimiter) release(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.inUse--
+	close(l.freed)
+	l.freed = make(chan struct{})
 	if key == "" {
 		return
 	}
