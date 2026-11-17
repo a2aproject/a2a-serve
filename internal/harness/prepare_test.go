@@ -473,6 +473,32 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 	}
 }
 
+func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws := t.TempDir()
+	own := mkdir(t, filepath.Join(ws, agentdir.Name))
+	leftover := mkdir(t, filepath.Join(ws, agentdir.RestorePrefix+"123", "state"))
+
+	p, err := startDocker(t, Spec{
+		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+		Hidden:  []string{own},
+		Home:    t.TempDir(),
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{"type=tmpfs,dst=" + own + ",readonly", "type=tmpfs,dst=" + filepath.Dir(leftover) + ",readonly"}
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+	mkdir(t, filepath.Join(ws, "sub", agentdir.RestorePrefix+"456"))
+	if err := startErr(t, p); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the restore started later", err)
+	}
+}
+
 func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 	sandboxtest.FakeDocker(t, runningDocker)
 	ws := t.TempDir()

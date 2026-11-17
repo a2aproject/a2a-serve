@@ -14,8 +14,9 @@ runs a container at each start and turns egress control off when the
 container can't set up its network.
 
 --fix enables command plugins and the credential helper in
-~/.config/a2a-cli/config.yaml and makes credentials.json and .a2a/state
-private. It never installs software and never touches a running agent.
+~/.config/a2a-cli/config.yaml, makes credentials.json and .a2a/state
+private, and removes what an interrupted "a2a-serve backup restore" left
+next to .a2a. It never installs software and never touches a running agent.
 --online also checks bot tokens, whether the agent image can be pulled,
 that the speech service of --voice transcribes and speaks, and that the
 relay answers at its URL with the Agent Mesh version this a2a-serve pins.

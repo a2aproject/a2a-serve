@@ -142,16 +142,29 @@ func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.T
 	return snap, nil
 }
 
+// partialAge is how old a partial snapshot of an interrupted backup is
+// when Prune removes it.
+const partialAge = 24 * time.Hour
+
+// partialRemover is a destination that keeps the partial snapshots of
+// interrupted backups.
+type partialRemover interface {
+	removePartial(agent string, olderThan time.Time) error
+}
+
 // Prune removes the agent's snapshots older than retention, except the
-// latest.
+// latest, and its partial snapshots older than a day.
 func Prune(ctx context.Context, dest Dest, agent string, now time.Time, retention time.Duration) error {
 	snaps, err := List(ctx, dest, agent)
-	if err != nil || len(snaps) == 0 {
+	if err != nil {
 		return err
 	}
 	var errs []error
-	for _, s := range snaps[:len(snaps)-1] {
-		if now.Sub(s.Taken) > retention {
+	if r, ok := dest.(partialRemover); ok {
+		errs = append(errs, r.removePartial(agent, now.Add(-partialAge)))
+	}
+	for i, s := range snaps {
+		if i < len(snaps)-1 && now.Sub(s.Taken) > retention {
 			errs = append(errs, dest.Delete(ctx, s.Name))
 		}
 	}
@@ -206,7 +219,9 @@ var committedFiles = []string{pathConfig, pathRecipeLock, ".gitignore"}
 // agent behind. The network identity is restored only with takeOver, so
 // that the old and the new host don't run as the same machine. A .a2a that
 // holds only committed files keeps them, except for config.yaml, and the
-// returned notes say when the snapshot holds another version of one.
+// returned notes say when the snapshot holds another version of one. A
+// state directory without agent data, such as one that commands created,
+// is moved aside, and the notes say where.
 func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (notes []string, err error) {
 	if err := checkSnapshot(ctx, dest, name); err != nil {
 		return nil, err
@@ -219,12 +234,23 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
+	hasState := slices.ContainsFunc(entries, isStateDir)
+	entries = slices.DeleteFunc(entries, isStateDir)
 	if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.Type().IsRegular() || !slices.Contains(committedFiles, e.Name()) }) {
 		if d.Exists() {
 			return nil, agenterr.Conflictf("%s already has an agent; restore into another directory", root)
 		}
 		last := len(committedFiles) - 1
 		return nil, agenterr.Conflictf("%s holds files other than %s and %s; restore into another directory", d.Path(), strings.Join(committedFiles[:last], ", "), committedFiles[last])
+	}
+	var aside string
+	if hasState {
+		release, err := lockUnusedState(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { err = errors.Join(err, release()) }()
+		aside = "state.before-restore-" + time.Now().UTC().Format(stampLayout)
 	}
 	committed, err := readCommitted(d.Path(), entries)
 	if err != nil {
@@ -255,6 +281,9 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return nil, err
 	}
 	defer func() {
+		if tmp == "" {
+			return
+		}
 		if err := os.RemoveAll(tmp); err != nil {
 			slog.Warn("removing a partial restore", "error", err)
 		}
@@ -282,10 +311,23 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 			return nil, err
 		}
 	}
-	if err := agentdir.WriteGitignore(tmp); err != nil {
+	if !slices.ContainsFunc(committed, func(f committedFile) bool { return f.name == ".gitignore" }) {
+		// Replaced atomically, so git ignores the secrets in tmp throughout.
+		if err := fsutil.WriteAtomic(filepath.Join(tmp, ".gitignore"), []byte(agentdir.Gitignore), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	if aside != "" {
+		notes = append(notes, "moved "+filepath.Join(agentdir.Name, "state")+", which held no agent data, to "+filepath.Join(agentdir.Name, aside)+"; delete it once the restored agent works")
+	}
+	if err := moveIntoPlace(tmp, d.Path(), committed, aside); err != nil {
+		var kept *keptStateError
+		if errors.As(err, &kept) {
+			tmp = ""
+		}
 		return nil, err
 	}
-	return notes, moveIntoPlace(tmp, d.Path(), committed)
+	return notes, nil
 }
 
 // configNote says that a restore replaced the committed config.yaml in
@@ -323,9 +365,57 @@ func readCommitted(dir string, entries []fs.DirEntry) ([]committedFile, error) {
 	return out, nil
 }
 
+// isStateDir reports whether e is the state directory of an .a2a directory.
+func isStateDir(e fs.DirEntry) bool { return e.Name() == "state" && e.IsDir() }
+
+// lockUnusedState takes the lock of the agent in d, whose state directory
+// must hold no agent data, and returns the function that releases it.
+func lockUnusedState(ctx context.Context, d agentdir.Dir) (release func() error, err error) {
+	// Checked first too, so that a refusal doesn't leave a lock file
+	// behind, which marks a directory where a server ran.
+	if err := checkUnusedState(ctx, d); err != nil {
+		return nil, err
+	}
+	release, err = d.Lock()
+	if errors.Is(err, fsutil.ErrLocked) {
+		return nil, agenterr.Conflictf("the agent in %s is running or another command uses it; stop it with `a2a-serve stop --dir %s`, then restore again", d.Root, shellquote.Quote(d.Root))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUnusedState(ctx, d); err != nil {
+		return nil, errors.Join(err, release())
+	}
+	return release, nil
+}
+
+func checkUnusedState(ctx context.Context, d agentdir.Dir) error {
+	data, err := holdsAgentData(ctx, d)
+	if err != nil {
+		return err
+	}
+	if data {
+		return agenterr.Conflictf("%s already has an agent; restore into another directory", d.Root)
+	}
+	return nil
+}
+
+// keptStateError reports that moveIntoPlace couldn't move the state
+// directory it had moved aside back, so it stays in the restore directory.
+type keptStateError struct {
+	path string
+	err  error
+}
+
+func (e *keptStateError) Error() string {
+	return fmt.Sprintf("moving the previous state back failed, so it stays in %s: %v", e.path, e.err)
+}
+
 // moveIntoPlace renames the restored directory tmp to dir, which holds only
-// the committed files. When that fails, it writes the committed files back.
-func moveIntoPlace(tmp, dir string, committed []committedFile) (err error) {
+// the committed files and, with a non-empty aside, a state directory that
+// it moves into tmp under that name. When that fails, it writes the
+// committed files back and moves the state directory back.
+func moveIntoPlace(tmp, dir string, committed []committedFile, aside string) (err error) {
 	defer func() {
 		if err == nil || len(committed) == 0 {
 			return
@@ -338,6 +428,23 @@ func moveIntoPlace(tmp, dir string, committed []committedFile) (err error) {
 			err = errors.Join(err, writeIfMissing(filepath.Join(dir, f.name), f.data, f.perm))
 		}
 	}()
+	if aside != "" {
+		state, moved := filepath.Join(dir, "state"), filepath.Join(tmp, aside)
+		if err := os.Rename(state, moved); err != nil {
+			return err
+		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if merr := errors.Join(os.MkdirAll(dir, 0o755), os.Rename(moved, state)); merr != nil {
+				err = errors.Join(err, &keptStateError{path: moved, err: merr})
+			}
+		}()
+		if err := os.WriteFile(filepath.Join(moved, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+			return err
+		}
+	}
 	for _, f := range committed {
 		if err := os.Remove(filepath.Join(dir, f.name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -381,17 +488,21 @@ func removeCreated(dir, created string) {
 }
 
 // restoreDir creates the directory next to the .a2a directory of d to
-// restore into, and returns it locked. It first removes the directories of
+// restore into, with a .gitignore that keeps all of it out of git, and
+// returns it locked. It first removes the directories of
 // interrupted restores, which can hold plaintext secrets, keeping the ones
 // that another restore holds locked. The lock on the root keeps a
 // concurrent restore from removing a directory before it is locked.
 func restoreDir(d agentdir.Dir) (dir string, release func() error, err error) {
 	err = fsutil.WithDirLock(d.Root, func() error {
-		removeLeftovers(filepath.Join(d.Root, agentdir.Name+".restore-*"), func(dir string) (func() error, error) {
-			return lockRestored(d, dir)
-		})
-		if dir, err = os.MkdirTemp(d.Root, agentdir.Name+".restore-"); err != nil {
+		if err := removeLeftoverRestores(d); err != nil {
+			slog.Warn("removing leftovers of interrupted restores", "error", err)
+		}
+		if dir, err = os.MkdirTemp(d.Root, agentdir.RestorePrefix); err != nil {
 			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+			return errors.Join(err, os.RemoveAll(dir))
 		}
 		if release, err = lockRestored(d, dir); err != nil {
 			return errors.Join(err, os.RemoveAll(dir))
@@ -399,6 +510,44 @@ func restoreDir(d agentdir.Dir) (dir string, release func() error, err error) {
 		return nil
 	})
 	return dir, release, err
+}
+
+// LeftoverRestores returns the directories that interrupted restores into
+// the root of d left behind, which can hold plaintext secrets. A directory
+// that a restore in progress holds locked isn't one.
+func LeftoverRestores(d agentdir.Dir) ([]string, error) {
+	dirs, err := filepath.Glob(filepath.Join(d.Root, agentdir.RestorePrefix+"*"))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, dir := range dirs {
+		release, err := lockRestored(d, dir)
+		if errors.Is(err, fsutil.ErrLocked) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := release(); err != nil {
+			return nil, err
+		}
+		out = append(out, dir)
+	}
+	return out, nil
+}
+
+// RemoveLeftoverRestores removes the directories of [LeftoverRestores].
+func RemoveLeftoverRestores(d agentdir.Dir) error {
+	return fsutil.WithDirLock(d.Root, func() error { return removeLeftoverRestores(d) })
+}
+
+// removeLeftoverRestores is [RemoveLeftoverRestores] for a caller that
+// holds the lock of the root.
+func removeLeftoverRestores(d agentdir.Dir) error {
+	return removeLeftovers(filepath.Join(d.Root, agentdir.RestorePrefix+"*"), func(dir string) (func() error, error) {
+		return lockRestored(d, dir)
+	})
 }
 
 // lockRestored takes the lock of the agent directory of d in tmp, where it

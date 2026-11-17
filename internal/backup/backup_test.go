@@ -820,3 +820,112 @@ func TestTakeReportsFailedRetention(t *testing.T) {
 		t.Fatalf("List() = %v, %v, want the new snapshot and the two old ones", snaps, err)
 	}
 }
+
+// stallingDest serves the first n bytes of each snapshot, then closes
+// stalled and blocks until the read context ends.
+type stallingDest struct {
+	Dest
+	n       int
+	stalled chan struct{}
+}
+
+func (s stallingDest) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	rc, err := s.Dest.Get(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &stallingReader{r: io.LimitReader(rc, int64(s.n)), c: rc, ctx: ctx, stalled: s.stalled}, nil
+}
+
+type stallingReader struct {
+	r       io.Reader
+	c       io.Closer
+	ctx     context.Context
+	stalled chan struct{}
+}
+
+func (r *stallingReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if !errors.Is(err, io.EOF) {
+		return n, err
+	}
+	close(r.stalled)
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
+
+func (r *stallingReader) Close() error { return r.c.Close() }
+
+func TestRestoreDirIsIgnoredByGitWhileExtracting(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, newAgent(t), inner, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+	dest := stallingDest{Dest: inner, n: 1000, stalled: make(chan struct{})}
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Restore(ctx, dest, snap.Name, "k", root, false)
+		done <- err
+	}()
+
+	<-dest.stalled
+	dirs, err := filepath.Glob(filepath.Join(root, agentdir.RestorePrefix+"*"))
+	if err != nil || len(dirs) != 1 {
+		t.Fatalf("restore directories = %v, %v, want one", dirs, err)
+	}
+	got, err := os.ReadFile(filepath.Join(dirs[0], ".gitignore"))
+	cancel()
+	if err != nil || string(got) != "*\n" {
+		t.Fatalf("restore directory .gitignore = %q, %v, want %q", got, err, "*\n")
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Restore() error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestPruneRemovesOldPartialSnapshots(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	dest, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	files := map[string]time.Time{
+		"coder-20261110T110000Z.a2abak":           now.Add(-time.Hour),
+		".tmp-coder-20261108T120000Z.a2abak123":   now.Add(-48 * time.Hour),
+		".tmp-coder-20261110T110000Z.a2abak456":   now.Add(-time.Hour),
+		".tmp-coder-x-20261108T120000Z.a2abak789": now.Add(-48 * time.Hour),
+	}
+	for name, mtime := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := Prune(ctx, dest, "coder", now, 7*24*time.Hour); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	names, err := dest.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".tmp-coder-20261110T110000Z.a2abak456", ".tmp-coder-x-20261108T120000Z.a2abak789", "coder-20261110T110000Z.a2abak"}
+	if diff := cmp.Diff(want, names); diff != "" {
+		t.Fatalf("Prune() kept wrong files (-want +got) diff = %s", diff)
+	}
+}

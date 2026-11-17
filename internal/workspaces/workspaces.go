@@ -56,10 +56,6 @@ const (
 	tmpPrefix     = ".tmp-"
 )
 
-// skipped are the entries a copy leaves out at any depth: the directories of
-// agents, which hold their secrets.
-var skipped = []string{agentdir.Name}
-
 // ErrTooLarge is returned for a workspace over the limits of a copy.
 var ErrTooLarge = errors.New("the workspace is too large to copy")
 
@@ -399,7 +395,9 @@ func checkSame(opened fs.FileInfo, err error) func(name string, listed fs.FileIn
 	}
 }
 
-func isSkipped(name string) bool { return slices.Contains(skipped, name) }
+// isSkipped reports whether a copy leaves out name at any depth: the
+// directories of agents and of restores, which hold their secrets.
+func isSkipped(name string) bool { return agentdir.IsAgentEntry(name) }
 
 // removeTemps deletes the temporary directories of copies that didn't
 // finish, such as those of a crash.

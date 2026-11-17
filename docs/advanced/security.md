@@ -4,7 +4,7 @@ This page describes what protects you when an agent reads your project, runs com
 
 ## The sandbox
 
-By default the agent runs in a Docker container as your user, with no capabilities and with resource limits. It sees the workspace and the `--mount` directories, and nothing else from your disk. Its own `.a2a/` directory, the `.a2a/` directories of other agents in the mounts, `.mcp.json` and the agent's settings files in the workspace appear empty, so the agent can't read its secrets or change its own permissions. [Sandbox](../guide/sandbox.md) shows what the agent sees.
+By default the agent runs in a Docker container as your user, with no capabilities and with resource limits. It sees the workspace and the `--mount` directories, and nothing else from your disk. Its own `.a2a/` directory, the `.a2a/` directories of other agents in the mounts, what an interrupted restore left next to them, `.mcp.json` and the agent's settings files in the workspace appear empty, so the agent can't read its secrets or change its own permissions. [Sandbox](../guide/sandbox.md) shows what the agent sees.
 
 The container has no network of its own. Every connection goes through the server, which allows the public internet and blocks private destinations, following the [agents.net](https://github.com/aojea/agents.net) specification. The agent calls other agents through the server too, so contact tokens never enter the sandbox.
 

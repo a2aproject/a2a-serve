@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
@@ -68,6 +69,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Peers:          s.listPeers,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
+		TakeBackup:     func(ctx context.Context) (backup.Snapshot, error) { return s.takeBackup(ctx, false) },
 	})
 	srv := httpserver.New(ctx, mux)
 	closers.push(func(ctx context.Context) error {

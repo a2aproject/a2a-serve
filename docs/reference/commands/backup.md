@@ -39,7 +39,8 @@ Aliases: `ls`
 
 ## a2a-serve backup now
 
-Take a snapshot now
+Take a snapshot now. A running agent takes it itself, so "a2a-serve status"
+shows it and the next scheduled snapshot comes an interval later.
 
 ```
 a2a-serve backup now
@@ -49,13 +50,16 @@ a2a-serve backup now
 
 Recreate an agent's .a2a directory from a snapshot taken by
 "a2a-serve backup now" or the running agent: its database, config, secrets,
-recipe.lock and agent home directory. The latest snapshot is used unless
---snapshot names one.
+recipe.lock and agent home directory. The latest snapshot in the
+destination, of any agent, is used unless --snapshot names one, so a
+destination that several agents share needs --snapshot.
 
 The directory must have no .a2a, or a .a2a that holds only config.yaml,
 recipe.lock or .gitignore, such as those a repository commits. Restore keeps
 recipe.lock and .gitignore. It replaces config.yaml with the snapshot's, which
-usually holds the settings changed after the commit, and says so.
+usually holds the settings changed after the commit, and says so. A
+.a2a/state that holds no agent data, such as one that commands like
+"a2a-serve pair list" created, is moved to .a2a/state.before-restore-&lt;time&gt;.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same

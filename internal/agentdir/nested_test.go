@@ -26,7 +26,7 @@ import (
 func TestFindBelow(t *testing.T) {
 	t.Parallel()
 	root, elsewhere := t.TempDir(), t.TempDir()
-	for _, dir := range []string{".a2a/state", "a/.a2a/state", "a/.a2a/inner/.a2a", "b/c/.a2a", "d", "e"} {
+	for _, dir := range []string{".a2a/state", "a/.a2a/state", "a/.a2a/inner/.a2a", "b/c/.a2a", "d", "e", "f/.a2a.restore-123/state"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +43,7 @@ func TestFindBelow(t *testing.T) {
 		t.Fatalf("FindBelow() error = %v", err)
 	}
 
-	want := []string{filepath.Join(root, ".a2a"), filepath.Join(root, "a", ".a2a"), filepath.Join(root, "b", "c", ".a2a"), filepath.Join(root, "d", ".a2a")}
+	want := []string{filepath.Join(root, ".a2a"), filepath.Join(root, "a", ".a2a"), filepath.Join(root, "b", "c", ".a2a"), filepath.Join(root, "d", ".a2a"), filepath.Join(root, "f", ".a2a.restore-123")}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("FindBelow() wrong result (-want +got) diff = %s", diff)
 	}

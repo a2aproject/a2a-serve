@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -39,13 +41,16 @@ func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Recreate an agent from a backup snapshot",
 		Long: `Recreate an agent's .a2a directory from a snapshot taken by
 "a2a-serve backup now" or the running agent: its database, config, secrets,
-recipe.lock and agent home directory. The latest snapshot is used unless
---snapshot names one.
+recipe.lock and agent home directory. The latest snapshot in the
+destination, of any agent, is used unless --snapshot names one, so a
+destination that several agents share needs --snapshot.
 
 The directory must have no .a2a, or a .a2a that holds only config.yaml,
 recipe.lock or .gitignore, such as those a repository commits. Restore keeps
 recipe.lock and .gitignore. It replaces config.yaml with the snapshot's, which
-usually holds the settings changed after the commit, and says so.
+usually holds the settings changed after the commit, and says so. A
+.a2a/state that holds no agent data, such as one that commands like
+"a2a-serve pair list" created, is moved to .a2a/state.before-restore-<time>.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
@@ -82,7 +87,9 @@ on the old host before taking over.
 				return err
 			}
 			// Installed after the key prompt, which Ctrl-C still interrupts.
-			ctx, stop := signalContext(ctx)
+			// A closed SSH session sends SIGHUP, which would otherwise leave
+			// the plaintext secrets of a partial restore behind.
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer stop()
 			dest, err := backup.Open(args[0], nil)
 			if err != nil {

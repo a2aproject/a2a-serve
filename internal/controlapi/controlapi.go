@@ -34,6 +34,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -184,6 +185,13 @@ type BackupStatus struct {
 	Last      time.Time `json:"last,omitzero"`
 	LastError string    `json:"lastError,omitempty"`
 	Next      time.Time `json:"next,omitzero"`
+}
+
+// BackupResponse is a snapshot the server took. RetentionError says why
+// removing the old snapshots failed after the snapshot was stored.
+type BackupResponse struct {
+	Snapshot       backup.Snapshot `json:"snapshot"`
+	RetentionError string          `json:"retentionError,omitempty"`
 }
 
 // MessengerStatus describes a messenger of the agent.
@@ -763,6 +771,21 @@ type Advertisement struct {
 func (c *Client) Advertisements(ctx context.Context) ([]Advertisement, error) {
 	var out []Advertisement
 	return out, c.do(ctx, http.MethodGet, "/advertisements", nil, &out)
+}
+
+// TakeBackup makes the server take a snapshot now, which status reports
+// and which moves the next scheduled one. Like [backup.Take], it returns a
+// stored snapshot with a *[backup.RetentionError] when removing old
+// snapshots failed.
+func (c *Client) TakeBackup(ctx context.Context) (backup.Snapshot, error) {
+	var out BackupResponse
+	if err := c.do(ctx, http.MethodPost, "/backups", nil, &out); err != nil {
+		return backup.Snapshot{}, err
+	}
+	if out.RetentionError != "" {
+		return out.Snapshot, agenterr.WithHint(&backup.RetentionError{Snapshot: out.Snapshot, Err: errors.New(out.RetentionError)}, agenterr.HintBackupDelete, "")
+	}
+	return out.Snapshot, nil
 }
 
 // InspectorLogin opens the web inspector once: Path is relative to the

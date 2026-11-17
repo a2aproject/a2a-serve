@@ -81,6 +81,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 	if stateOpen {
 		results = append(results, state)
 	}
+	if r, ok := checkLeftoverRestores(d); ok {
+		results = append(results, r)
+	}
 	if cfg != nil {
 		// The control client doesn't trust a socket in a state directory
 		// others can read, so the server can't be checked until it's fixed.
@@ -404,6 +407,30 @@ func checkMounts(d agentdir.Dir, cfg *agentdir.Config) []Result {
 		results = append(results, r)
 	}
 	return results
+}
+
+// checkLeftoverRestores reports the directories an interrupted restore
+// left next to .a2a, which hold the agent's secrets in plaintext.
+func checkLeftoverRestores(d agentdir.Dir) (Result, bool) {
+	dirs, err := backup.LeftoverRestores(d)
+	if err != nil {
+		return Result{ID: "restore-leftover", Status: StatusWarn, Message: "checking for leftovers of an interrupted restore: " + err.Error()}, true
+	}
+	if len(dirs) == 0 {
+		return Result{}, false
+	}
+	return Result{
+		ID:      "restore-leftover",
+		Status:  StatusFail,
+		Message: strings.Join(dirs, " and ") + " left by an interrupted `a2a-serve backup restore` holds the agent's secrets in plaintext",
+		Fix:     fixCommand,
+		apply: func() (string, error) {
+			if err := backup.RemoveLeftoverRestores(d); err != nil {
+				return "", err
+			}
+			return "removed " + strings.Join(dirs, " and "), nil
+		},
+	}, true
 }
 
 // checkState reports a state directory or secrets file others can read.

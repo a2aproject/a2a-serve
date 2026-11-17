@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -1078,6 +1079,39 @@ func TestAgentChecks(t *testing.T) {
 				t.Fatalf("Run() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestLeftoverRestoreFix(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal})
+	leftover := filepath.Join(d.Root, agentdir.RestorePrefix+"1")
+	if err := os.MkdirAll(filepath.Join(leftover, "state"), 0o700); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	opts := Options{Dir: &d}
+
+	var found *Result
+	for _, r := range Run(t.Context(), m.Env(), opts) {
+		if r.ID == "restore-leftover" {
+			found = &r
+		}
+	}
+	if found == nil || found.Status != StatusFail || !found.Fixable() || found.Fix != "a2a-serve doctor --fix" {
+		t.Fatalf("Run() restore-leftover = %+v, want a failure that --fix fixes", found)
+	}
+	if _, err := found.Apply(); err != nil {
+		t.Fatalf("Result{ID: %q}.Apply() error = %v", found.ID, err)
+	}
+
+	if _, err := os.Stat(leftover); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("os.Stat(leftover restore) after the fix error = %v, want %v", err, fs.ErrNotExist)
+	}
+	for _, r := range Run(t.Context(), m.Env(), opts) {
+		if r.ID == "restore-leftover" {
+			t.Fatalf("Run() after the fix = %+v, want no restore-leftover", r)
+		}
 	}
 }
 

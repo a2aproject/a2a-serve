@@ -52,6 +52,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/schedules"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
@@ -395,6 +396,11 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 		return fmt.Errorf("writing the pid file: %w", err)
 	}
 	closers.push(func(context.Context) error { return removeIfExists(s.dir.PIDPath()) })
+	// An interrupted restore can leave the agent's secrets in plaintext
+	// next to .a2a, where the sandbox and git would see them.
+	if err := backup.RemoveLeftoverRestores(s.dir); err != nil {
+		s.logf("! removing what an interrupted restore left: %v", err)
+	}
 	if s.pins, err = harness.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
 		return err
 	}

@@ -22,9 +22,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -89,9 +91,11 @@ func newBackupNowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "now",
 		Short: "Take a snapshot now",
-		Args:  cobra.NoArgs,
+		Long: `Take a snapshot now. A running agent takes it itself, so "a2a-serve status"
+shows it and the next scheduled snapshot comes an interval later.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, dest, bcfg, err := agentBackups(sf)
+			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
@@ -99,7 +103,7 @@ func newBackupNowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			defer stop()
 			ctx, cancel := context.WithTimeout(ctx, sf.deadline)
 			defer cancel()
-			snap, err := backup.Take(ctx, d, dest, bcfg, time.Now())
+			snap, err := agentctl.TakeBackup(ctx, d, controlapi.NewClient(d, controlapi.WithTimeout(sf.deadline)))
 			if err != nil {
 				return deadlineError(err)
 			}
