@@ -163,11 +163,13 @@ func TestCalledAgentKeepsThePeopleBehindACallerApart(t *testing.T) {
 func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		running bool
-		wantErr string
+		name     string
+		running  bool
+		readOnly bool
+		wantErr  string
 	}{
 		{name: "the least recently used home makes room"},
+		{name: "the least recently used home has read-only directories", readOnly: true},
 		{name: "all homes in use", running: true, wantErr: fmt.Sprintf("all %d people", maxCallerHomes)},
 	}
 	for _, tc := range tests {
@@ -182,6 +184,18 @@ func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 				home := coder.dir.CallerHomeDir(id, caller)
 				if err := os.MkdirAll(home, 0o700); err != nil {
 					t.Fatalf("MkdirAll() error = %v", err)
+				}
+				if tc.readOnly && i == 0 {
+					mod := filepath.Join(home, "go", "pkg", "mod", "x@v1")
+					if err := os.MkdirAll(mod, 0o700); err != nil {
+						t.Fatalf("MkdirAll() error = %v", err)
+					}
+					if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module x"), 0o600); err != nil {
+						t.Fatalf("WriteFile() error = %v", err)
+					}
+					if err := os.Chmod(mod, 0o500); err != nil {
+						t.Fatalf("Chmod() error = %v", err)
+					}
 				}
 				used := start.Add(time.Duration(i) * time.Minute)
 				if err := os.Chtimes(home, used, used); err != nil {

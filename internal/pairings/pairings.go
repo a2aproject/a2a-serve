@@ -441,9 +441,11 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req UpdateReq
 
 // Remove deletes a pairing with its tokens, chat links and pending codes,
 // a webhook node with it, and the schedules, watches, tasks and questions
-// of the users it acts as. It first cancels their tasks, stops their agent
-// processes and deletes their agent homes, so a new pairing with the same
-// name starts with none of them. The local pairing stays; only its
+// of the users it acts as. It first cancels their tasks and stops their
+// agent processes, and deletes their agent homes after the pairing, so a
+// new pairing with the same name starts with none of them. A home that
+// can't be deleted is reported in the warnings of the result, and the
+// pairing stays removed. The local pairing stays; only its
 // credentials are revoked.
 func (s *Service) Remove(ctx context.Context, name string) (*RemoveResult, error) {
 	p, exists, err := s.pairing(ctx, name)
@@ -459,11 +461,12 @@ func (s *Service) Remove(ctx context.Context, name string) (*RemoveResult, error
 		return resp, s.deps.Store.RevokeCredentials(ctx, name)
 	}
 	endRemoval := s.beginRemoval(name)
-	err = s.deletePairing(ctx, name)
+	warnings, err := s.deletePairing(ctx, name)
 	endRemoval()
 	if err != nil {
 		return nil, err
 	}
+	resp.Warnings = warnings
 	if p.Kind == pairapi.PairingWebhook {
 		defer s.changed(ctx)
 		if s.deps.Forget != nil {
@@ -586,9 +589,10 @@ func pairingUsers(name string) []store.PairingUser {
 	return out
 }
 
-// deletePairing deletes the pairing called name, and the agent homes of its
-// users, while the users run nothing.
-func (s *Service) deletePairing(ctx context.Context, name string) error {
+// deletePairing deletes the pairing called name, then the agent homes of
+// its users, while the users run nothing. The pairing is revoked even when
+// a home can't be deleted: that becomes a warning that names what is left.
+func (s *Service) deletePairing(ctx context.Context, name string) (warnings []string, err error) {
 	users := pairingUsers(name)
 	principals := make([]string, len(users))
 	for i, u := range users {
@@ -597,18 +601,22 @@ func (s *Service) deletePairing(ctx context.Context, name string) error {
 	if s.deps.Users != nil {
 		release, err := s.deps.Users.Stop(ctx, principals...)
 		if err != nil {
-			return fmt.Errorf("stopping what %s runs: %w", name, err)
+			return nil, fmt.Errorf("stopping what %s runs: %w", name, err)
 		}
 		defer release()
 	}
-	if s.deps.Homes != nil {
-		for _, p := range principals {
-			if err := s.deps.Homes.RemoveUserHome(p); err != nil {
-				return fmt.Errorf("deleting the agent home of %s: %w", name, err)
-			}
+	if err := s.deps.Store.DeletePairing(ctx, name, users...); err != nil {
+		return nil, err
+	}
+	if s.deps.Homes == nil {
+		return nil, nil
+	}
+	for _, p := range principals {
+		if err := s.deps.Homes.RemoveUserHome(p); err != nil {
+			warnings = append(warnings, fmt.Sprintf("couldn't delete the agent home of %s; delete what is left by hand: %s", name, strings.ReplaceAll(err.Error(), "\n", "; ")))
 		}
 	}
-	return s.deps.Store.DeletePairing(ctx, name, users...)
+	return warnings, nil
 }
 
 // SignOut revokes the Google sign-in tokens of email at every URL. The

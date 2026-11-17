@@ -263,7 +263,7 @@ func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeRe
 	if err != nil {
 		return nil, err
 	}
-	resp := &controlapi.RevokeResponse{Kind: r.Kind, Kept: r.Kept}
+	resp := &controlapi.RevokeResponse{Kind: r.Kind, Kept: r.Kept, Warnings: r.Warnings}
 	if r.Kept {
 		return resp, nil
 	}

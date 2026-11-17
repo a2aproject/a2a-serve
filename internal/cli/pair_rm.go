@@ -105,9 +105,15 @@ again while an --allow-email rule matches their email; remove the rule with
 				if resp.Access != nil {
 					out["access"] = resp.Access
 				}
+				if len(resp.Warnings) > 0 {
+					out["warnings"] = resp.Warnings
+				}
 				return cfg.PrintJSON(out)
 			}
 			if _, err := fmt.Fprint(cfg.Out, removedText(args[0], resp)); err != nil {
+				return err
+			}
+			if err := printWarnings(cfg, resp.Warnings); err != nil {
 				return err
 			}
 			return printAccess(cfg, resp.Access)
