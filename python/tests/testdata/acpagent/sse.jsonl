@@ -1,0 +1,56 @@
+{"turn":"hello","partial":true,"turn_complete":false,"texts":["Hello "],"thought":[false],"error_message":""}
+{"turn":"hello","partial":true,"turn_complete":false,"texts":["from fakeacp."],"thought":[false],"error_message":""}
+{"turn":"hello","partial":false,"turn_complete":false,"texts":["Hello from fakeacp."],"thought":[false],"error_message":""}
+{"turn":"hello","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"tool","partial":true,"turn_complete":false,"texts":["Running list files"],"thought":[true],"error_message":""}
+{"turn":"tool","partial":true,"turn_complete":false,"texts":["Finished list files"],"thought":[true],"error_message":""}
+{"turn":"tool","partial":true,"turn_complete":false,"texts":["Listed the files."],"thought":[false],"error_message":""}
+{"turn":"tool","partial":false,"turn_complete":false,"texts":["Listed the files."],"thought":[false],"error_message":""}
+{"turn":"tool","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"model","partial":true,"turn_complete":false,"texts":["model: fake/default"],"thought":[false],"error_message":""}
+{"turn":"model","partial":false,"turn_complete":false,"texts":["model: fake/default"],"thought":[false],"error_message":""}
+{"turn":"model","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"markdown","partial":true,"turn_complete":false,"texts":["# Release v1.2.3\n\n**Bold**, *italic*, ~~struck~~ and `inline_code()`.\n\n- one. two! (three)\n- [a link](https://example.com/a_b?c=d) and 1 + 1 = 2 \u003e 1 #tag {x} |pipe|\n\n```go\nfmt.Println(\"a_b*c\")\n```\n\n\u003e quoted text\n\nDone."],"thought":[false],"error_message":""}
+{"turn":"markdown","partial":false,"turn_complete":false,"texts":["# Release v1.2.3\n\n**Bold**, *italic*, ~~struck~~ and `inline_code()`.\n\n- one. two! (three)\n- [a link](https://example.com/a_b?c=d) and 1 + 1 = 2 \u003e 1 #tag {x} |pipe|\n\n```go\nfmt.Println(\"a_b*c\")\n```\n\n\u003e quoted text\n\nDone."],"thought":[false],"error_message":""}
+{"turn":"markdown","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"write f.txt","partial":true,"turn_complete":false,"texts":["write ok"],"thought":[false],"error_message":""}
+{"turn":"write f.txt","partial":false,"turn_complete":false,"texts":["write ok"],"thought":[false],"error_message":""}
+{"turn":"write f.txt","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"read f.txt","partial":true,"turn_complete":false,"texts":["written by fakeacp\n"],"thought":[false],"error_message":""}
+{"turn":"read f.txt","partial":false,"turn_complete":false,"texts":["written by fakeacp\n"],"thought":[false],"error_message":""}
+{"turn":"read f.txt","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"ls .","partial":true,"turn_complete":false,"texts":["ls: .fakeacp f.txt"],"thought":[false],"error_message":""}
+{"turn":"ls .","partial":false,"turn_complete":false,"texts":["ls: .fakeacp f.txt"],"thought":[false],"error_message":""}
+{"turn":"ls .","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"rename f.txt g.txt","partial":true,"turn_complete":false,"texts":["rename ok"],"thought":[false],"error_message":""}
+{"turn":"rename f.txt g.txt","partial":false,"turn_complete":false,"texts":["rename ok"],"thought":[false],"error_message":""}
+{"turn":"rename f.txt g.txt","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"read g.txt","partial":true,"turn_complete":false,"texts":["written by fakeacp\n"],"thought":[false],"error_message":""}
+{"turn":"read g.txt","partial":false,"turn_complete":false,"texts":["written by fakeacp\n"],"thought":[false],"error_message":""}
+{"turn":"read g.txt","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"remember red","partial":true,"turn_complete":false,"texts":["OK."],"thought":[false],"error_message":""}
+{"turn":"remember red","partial":false,"turn_complete":false,"texts":["OK."],"thought":[false],"error_message":""}
+{"turn":"remember red","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"recall","partial":true,"turn_complete":false,"texts":["You said: red"],"thought":[false],"error_message":""}
+{"turn":"recall","partial":false,"turn_complete":false,"texts":["You said: red"],"thought":[false],"error_message":""}
+{"turn":"recall","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"ask always","partial":false,"turn_complete":true,"texts":["Permission required: git push (git push origin main).\nReply with one of: once, always, reject."],"thought":[false],"error_message":""}
+{"turn":"always","partial":true,"turn_complete":false,"texts":["Finished git push"],"thought":[true],"error_message":""}
+{"turn":"always","partial":true,"turn_complete":false,"texts":["Pushed (always)."],"thought":[false],"error_message":""}
+{"turn":"always","partial":false,"turn_complete":false,"texts":["Pushed (always)."],"thought":[false],"error_message":""}
+{"turn":"always","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"ask","partial":false,"turn_complete":true,"texts":["Permission required: git push (git push origin main).\nReply with one of: once, always, reject."],"thought":[false],"error_message":""}
+{"turn":"ask twice","partial":false,"turn_complete":true,"texts":["Permission required: git push (git push origin main).\nReply with one of: once, always, reject."],"thought":[false],"error_message":""}
+{"turn":"once","partial":false,"turn_complete":true,"texts":["Permission required: git push (git push origin main).\nReply with one of: once, always, reject."],"thought":[false],"error_message":""}
+{"turn":"once","partial":true,"turn_complete":false,"texts":["Pushed twice (allow, allow)."],"thought":[false],"error_message":""}
+{"turn":"once","partial":false,"turn_complete":false,"texts":["Pushed twice (allow, allow)."],"thought":[false],"error_message":""}
+{"turn":"once","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}
+{"turn":"apierror","partial":false,"turn_complete":true,"texts":["acp agent error: Internal error: models/gemini-2.5-flash is not found for API version v1beta (code -32603): {\"errorName\":\"APIError\",\"service\":\"session\"}"],"thought":[false],"error_message":"acp agent error: Internal error: models/gemini-2.5-flash is not found for API version v1beta (code -32603): {\"errorName\":\"APIError\",\"service\":\"session\"}"}
+{"turn":"whoami","partial":false,"turn_complete":true,"texts":["Permission required: whoami.\nReply with one of: once, always, reject."],"thought":[false],"error_message":""}
+{"turn":"crash","partial":true,"turn_complete":false,"texts":["about to crash"],"thought":[false],"error_message":""}
+{"turn":"crash","partial":false,"turn_complete":false,"texts":["about to crash"],"thought":[false],"error_message":""}
+{"turn":"crash","partial":false,"turn_complete":true,"texts":["acp agent error: acp agent exited"],"thought":[false],"error_message":"acp agent error: acp agent exited"}
+{"turn":"after-crash","partial":true,"turn_complete":false,"texts":["Hello "],"thought":[false],"error_message":""}
+{"turn":"after-crash","partial":true,"turn_complete":false,"texts":["from fakeacp."],"thought":[false],"error_message":""}
+{"turn":"after-crash","partial":false,"turn_complete":false,"texts":["Hello from fakeacp."],"thought":[false],"error_message":""}
+{"turn":"after-crash","partial":false,"turn_complete":true,"texts":[],"thought":[],"error_message":""}

@@ -189,6 +189,33 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([self.texts([ev]) for ev in progress], want)
                 self.assertEqual(self.texts([ev for ev in events if not ev.partial]), ["Listed the files."])
 
+    async def test_matches_acpagent_events(self):
+        from google.adk.agents.run_config import RunConfig, StreamingMode
+        from google.adk.runners import InMemoryRunner
+
+        from a2a_serve.adk import AcpAgent
+
+        turns = ["hello", "tool", "model", "markdown", "write f.txt", "read f.txt", "ls .", "rename f.txt g.txt", "read g.txt", "remember red", "recall", "ask always", "always", "ask", "ask twice", "once", "once", "apierror", "whoami", "crash", "after-crash"]
+        for mode in ("none", "sse"):
+            with self.subTest(mode):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d)
+                agent = AcpAgent(name="coder", argv=[FAKEACP], cwd=d)
+                self.addCleanup(agent.close)
+                runner = InMemoryRunner(agent=agent, app_name="test")
+                session = await self.session(runner)
+                config = RunConfig(streaming_mode=StreamingMode.NONE if mode == "none" else StreamingMode.SSE)
+                with open(os.path.join(os.path.dirname(__file__), "testdata", "acpagent", f"{mode}.jsonl")) as f:
+                    want = [json.loads(line) for line in f]
+
+                got = []
+                for turn in turns:
+                    async for ev in runner.run_async(user_id="u", session_id=session.id, new_message=message(turn), run_config=config):
+                        parts = [p for p in (ev.content.parts if ev.content else []) if p.text]
+                        got.append({"turn": turn, "partial": bool(ev.partial), "turn_complete": bool(ev.turn_complete), "texts": [p.text for p in parts], "thought": [bool(p.thought) for p in parts], "error_message": ev.error_message or ""})
+
+                self.assertEqual(got, want)
+
     async def test_permissions(self):
         tests = [
             ("allowed kind", {"allow_tools": ["execute"]}, "Pushed (allow)."),
