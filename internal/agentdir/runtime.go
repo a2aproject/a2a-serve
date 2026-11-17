@@ -111,8 +111,8 @@ func (r *Runtime) Reload() error {
 }
 
 // SavedConfig reads config.yaml, which can hold changes waiting for a
-// restart.
-func (r *Runtime) SavedConfig() (*Config, error) { return r.dir.LoadConfig() }
+// restart, without validating it.
+func (r *Runtime) SavedConfig() (*Config, error) { return r.dir.ReadConfig() }
 
 // SavedSecrets reads the secrets file, which can hold secrets saved since
 // the agent started.
@@ -135,6 +135,26 @@ func (r *Runtime) SaveSecrets(s Secrets) error {
 		return err
 	}
 	r.cur.Store(&runtimeState{cfg: r.cur.Load().cfg, secrets: all})
+	return nil
+}
+
+// DeleteSecrets removes the named secrets from the secrets file and from
+// the secrets in use.
+func (r *Runtime) DeleteSecrets(names ...string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.dir.LockConfig(func() error { return r.dir.DeleteSecrets(names...) }); err != nil {
+		return err
+	}
+	cur := r.cur.Load()
+	next := maps.Clone(cur.secrets)
+	for _, name := range names {
+		delete(next, name)
+	}
+	r.cur.Store(&runtimeState{cfg: cur.cfg, secrets: next})
 	return nil
 }
 

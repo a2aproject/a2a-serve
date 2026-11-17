@@ -153,8 +153,16 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, hint string) err
 	}
 	writeAccess(&sb, res.Access)
 	writeWarnings(&sb, res.Warnings)
+	writeProblems(&sb, res.Problems)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
+}
+
+// writeProblems writes the problems a saved config still has.
+func writeProblems(sb *strings.Builder, problems []string) {
+	for _, p := range problems {
+		fmt.Fprintf(sb, "! still to fix before the agent starts: %s\n", p)
+	}
 }
 
 // printStartRunning prints the diff of a start on a running agent, then one

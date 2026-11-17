@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/shlex"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
@@ -1026,6 +1027,9 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	default:
 		f.put(cfg, nil)
 	}
+	if f.path == "policy.allowEmails" && len(cfg.Policy.AllowEmails) == 0 && cfg.Auth.GoogleClientID != "" {
+		return nil, agenterr.WithHint(errGoogleAppNeedsEmails, agenterr.HintConfigUnset, "google-client-id")
+	}
 	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
 		cfg.Messengers.Email = nil
 	}
@@ -1033,6 +1037,10 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	// The key and the voice belong to the service, and are invalid without it.
 	if f.path == "voice.service" {
 		cfg.Voice = VoiceConfig{}
+	}
+	// The client ID and secret are one Google app, and invalid alone.
+	if strings.HasPrefix(f.path, "auth.google") {
+		cfg.Auth = AuthConfig{}
 	}
 	if f.path == "inject" {
 		if err := cfg.dropInjectedSecrets(injected, nil); err != nil {

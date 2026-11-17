@@ -21,7 +21,9 @@ invite` adds it when rules change what the pairing gets, and `pair set`
 adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `pair invite`, `pair set` and `pair rm` add the same `access` object.
 `config set`, `config unset`, `messenger add` and `messenger rm` add it when
-the change alters who may call or what their agent containers get. Removals
+the change alters who may call or what their agent containers get. `config set`,
+`config unset` and `config edit` add `problems`, what the saved config still has to
+fix before the agent starts. Removals
 (`messenger rm`, `contact rm`, `pair rm`, `schedule rm`, each also called
 `delete`) print `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, `warnings` with the leftover path of an agent home that

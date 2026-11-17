@@ -466,7 +466,8 @@ func (s *Service) newMessenger(cfg *agentdir.Config, secrets agentdir.Secrets, k
 }
 
 // DeleteMessenger removes a messenger from the config with the histories
-// of its conversations, and stops it on a running agent.
+// of its conversations and the secrets only it used, and stops it on a
+// running agent.
 func (s *Service) DeleteMessenger(ctx context.Context, kind string) (*controlapi.MessengerRemoval, error) {
 	if err := (&agentdir.Config{}).SetMessenger(kind, "", nil); err != nil {
 		return nil, agenterr.Invalid(err)
@@ -475,7 +476,18 @@ func (s *Service) DeleteMessenger(ctx context.Context, kind string) (*controlapi
 		return nil, &agenterr.NotFoundError{Kind: "messenger", Name: kind}
 	}
 	before := s.reportedAccess(ctx)
-	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(kind, "", nil) }); err != nil {
+	var unused []string
+	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error {
+		old := c.Clone()
+		if err := c.SetMessenger(kind, "", nil); err != nil {
+			return err
+		}
+		unused = agentdir.UnusedSecrets(old, c)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.deps.Runtime.DeleteSecrets(unused...); err != nil {
 		return nil, err
 	}
 	if s.deps.Hooks.MessengerRemoved != nil {

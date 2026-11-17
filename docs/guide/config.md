@@ -30,12 +30,13 @@ Use `a2a-serve config set` for the settings you name, and for secret values. It 
 
 Use `a2a-serve config edit` for several changes at once, for comments, and to repair a `config.yaml` that doesn't load. It reopens the file with the errors on top until the file is valid. When you give up, it keeps your edit in `.a2a/state/config-draft.yaml`, and the next `a2a-serve config edit` opens it.
 
-Both commands check the settings. An error names the key and the entry, and its hint names the command that fixes it:
+Both commands check the settings. A change that adds a problem is refused. A change to a config that already has problems is saved, and the output lists what is still to fix, with the command that fixes it:
 
 ```console
-$ a2a-serve config set --deny-tools execute
-Error: config.yaml: approvals.deny has "exec": want ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), or a glob such as *
-hint: fix it with `a2a-serve config unset deny-tools exec`
+$ a2a-serve config set --secret API_A
+  secret value API_A stored
+✓ saved .a2a/config.yaml
+! still to fix before the agent starts: config.yaml: secret API_B is not stored: run `a2a-serve config set --secret API_B` with the variable set
 ```
 
 Change messengers with `a2a-serve messenger add` and `a2a-serve messenger rm`. List settings such as `--secret`, `--env` and `--mount` replace an existing entry with the same name. [Secrets](secrets.md) covers `--secret` and the flags that take tokens.

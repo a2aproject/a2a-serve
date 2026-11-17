@@ -921,6 +921,24 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 	}
 }
 
+func TestConfigSetReportsWhatRemains(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nsecrets: [API_A, API_B]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCMD(t, "config", "set", "--secret", "API_A=a", "--dir", d.Root)
+
+	if err != nil {
+		t.Fatalf("a2a-serve config set error = %v", err)
+	}
+	want := "✓ saved " + d.ConfigPath() + "\n! still to fix before the agent starts: config.yaml: secret API_B is not stored: run `a2a-serve config set --secret API_B` with the variable set\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatalf("a2a-serve config set = %q, want it to end with %q", out, want)
+	}
+}
+
 func TestPrintStartRunning(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

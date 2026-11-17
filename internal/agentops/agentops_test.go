@@ -437,6 +437,9 @@ func TestDeleteMessenger(t *testing.T) {
 				t.Fatalf("SetMessenger() error = %v", err)
 			}
 			rt, d := newAgentRuntime(t, cfg)
+			if err := rt.SaveSecrets(agentdir.Secrets{"TELEGRAM_TOKEN": "tok", "OTHER": "o"}); err != nil {
+				t.Fatalf("SaveSecrets() error = %v", err)
+			}
 			var stopped []string
 			s, st := newServiceWith(t, rt, Hooks{MessengerRemoved: func(kind string) { stopped = append(stopped, kind) }})
 			if err := st.UseConversation(context.Background(), agentdir.MessengerTelegram, "dm1", "pair:anna", "c1"); err != nil {
@@ -466,6 +469,16 @@ func TestDeleteMessenger(t *testing.T) {
 			}
 			if convs, err := st.Conversations(context.Background(), tc.kind, "dm1", "pair:anna"); err != nil || len(convs) != 0 {
 				t.Fatalf("Conversations() after DeleteMessenger(%q) = %v, %v, want none", tc.kind, convs, err)
+			}
+			secrets, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(agentdir.Secrets{"OTHER": "o"}, secrets); diff != "" {
+				t.Fatalf("DeleteMessenger(%q) wrong stored secrets (-want +got) diff = %s", tc.kind, diff)
+			}
+			if diff := cmp.Diff(agentdir.Secrets{"OTHER": "o"}, rt.Secrets()); diff != "" {
+				t.Fatalf("DeleteMessenger(%q) wrong secrets in use (-want +got) diff = %s", tc.kind, diff)
 			}
 		})
 	}

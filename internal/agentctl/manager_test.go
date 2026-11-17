@@ -167,6 +167,38 @@ func TestSetWhileStarting(t *testing.T) {
 	}
 }
 
+func TestOfflineDeleteMessengerOfAConfigThatDoesNotValidate(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, agentdir.Secrets{agentdir.SecretTelegram: "123:abc", "OTHER": "o"})
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nnetwork:\n    private: lan\nmessengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, closer, err := Open(t.Context(), d, controlapi.NewClient(d))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := closer.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	if _, err := m.DeleteMessenger(t.Context(), agentdir.MessengerTelegram); err != nil {
+		t.Fatalf("DeleteMessenger() error = %v", err)
+	}
+
+	if loadConfig(t, d).HasMessenger(agentdir.MessengerTelegram) {
+		t.Fatalf("config.yaml still has telegram after DeleteMessenger()")
+	}
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatalf("LoadSecrets() error = %v", err)
+	}
+	if diff := cmp.Diff(agentdir.Secrets{"OTHER": "o"}, secrets); diff != "" {
+		t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestOfflineDeleteMessenger(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

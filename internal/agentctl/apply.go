@@ -70,6 +70,10 @@ type Result struct {
 	Access *controlapi.Access `json:"access,omitempty"`
 	// Warnings are problems of the saved settings that don't stop the agent.
 	Warnings []string `json:"warnings,omitempty"`
+	// Problems are the problems the saved settings still have, which stop
+	// the agent from starting, each with the command that fixes it where
+	// one does. A change that adds a problem is refused instead.
+	Problems []string `json:"problems,omitempty"`
 	// RemovedKeys are the keys an edit of config.yaml removed that the
 	// server ignored, by their dotted path.
 	RemovedKeys []string `json:"removedKeys,omitempty"`
@@ -143,8 +147,9 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 			return nil, err
 		}
 	}
+	raw := &rawEdit{data: data, base: base}
 	res, err := apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
-		if agentdir.MessengersDiffer(cfg, next) {
+		if !raw.unparsed && agentdir.MessengersDiffer(cfg, next) {
 			return nil, nil, errMessengers
 		}
 		store, err := agentdir.StoreSecretValues(cfg, next)
@@ -153,20 +158,25 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 		}
 		*cfg = *next
 		return store, nil, nil
-	}, nil, dryRun, &rawEdit{data: data, base: base})
+	}, nil, dryRun, raw)
 	return withNameNote(res, given), err
 }
 
 // rawEdit is a hand edit of config.yaml: data is saved as it is if the
-// file still holds base.
-type rawEdit struct{ data, base []byte }
+// file still holds base. unparsed says base isn't YAML, so nothing of it
+// is known.
+type rawEdit struct {
+	data, base []byte
+	unparsed   bool
+}
 
 // Apply changes the agent's config with mutate, validates the result and
 // saves it. A running server applies messengers, the description and
 // approval settings at once, through client; the result lists the settings
 // which wait for a restart. The directory of a stopped agent stays locked
-// against a start while Apply saves. Invalid settings are a
-// [agentdir.SettingsError] and nothing is saved.
+// against a start while Apply saves. A change that adds a problem to the
+// config is a [agentdir.SettingsError] and nothing is saved; the problems
+// the config had before and still has are listed in the result.
 func Apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, dryRun bool) (*Result, error) {
 	return apply(ctx, d, client, mutate, nil, dryRun, nil)
 }
@@ -190,8 +200,10 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	var se *agentdir.SettingsError
 	if raw != nil && errors.As(err, &se) {
 		// An edit repairs a config.yaml that doesn't parse, and is
-		// compared against an empty config.
-		old, err = &agentdir.Config{}, nil
+		// compared against what of it decodes.
+		var ok bool
+		old, ok = agentdir.PartialConfig(raw.base)
+		raw.unparsed, err = !ok, nil
 	}
 	if err != nil {
 		return nil, err
@@ -210,8 +222,12 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	for _, name := range del {
 		delete(all, name)
 	}
-	if err := d.CheckConfig(next, all); err != nil {
-		return nil, &agentdir.SettingsError{Err: fileProblems(d, err, old, stored, created, raw != nil)}
+	problems := d.ConfigProblems(next, all)
+	if added := addedProblems(d, problems, old, next, stored, all, created, raw); added != nil {
+		if raw != nil {
+			added = agentdir.EditProblems(added)
+		}
+		return nil, &agentdir.SettingsError{Err: added}
 	}
 	if next.Approvals.OwnerChat != old.Approvals.OwnerChat {
 		if err := next.CheckOwnerChat(); err != nil {
@@ -228,6 +244,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		Name: next.Name, Path: d.ConfigPath(), Changes: agentdir.Diff(old, next),
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
 		Warnings: slices.Concat(harness.Warnings(next), mcpWarnings(d, old, next), toolRuleWarnings(d, old, next)),
+		Problems: agentdir.ProblemTexts(problems),
 	}
 	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) || !slices.Equal(old.Inject, next.Inject) {
 		if w := harness.HostEgress(next).Warning; w != "" {
@@ -273,17 +290,23 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	return res, nil
 }
 
-// fileProblems names the problems of err, the error of the changed config,
-// that config.yaml has by their key: all of them for an edited file, else
-// those the saved config old has too.
-func fileProblems(d agentdir.Dir, err error, old *agentdir.Config, stored agentdir.Secrets, created, edited bool) error {
+// addedProblems returns the problems of the changed config next, given in
+// problems, that refuse the change: those the saved config old doesn't
+// have. A new agent has no saved config, so all of them count. An edit
+// also counts the problems an edit fixes, so that it reopens until the
+// file is valid, and of the machine's problems, such as secrets that
+// aren't stored, only those it added. Those of a config.yaml that isn't
+// YAML are unknown, so none count.
+func addedProblems(d agentdir.Dir, problems error, old, next *agentdir.Config, stored, all agentdir.Secrets, created bool, raw *rawEdit) error {
 	switch {
-	case edited:
-		return agentdir.EditProblems(err)
 	case created:
-		return err
+		return problems
+	case raw == nil:
+		return agentdir.AddedProblems(problems, d.ConfigProblems(old, stored))
+	case raw.unparsed:
+		return agentdir.AddedProblems(problems, d.MachineProblems(next, all))
 	}
-	return agentdir.FileProblemsOf(err, d.CheckConfig(old, stored))
+	return agentdir.AddedProblems(problems, d.MachineProblems(old, stored))
 }
 
 // CheckEnclosing refuses to create an agent in d while an agent whose
@@ -311,14 +334,18 @@ func CheckEnclosing(ctx context.Context, d agentdir.Dir) error {
 	}
 }
 
-// saveConfig stores the secrets store, deletes the secrets del, and saves
-// the hand edit raw as config.yaml, or the config on disk with mutate
-// applied. The config is read again under its lock, so that changes saved
-// since apply read it, by other commands or the running server, are kept,
-// or refuse the hand edit before anything is saved.
+// saveConfig stores the secrets store, saves the hand edit raw as
+// config.yaml, or the config on disk with mutate applied, and deletes the
+// secrets del last, so that a failure leaves no reference to a deleted
+// secret. It holds the lock of config.yaml throughout, and reads the config
+// again under it, so that changes saved since apply read it, by other
+// commands or the running server, are kept, or refuse the hand edit before
+// anything is saved. mutate runs again on that config, and the secrets of
+// its first run are the ones saved.
 func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit, store agentdir.Secrets, del []string) error {
-	if raw != nil {
-		return d.LockConfig(func() error {
+	return d.LockConfig(func() error {
+		write := func() error { return fsutil.WriteAtomic(d.ConfigPath(), raw.data, 0o644) }
+		if raw != nil {
 			cur, err := os.ReadFile(d.ConfigPath())
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
@@ -326,28 +353,24 @@ func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit, store agentdir.Se
 			if !bytes.Equal(cur, raw.base) {
 				return ErrConfigChanged
 			}
-			if err := saveSecrets(d, store, del); err != nil {
+		} else {
+			cfg, err := d.LoadOrNewConfig()
+			if err != nil {
 				return err
 			}
-			return fsutil.WriteAtomic(d.ConfigPath(), raw.data, 0o644)
-		})
-	}
-	if err := saveSecrets(d, store, del); err != nil {
-		return err
-	}
-	return d.UpdateConfig(func(cfg *agentdir.Config) error {
-		if _, _, err := mutate(cfg); err != nil {
-			return &agentdir.SettingsError{Err: err}
+			if _, _, err := mutate(cfg); err != nil {
+				return &agentdir.SettingsError{Err: err}
+			}
+			write = func() error { return d.SaveConfig(cfg) }
 		}
-		return nil
+		if err := d.SaveSecrets(store); err != nil {
+			return err
+		}
+		if err := write(); err != nil {
+			return err
+		}
+		return d.DeleteSecrets(del...)
 	})
-}
-
-func saveSecrets(d agentdir.Dir, store agentdir.Secrets, del []string) error {
-	if err := d.SaveSecrets(store); err != nil {
-		return err
-	}
-	return d.DeleteSecrets(del...)
 }
 
 func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange {
@@ -453,6 +476,11 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	for _, s := range res.Secrets {
 		secret = secret || slices.Contains(next.Secrets, s.Name) || s.Name == agentdir.SecretTailscaleKey
 	}
+	if len(live) > 0 && next.Validate() != nil {
+		// The server reloads only a config.yaml that validates.
+		restart = append(restart, live...)
+		live = nil
+	}
 	if len(live) > 0 {
 		_, err := client.ReloadConfig(ctx)
 		switch {
@@ -483,9 +511,13 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 		res.Restart = appendNew(res.Restart, "secret")
 	}
 	for _, s := range live {
-		if checkLive && (waiting == nil && agentdir.IsSandboxSetting(s) || waiting[s]) {
+		switch {
+		// A network provider gets the description only when it joins.
+		case s == settingDescription && next.Network.URL() != "":
 			res.Restart = appendNew(res.Restart, s)
-		} else {
+		case checkLive && (waiting == nil && agentdir.IsSandboxSetting(s) || waiting[s]):
+			res.Restart = appendNew(res.Restart, s)
+		default:
 			res.Applied = appendNew(res.Applied, s)
 		}
 	}
@@ -510,8 +542,12 @@ func runningDiff(ctx context.Context, client *controlapi.Client, next *agentdir.
 	return out
 }
 
-// settingPublicAllowIncoming says who may call on the public URL.
-const settingPublicAllowIncoming = "public-allow-incoming"
+// Settings that reload treats on their own.
+const (
+	// settingPublicAllowIncoming says who may call on the public URL.
+	settingPublicAllowIncoming = "public-allow-incoming"
+	settingDescription         = "description"
+)
 
 // mcpWarnings returns a warning for each MCP server that next turns off and
 // old didn't, which the project's .mcp.json has no server for.

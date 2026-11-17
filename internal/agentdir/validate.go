@@ -264,12 +264,14 @@ func (c *Config) Validate() error {
 		add("--google-client-id and --google-client-secret go together: they are your Google app")
 	}
 	if c.Auth.GoogleClientID != "" && len(c.Policy.AllowEmails) == 0 {
-		add("--google-client-id needs --allow-email: people sign in with your Google app only when the agent allows their email")
+		errs = append(errs, errGoogleAppNeedsEmails)
 	}
 	errs = append(errs, c.Backup.validate()...)
 	errs = append(errs, c.Voice.validate()...)
 	return errors.Join(errs...)
 }
+
+var errGoogleAppNeedsEmails = errors.New("--google-client-id needs --allow-email: people sign in with your Google app only when the agent allows their email")
 
 // ToolKinds are the ACP tool kinds which --allow-tools and --deny-tools
 // match.
@@ -393,10 +395,38 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	return d.checkMachine(cfg, secrets, true)
+}
+
+// ConfigProblems is [Dir.CheckConfig] that checks the machine also for an
+// invalid cfg, so that it returns every problem at once.
+func (d Dir) ConfigProblems(cfg *Config, secrets Secrets) error {
+	invalid := cfg.Validate()
+	if invalid == nil {
+		return d.checkMachine(cfg, secrets, true)
+	}
+	return errors.Join(append(problems(invalid), problems(d.MachineProblems(cfg, secrets))...)...)
+}
+
+// MachineProblems returns the problems of cfg that depend on the machine:
+// mount sources that don't exist, mounts that expose the home directory,
+// and secrets that aren't stored. [Config.Validate] reports mount specs
+// that don't parse.
+func (d Dir) MachineProblems(cfg *Config, secrets Secrets) error {
+	return d.checkMachine(cfg, secrets, false)
+}
+
+// checkMachine is the part of [Dir.CheckConfig] that depends on the
+// machine: the mounts and the stored secrets. badMounts says whether to
+// report mount specs that don't parse.
+func (d Dir) checkMachine(cfg *Config, secrets Secrets, badMounts bool) error {
 	var errs []error
 	mounts, err := d.Mounts(cfg)
 	if err != nil {
-		return err
+		if badMounts {
+			return err
+		}
+		mounts = nil
 	}
 	seen := map[string]bool{}
 	for i, m := range mounts {
@@ -500,7 +530,8 @@ func (c *Config) secretRefs() []secretRef {
 	return refs
 }
 
-// referencedSecrets returns the names of the stored secrets cfg uses.
+// referencedSecrets returns the names of the stored secrets cfg uses. The
+// join token of a network counts while the agent has a network URL.
 func (c *Config) referencedSecrets() map[string]bool {
 	out := map[string]bool{}
 	for _, name := range c.Secrets {
@@ -508,6 +539,10 @@ func (c *Config) referencedSecrets() map[string]bool {
 	}
 	for _, ref := range c.secretRefs() {
 		out[strings.TrimPrefix(ref.value, SecretPrefix)] = true
+	}
+	if c.Network.URL() != "" {
+		out[SecretNetworkToken] = true
+		out[SecretRelayToken] = true
 	}
 	return out
 }
