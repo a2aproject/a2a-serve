@@ -890,3 +890,42 @@ func TestRestoreDirIsIgnoredByGitWhileExtracting(t *testing.T) {
 		t.Fatalf("Restore() error = %v, want %v", err, context.Canceled)
 	}
 }
+
+func TestPruneRemovesOldPartialSnapshots(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	dest, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	files := map[string]time.Time{
+		"coder-20261110T110000Z.a2abak":           now.Add(-time.Hour),
+		".tmp-coder-20261108T120000Z.a2abak123":   now.Add(-48 * time.Hour),
+		".tmp-coder-20261110T110000Z.a2abak456":   now.Add(-time.Hour),
+		".tmp-coder-x-20261108T120000Z.a2abak789": now.Add(-48 * time.Hour),
+	}
+	for name, mtime := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := Prune(ctx, dest, "coder", now, 7*24*time.Hour); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	names, err := dest.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".tmp-coder-20261110T110000Z.a2abak456", ".tmp-coder-x-20261108T120000Z.a2abak789", "coder-20261110T110000Z.a2abak"}
+	if diff := cmp.Diff(want, names); diff != "" {
+		t.Fatalf("Prune() kept wrong files (-want +got) diff = %s", diff)
+	}
+}

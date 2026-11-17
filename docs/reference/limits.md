@@ -85,6 +85,12 @@ This page lists the limits, caps and timeouts of the server and the relay. You r
 | `@every` interval | 1 minute or more |
 | Schedules the agent creates for one person | 50, with runs at least 5 minutes apart. `a2a-serve schedule add` has neither limit. |
 
+## Backups
+
+| Limit | Value |
+| --- | --- |
+| Partial snapshot an interrupted backup left in a directory | Removed by the first backup after 1 day |
+
 ## Guests
 
 | Limit | Value |

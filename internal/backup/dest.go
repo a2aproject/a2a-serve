@@ -26,6 +26,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
@@ -96,11 +97,15 @@ func CLI(to string) string {
 
 type dirDest string
 
+// partialPrefix starts the names of the files a directory destination
+// writes a snapshot to before renaming it.
+const partialPrefix = ".tmp-"
+
 func (d dirDest) Put(_ context.Context, name string, r io.Reader) error {
 	if err := os.MkdirAll(string(d), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(string(d), ".tmp-"+name)
+	tmp, err := os.CreateTemp(string(d), partialPrefix+name)
 	if err != nil {
 		return err
 	}
@@ -140,6 +145,38 @@ func (d dirDest) List(context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// removePartial removes the partial snapshots of agent last written before
+// olderThan, which interrupted backups left.
+func (d dirDest) removePartial(agent string, olderThan time.Time) error {
+	entries, err := os.ReadDir(string(d))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), partialPrefix)
+		i := strings.LastIndex(rest, Ext)
+		if !ok || i < 0 || !e.Type().IsRegular() {
+			continue
+		}
+		if s, ok := parseName(rest[:i+len(Ext)]); !ok || s.Agent != agent {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if info.ModTime().Before(olderThan) {
+			errs = append(errs, os.Remove(filepath.Join(string(d), e.Name())))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (d dirDest) Get(_ context.Context, name string) (io.ReadCloser, error) {

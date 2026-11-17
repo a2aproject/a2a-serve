@@ -49,8 +49,9 @@ a2a-serve backup now
 
 Recreate an agent's .a2a directory from a snapshot taken by
 "a2a-serve backup now" or the running agent: its database, config, secrets,
-recipe.lock and agent home directory. The latest snapshot is used unless
---snapshot names one.
+recipe.lock and agent home directory. The latest snapshot in the
+destination, of any agent, is used unless --snapshot names one, so a
+destination that several agents share needs --snapshot.
 
 The directory must have no .a2a, or a .a2a that holds only config.yaml,
 recipe.lock or .gitignore, such as those a repository commits. Restore keeps

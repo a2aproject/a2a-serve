@@ -142,16 +142,29 @@ func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.T
 	return snap, nil
 }
 
+// partialAge is how old a partial snapshot of an interrupted backup is
+// when Prune removes it.
+const partialAge = 24 * time.Hour
+
+// partialRemover is a destination that keeps the partial snapshots of
+// interrupted backups.
+type partialRemover interface {
+	removePartial(agent string, olderThan time.Time) error
+}
+
 // Prune removes the agent's snapshots older than retention, except the
-// latest.
+// latest, and its partial snapshots older than a day.
 func Prune(ctx context.Context, dest Dest, agent string, now time.Time, retention time.Duration) error {
 	snaps, err := List(ctx, dest, agent)
-	if err != nil || len(snaps) == 0 {
+	if err != nil {
 		return err
 	}
 	var errs []error
-	for _, s := range snaps[:len(snaps)-1] {
-		if now.Sub(s.Taken) > retention {
+	if r, ok := dest.(partialRemover); ok {
+		errs = append(errs, r.removePartial(agent, now.Add(-partialAge)))
+	}
+	for i, s := range snaps {
+		if i < len(snaps)-1 && now.Sub(s.Taken) > retention {
 			errs = append(errs, dest.Delete(ctx, s.Name))
 		}
 	}
