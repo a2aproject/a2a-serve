@@ -136,3 +136,38 @@ func TestStartRemovesLeftoverRestores(t *testing.T) {
 		t.Fatalf("os.Stat(leftover restore) after start error = %v, want %v", err, fs.ErrNotExist)
 	}
 }
+
+func TestTakeBackupThroughControlSocket(t *testing.T) {
+	t.Parallel()
+	to := t.TempDir()
+	ts := startServer(t, serverOpts{
+		secrets: agentdir.Secrets{"BACKUP_KEY": "k"},
+		configure: func(c *agentdir.Config) {
+			c.Backup = agentdir.BackupConfig{To: to, Key: "secret:BACKUP_KEY", Interval: "2h"}
+		},
+		timings: func(tm *Timings) { tm.FirstBackupDelay = time.Hour },
+	})
+	client := controlapi.NewClient(ts.dir, controlapi.WithTimeout(2*time.Minute))
+	ctx := context.Background()
+
+	snap, err := client.TakeBackup(ctx)
+	if err != nil {
+		t.Fatalf("TakeBackup() error = %v", err)
+	}
+
+	st, err := client.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if st.Backup == nil || !st.Backup.Last.Equal(snap.Taken) || st.Backup.LastError != "" || time.Until(st.Backup.Next) < 90*time.Minute {
+		t.Fatalf("Status().Backup = %+v, want snapshot %s and the next one in 2h", st.Backup, snap.Name)
+	}
+	dest, err := backup.Open(to, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := backup.List(ctx, dest, "coder")
+	if err != nil || len(snaps) != 1 || snaps[0].Name != snap.Name {
+		t.Fatalf("List() = %v, %v, want %s", snaps, err, snap.Name)
+	}
+}

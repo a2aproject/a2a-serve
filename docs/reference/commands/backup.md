@@ -39,7 +39,8 @@ Aliases: `ls`
 
 ## a2a-serve backup now
 
-Take a snapshot now
+Take a snapshot now. A running agent takes it itself, so "a2a-serve status"
+shows it and the next scheduled snapshot comes an interval later.
 
 ```
 a2a-serve backup now

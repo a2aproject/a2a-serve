@@ -21,17 +21,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
-// backups takes the agent's snapshots at its backup interval and remembers
-// how the last one went, for status.
+// backups takes the agent's snapshots at its backup interval and when the
+// owner asks, and remembers how the last one went, for status.
 type backups struct {
-	mu     sync.Mutex
-	status controlapi.BackupStatus
+	// take serializes snapshots.
+	take sync.Mutex
+	// mu guards the fields below. dest is nil while the server takes no
+	// backups.
+	mu       sync.Mutex
+	status   controlapi.BackupStatus
+	dest     backup.Dest
+	cfg      backup.Config
+	interval time.Duration
+	// moved wakes the schedule when a snapshot moved the next one.
+	moved chan struct{}
 }
 
 func (b *backups) get() *controlapi.BackupStatus {
@@ -63,6 +71,10 @@ func (b *backups) record(snap backup.Snapshot, err error) {
 	})
 }
 
+// errNotDue is returned for a scheduled snapshot that another snapshot
+// moved to later.
+var errNotDue = errors.New("the next snapshot is not due yet")
+
 // startBackups reports the backup destination in status right away, and
 // takes snapshots in the background until ctx ends.
 func (s *Server) startBackups(ctx context.Context) {
@@ -75,44 +87,84 @@ func (s *Server) startBackups(ctx context.Context) {
 		s.logf("! backups are off: %v", err)
 		return
 	}
-	next := time.Now().Add(s.timings.FirstBackupDelay)
-	s.backups.update(func(st *controlapi.BackupStatus) {
-		st.To = cfg.Backup.To
-		st.Next = next
-	})
-	s.background.Go(func() { s.runBackups(ctx, cfg, dest, bcfg, next) })
+	moved := make(chan struct{}, 1)
+	b := &s.backups
+	b.mu.Lock()
+	b.status.To, b.status.Next = cfg.Backup.To, time.Now().Add(s.timings.FirstBackupDelay)
+	b.dest, b.cfg, b.interval, b.moved = dest, bcfg, cfg.Backup.BackupInterval(), moved
+	b.mu.Unlock()
+	s.background.Go(func() { s.runBackups(ctx, moved) })
 }
 
-// runBackups takes snapshots until ctx ends. The first one is due an
-// interval after the latest stored snapshot.
-func (s *Server) runBackups(ctx context.Context, cfg *agentdir.Config, dest backup.Dest, bcfg backup.Config, next time.Time) {
-	interval := cfg.Backup.BackupInterval()
-	snaps, err := backup.List(ctx, dest, bcfg.Agent)
+// runBackups takes snapshots when they are due until ctx ends. The first
+// one is due an interval after the latest stored snapshot.
+func (s *Server) runBackups(ctx context.Context, moved <-chan struct{}) {
+	b := &s.backups
+	b.mu.Lock()
+	dest, agent, to, interval := b.dest, b.cfg.Agent, b.status.To, b.interval
+	b.mu.Unlock()
+	snaps, err := backup.List(ctx, dest, agent)
 	switch {
 	case err != nil:
-		s.logf("! listing backup snapshots in %s: %v", cfg.Backup.To, err)
+		s.logf("! listing backup snapshots in %s: %v", to, err)
 	case len(snaps) > 0:
 		last := snaps[len(snaps)-1].Taken
-		s.backups.update(func(st *controlapi.BackupStatus) { st.Last = last })
-		next = maxTime(next, last.Add(interval))
+		b.update(func(st *controlapi.BackupStatus) {
+			st.Last = last
+			st.Next = maxTime(st.Next, last.Add(interval))
+		})
 	}
 	for {
-		s.backups.update(func(st *controlapi.BackupStatus) { st.Next = next })
+		b.mu.Lock()
+		next := b.status.Next
+		b.mu.Unlock()
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(time.Until(next)):
+		case <-moved:
+			timer.Stop()
+			continue
+		case <-timer.C:
 		}
-		snap, err := backup.Take(ctx, s.dir, dest, bcfg, time.Now())
+		_, err := s.takeBackup(ctx, true)
 		if ctx.Err() != nil {
 			return
 		}
-		s.backups.record(snap, err)
-		if err != nil {
-			slog.Error("taking a backup snapshot", "to", cfg.Backup.To, "error", err)
+		if err != nil && !errors.Is(err, errNotDue) {
+			slog.Error("taking a backup snapshot", "to", to, "error", err)
 		}
-		next = time.Now().Add(interval)
 	}
+}
+
+// takeBackup takes a snapshot, records it for status and moves the next
+// scheduled one an interval later. A scheduled snapshot that another one
+// moved returns errNotDue.
+func (s *Server) takeBackup(ctx context.Context, scheduled bool) (backup.Snapshot, error) {
+	b := &s.backups
+	b.take.Lock()
+	defer b.take.Unlock()
+	b.mu.Lock()
+	dest, cfg, interval, next, moved := b.dest, b.cfg, b.interval, b.status.Next, b.moved
+	b.mu.Unlock()
+	if dest == nil {
+		return backup.Snapshot{}, agenterr.Conflictf("the running agent takes no backups; apply the backup settings with `a2a-serve restart`")
+	}
+	if scheduled && time.Now().Before(next) {
+		return backup.Snapshot{}, errNotDue
+	}
+	snap, err := backup.Take(ctx, s.dir, dest, cfg, time.Now())
+	if ctx.Err() != nil {
+		return snap, err
+	}
+	b.record(snap, err)
+	b.update(func(st *controlapi.BackupStatus) { st.Next = time.Now().Add(interval) })
+	select {
+	case moved <- struct{}{}:
+	default:
+	}
+	return snap, err
 }
 
 func maxTime(a, b time.Time) time.Time {

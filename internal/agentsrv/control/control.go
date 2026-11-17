@@ -18,12 +18,14 @@ package control
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -53,6 +55,8 @@ type Deps struct {
 	Ads *gossip.Table
 	// InspectorLogin returns the path which logs in to the inspector once.
 	InspectorLogin func() string
+	// TakeBackup takes a snapshot now, as backup.Take does.
+	TakeBackup func(ctx context.Context) (backup.Snapshot, error)
 }
 
 type api struct{ deps Deps }
@@ -86,6 +90,7 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("POST /inspector/login", a.inspectorLogin)
 	mux.HandleFunc("GET /config", a.config)
 	mux.HandleFunc("POST /config/reload", a.reloadConfig)
+	mux.HandleFunc("POST /backups", a.takeBackup)
 	return mux
 }
 
@@ -269,4 +274,14 @@ func (a *api) config(w http.ResponseWriter, _ *http.Request) {
 func (a *api) reloadConfig(w http.ResponseWriter, r *http.Request) {
 	err := a.deps.ReloadConfig(r.Context())
 	reply(w, controlapi.ReloadResponse{Applied: agentdir.LiveSettings()}, err)
+}
+
+func (a *api) takeBackup(w http.ResponseWriter, r *http.Request) {
+	snap, err := a.deps.TakeBackup(r.Context())
+	var retention *backup.RetentionError
+	if errors.As(err, &retention) {
+		reply(w, controlapi.BackupResponse{Snapshot: retention.Snapshot, RetentionError: retention.Err.Error()}, nil)
+		return
+	}
+	reply(w, controlapi.BackupResponse{Snapshot: snap}, err)
 }

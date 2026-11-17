@@ -13,7 +13,7 @@ a2a-serve backup list
 - `--backup` is a directory, `gs://bucket/prefix` or `s3://bucket/prefix`. Cloud Storage and S3 use the `gcloud` and `aws` CLIs and their usual credentials.
 - Give each agent a prefix of its own, such as `gs://my-bucket/agents/<agent>`. A restore takes the latest snapshot in the destination, of any agent.
 - Keep a copy of `--backup-key` somewhere other than the backups. A restore needs it.
-- A running agent takes a snapshot every `--backup-interval` and removes snapshots older than `--backup-retention`. The destination needs permission to delete objects for that. `a2a-serve status` shows a failure until the next successful backup. The [command reference](../reference/commands/config.md#a2a-serve-config-set) lists the defaults.
+- A running agent takes a snapshot every `--backup-interval` and removes snapshots older than `--backup-retention`. The destination needs permission to delete objects for that. `a2a-serve status` shows a failure until the next successful backup. On a running agent, `a2a-serve backup now` counts as one, and the next scheduled snapshot comes an interval later. The [command reference](../reference/commands/config.md#a2a-serve-config-set) lists the defaults.
 - A snapshot doesn't include the workspace, which is usually in git. It also leaves out the private copies of the workspace that members get with [`--storage own`](sandbox.md#set-what-a-pairing-gets), so a restore loses the work in them that isn't committed and pushed.
 - A snapshot includes `.a2a/recipe.lock`, so `a2a-serve recipe` can update a restored agent that came from a [recipe](recipes.md).
 
