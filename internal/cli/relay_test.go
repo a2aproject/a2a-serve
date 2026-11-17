@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshbackend"
+	"github.com/a2aproject/a2a-serve/internal/relay/slimbackend"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -186,6 +188,42 @@ func TestRelayInviteLetsBackARemovedAgent(t *testing.T) {
 	}
 	if got := m.Banned(); len(got) != 0 {
 		t.Fatalf("relay invite left %v banned, want none", got)
+	}
+}
+
+// slimRelay serves the control API of a relay that runs SLIM.
+type slimRelay struct{ url string }
+
+func (r *slimRelay) Status(context.Context) (*control.Status, error) {
+	return &control.Status{URL: r.url, Versions: control.Versions{Backend: slimbackend.Name}, Join: "invites"}, nil
+}
+
+func (r *slimRelay) Invite(_ context.Context, req control.InviteRequest) (*control.Invite, error) {
+	return &control.Invite{ID: "ab12", Name: req.Name, Token: "slim-inv-1", Expires: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC), URL: r.url}, nil
+}
+
+func (r *slimRelay) Members(context.Context, bool) ([]control.Member, error) { return nil, nil }
+
+func (r *slimRelay) Remove(context.Context, control.RemoveRequest) (*control.RemoveResponse, error) {
+	return &control.RemoveResponse{}, nil
+}
+
+func TestRelayInviteOnASLIMRelay(t *testing.T) {
+	t.Parallel()
+	svc := &slimRelay{}
+	h := control.RequireToken(relayAdminToken, backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now), control.Handler(svc, nil))
+	srv := httptest.NewServer(http.StripPrefix(control.RemotePath, h))
+	t.Cleanup(srv.Close)
+	svc.url = srv.URL
+
+	got, err := runRelayCMD(t, "relay", "invite", "coder", "--url", srv.URL, "--admin-token", "-")
+
+	if err != nil {
+		t.Fatalf("relay invite error = %v", err)
+	}
+	want := "invite coder for " + srv.URL + ", one agent, until 2026-11-06 09:00 UTC:\n  slim-inv-1\n! agents can't join a SLIM relay yet; joining SLIM relays is planned\n"
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("relay invite wrong output (-want +got) diff = %s", diff)
 	}
 }
 

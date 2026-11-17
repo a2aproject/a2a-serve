@@ -1050,29 +1050,30 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 }
 
 // Commands returns the commands which recreate the agent in an empty
-// directory: `a2a-serve start`, then `config set` for the settings only it
-// takes, then `messenger add` for each messenger. Secrets are passed as
-// env:NAME; stored is used to tell which network secrets are set.
+// directory: `config set --agent` with the settings, then `messenger add`
+// for each messenger, then `config set --owner-chat`, which needs its
+// messenger, and `a2a-serve start` last. Secrets are passed as env:NAME;
+// stored is used to tell which network secrets are set.
 func (c *Config) Commands(stored Secrets) [][]string {
 	h := c.Harness
 	if !slices.Contains(Harnesses, h) {
 		h = HarnessACP
 	}
-	start := []string{"a2a-serve", "start", h}
-	set := []string{"a2a-serve", "config", "set"}
+	set := []string{"a2a-serve", "config", "set", "--agent", h}
+	ownerChat := []string{"a2a-serve", "config", "set"}
 	messengers := map[string][]string{}
 	for _, f := range fields {
 		if f.flag == "name" && c.Name == "" {
 			continue
 		}
 		switch {
+		case f.flag == "owner-chat":
+			ownerChat = appendFlag(ownerChat, f.flag, f.get(c)...)
 		case f.secretOnly:
 			if stored[f.secret] != "" {
 				set = appendFlag(set, f.flag, SecretPrefix+f.secret)
 			}
-		case f.place == placeCore:
-			start = appendFlag(start, f.flag, f.get(c)...)
-		case f.place == placeOperational:
+		case f.place == placeCore, f.place == placeOperational:
 			set = appendFlag(set, f.flag, f.get(c)...)
 		case f.place == placeMessenger:
 			kind, _, _ := strings.Cut(f.flag, "-")
@@ -1083,16 +1084,16 @@ func (c *Config) Commands(stored Secrets) [][]string {
 			messengers[kind] = appendFlag(messengers[kind], flag, f.get(c)...)
 		}
 	}
-	out := [][]string{start}
-	if len(set) > 3 {
-		out = append(out, set)
-	}
+	out := [][]string{set}
 	for _, kind := range MessengerKinds {
 		if args := messengers[kind]; len(args) > 0 {
 			out = append(out, append([]string{"a2a-serve", "messenger", "add", kind}, args...))
 		}
 	}
-	return out
+	if len(ownerChat) > 3 {
+		out = append(out, ownerChat)
+	}
+	return append(out, []string{"a2a-serve", "start"})
 }
 
 // appendFlag appends --flag for each value, with stored secrets as env:NAME.

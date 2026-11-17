@@ -15,6 +15,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -58,9 +59,9 @@ func TestRestartForeground(t *testing.T) {
 			serveControl(t, dir, f)
 
 			err := Restart(t.Context(), dir, controlapi.NewClient(dir), tc.services, false, io.Discard)
-			const want = "press Ctrl-C there and run `a2a-serve start` again"
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("Restart() error = %v, want %q", err, want)
+
+			if !errors.Is(err, ErrForeground) && !errors.Is(err, ErrNoTerminal) {
+				t.Fatalf("Restart() error = %v, want %v or %v", err, ErrForeground, ErrNoTerminal)
 			}
 			if slices.Contains(f.Calls(), "POST /stop") {
 				t.Fatalf("Restart() stopped the agent")

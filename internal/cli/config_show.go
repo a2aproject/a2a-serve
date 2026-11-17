@@ -63,7 +63,11 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	if err != nil {
 		return err
 	}
-	if err := printConfigView(cfg, v, f); err != nil {
+	hint := ""
+	if len(v.Pending) > 0 {
+		hint = restartHint(cmd.Context(), sf, d)
+	}
+	if err := printConfigView(cfg, v, f, hint); err != nil {
 		return err
 	}
 	if v.Invalid != "" {
@@ -72,7 +76,7 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	return nil
 }
 
-func printConfigView(cfg *globalConfig, v *agentctl.View, f showFlags) error {
+func printConfigView(cfg *globalConfig, v *agentctl.View, f showFlags, hint string) error {
 	defaults := v.Defaults
 	if !f.defaults {
 		v.Defaults = nil
@@ -94,7 +98,7 @@ func printConfigView(cfg *globalConfig, v *agentctl.View, f showFlags) error {
 		return cfg.PrintJSON(v)
 	}
 	v.Defaults = defaults
-	_, err := fmt.Fprint(cfg.Out, renderConfig(v, f.defaults))
+	_, err := fmt.Fprint(cfg.Out, renderConfig(v, f.defaults, hint))
 	return err
 }
 
@@ -108,7 +112,7 @@ const minLabelWidth = 12
 // renderConfig formats the settings grouped like the flags of `a2a-serve
 // <harness>`, then each setting the groups leave out under its name. all
 // also lists settings left unset.
-func renderConfig(v *agentctl.View, all bool) string {
+func renderConfig(v *agentctl.View, all bool, hint string) string {
 	c, def := v.Config, v.Defaults
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%-38s %s\n", fmt.Sprintf("%s (%s)", c.Name, c.Harness), v.Path)
@@ -231,7 +235,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 		fmt.Fprintf(&sb, "✗ invalid: %s\n", strings.ReplaceAll(v.Invalid, "\n", "; "))
 	}
 	if len(v.Pending) > 0 {
-		fmt.Fprintf(&sb, "! restart to apply %s: a2a-serve restart\n", strings.Join(v.Pending, ", "))
+		fmt.Fprintf(&sb, "! restart to apply %s: %s\n", strings.Join(v.Pending, ", "), hint)
 	}
 	return sb.String()
 }

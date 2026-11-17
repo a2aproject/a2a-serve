@@ -48,6 +48,7 @@ func TestValidate(t *testing.T) {
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
 		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, a network URL such as https://relay.example.com, or none`},
 		{name: "removed lan", modify: func(c *Config) { c.Network.Private = "lan" }, wantErr: `invalid --private "lan": lan was removed`},
+		{name: "private none in the file", modify: func(c *Config) { c.Network.Private = "none" }, wantErr: `invalid --private "none": remove the key from config.yaml for no network`},
 		{name: "public", modify: func(c *Config) { c.Network.Public = "lan" }, wantErr: `invalid --public "lan"`},
 		{name: "mount", modify: func(c *Config) { c.Mounts = []string{"/a:rel"} }, wantErr: `invalid --mount "/a:rel": destination must be absolute`},
 		{name: "workspace", modify: func(c *Config) { c.Workspace = "/a:/b:/c" }, wantErr: `invalid --workspace "/a:/b:/c": want src[:dst][:ro]`},

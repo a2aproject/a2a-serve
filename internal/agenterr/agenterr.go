@@ -152,6 +152,8 @@ const (
 	HintStopUnanswered Hint = "stop-unanswered"
 	// HintMessengerList lists the messengers.
 	HintMessengerList Hint = "messenger-list"
+	// HintAgentStartTimeout checks the agent that didn't start in time.
+	HintAgentStartTimeout Hint = "agent-start-timeout"
 )
 
 // HintedError is an error with a hint at how to fix it.

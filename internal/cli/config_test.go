@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/shlex"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
@@ -36,7 +37,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -148,8 +151,8 @@ func TestConfigCommands(t *testing.T) {
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
 		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description          none", "messengers           none", "task-ttl             30d (default)", "contact-refresh      1h (default)", "model                none"}},
 		{name: "config defaults", args: []string{"config", "--defaults"}, wantOut: []string{"description          none", "messengers           none", "task-ttl             30d (default)", "contact-refresh      1h (default)", "model                none"}},
-		{name: "config as command", args: []string{"config", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
-		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
+		{name: "config as command", args: []string{"config", "--as-command"}, wantOut: []string{"a2a-serve config set --agent opencode --name coder --env DEBUG=1 --allow-tools read\na2a-serve start\n"}},
+		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve config set --agent opencode --name coder --env DEBUG=1 --allow-tools read\na2a-serve start\n"}},
 		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
 	}
 	for _, tc := range tests {
@@ -355,8 +358,12 @@ func TestConfigRunningAgent(t *testing.T) {
 		t.Fatalf("running description = %q, want %q", running.Description, "reviews code")
 	}
 
+	hint := lifecycle.RestartHint(t.Context(), d, client, service.System{})
+	if hint == "a2a-serve restart" {
+		t.Fatalf("lifecycle.RestartHint() of a foreground agent = %q, want another way to restart", hint)
+	}
 	out, err = runCMD(t, "config", "set", "--dir", dir, "--env", "DEBUG=1")
-	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: a2a-serve restart") {
+	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: "+hint) {
 		t.Fatalf("a2a-serve config set --env = %q, %v, want a restart notice", out, err)
 	}
 	out, err = runCMD(t, "-o", "json", "config", "set", "--dir", dir, "--env", "TRACE=1")
@@ -373,14 +380,14 @@ func TestConfigRunningAgent(t *testing.T) {
 		t.Fatalf("a2a-serve config set --env -o json restart wrong result (-want +got) diff = %s", diff)
 	}
 	out, err = runCMD(t, "config", "--dir", dir)
-	if err != nil || !strings.Contains(out, "! restart to apply env: a2a-serve restart") {
+	if err != nil || !strings.Contains(out, "! restart to apply env: "+hint) {
 		t.Fatalf("a2a-serve config = %q, %v, want env pending", out, err)
 	}
 	out, err = runCMD(t, "status", "--dir", dir)
 	if err != nil || !strings.Contains(out, "pending  env (a2a-serve restart)") {
 		t.Fatalf("a2a-serve status = %q, %v, want env pending", out, err)
 	}
-	if _, err := runCMD(t, "restart", "--dir", dir); err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
+	if _, err := runCMD(t, "restart", "--dir", dir); !errors.Is(err, lifecycle.ErrForeground) && !errors.Is(err, lifecycle.ErrNoTerminal) {
 		t.Fatalf("a2a-serve restart of a foreground agent error = %v, want a refusal", err)
 	}
 	for _, args := range [][]string{
@@ -388,7 +395,7 @@ func TestConfigRunningAgent(t *testing.T) {
 		{"config", "unset", "--dir", dir, "private", "--restart"},
 	} {
 		out, err := runCMD(t, args...)
-		if err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
+		if !errors.Is(err, lifecycle.ErrForeground) && !errors.Is(err, lifecycle.ErrNoTerminal) {
 			t.Fatalf("a2a-serve %s with env pending = %q, %v, want a restart refused for a foreground agent", strings.Join(args, " "), out, err)
 		}
 	}
@@ -710,6 +717,39 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	}
 }
 
+func TestConfigAsCommandRecreatesTheAgent(t *testing.T) {
+	t.Parallel()
+	want := &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local", Env: []string{"DEBUG=1"}, Limits: agentdir.LimitsConfig{Memory: "8g"}, Approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}}
+	src := newTestAgent(t, want)
+	out, err := runCMD(t, "config", "show", "--as-command", "--dir", src.Root)
+	if err != nil {
+		t.Fatalf("a2a-serve config show --as-command error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if last := lines[len(lines)-1]; last != "a2a-serve start" {
+		t.Fatalf("a2a-serve config show --as-command last line = %q, want %q", last, "a2a-serve start")
+	}
+	dst := newTestAgent(t, nil)
+
+	for _, line := range lines[:len(lines)-1] {
+		args, err := shlex.Split(line)
+		if err != nil {
+			t.Fatalf("shlex.Split(%q) error = %v", line, err)
+		}
+		if _, err := runCMD(t, append(args[1:], "--dir", dst.Root)...); err != nil {
+			t.Fatalf("%s error = %v", line, err)
+		}
+	}
+
+	got, err := dst.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("config of the commands of a2a-serve config show --as-command wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestConfigSetWithoutAgentHintsAtAgentFlag(t *testing.T) {
 	t.Parallel()
 	_, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g")
@@ -815,7 +855,7 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 			t.Parallel()
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
-			if err := printConfigResult(cfg, tc.res, false); err != nil {
+			if err := printConfigResult(cfg, tc.res, ""); err != nil {
 				t.Fatalf("printConfigResult() error = %v", err)
 			}
 			got, _, _ := strings.Cut(buf.String(), "✓")
@@ -831,7 +871,7 @@ func TestPrintConfigResultRemovedKeys(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
 
-	if err := printConfigResult(cfg, &agentctl.Result{Name: "coder", Path: "/a/.a2a/config.yaml", RemovedKeys: []string{"sandbx"}}, false); err != nil {
+	if err := printConfigResult(cfg, &agentctl.Result{Name: "coder", Path: "/a/.a2a/config.yaml", RemovedKeys: []string{"sandbx"}}, ""); err != nil {
 		t.Fatalf("printConfigResult() error = %v", err)
 	}
 
@@ -844,10 +884,10 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 	t.Parallel()
 	access := &controlapi.Access{Summary: []string{"anyone"}, Sandbox: []string{"guests: read-only workspace, no secrets"}, GuestNote: "guests' agent gets no key"}
 	tests := []struct {
-		name       string
-		res        *agentctl.Result
-		restarting bool
-		want       string
+		name string
+		res  *agentctl.Result
+		hint string
+		want string
 	}{
 		{
 			name: "guest note",
@@ -855,10 +895,15 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 			want: "  no changes\nwho may call:\n  anyone\nwhat their agent containers get:\n  guests: read-only workspace, no secrets\n! guests' agent gets no key\n",
 		},
 		{
-			name:       "restarting",
-			res:        &agentctl.Result{Name: "coder", Restart: []string{"secret"}},
-			restarting: true,
-			want:       "  no changes\n",
+			name: "restarting",
+			res:  &agentctl.Result{Name: "coder", Restart: []string{"secret"}},
+			want: "  no changes\n",
+		},
+		{
+			name: "foreground agent",
+			res:  &agentctl.Result{Name: "coder", Restart: []string{"secret"}},
+			hint: "press Ctrl-C in its terminal and run `a2a-serve start`",
+			want: "  no changes\n! coder is running; restart to apply secret: press Ctrl-C in its terminal and run `a2a-serve start`\n",
 		},
 	}
 	for _, tc := range tests {
@@ -866,7 +911,7 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 			t.Parallel()
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
-			if err := printConfigResult(cfg, tc.res, tc.restarting); err != nil {
+			if err := printConfigResult(cfg, tc.res, tc.hint); err != nil {
 				t.Fatalf("printConfigResult() error = %v", err)
 			}
 			if diff := cmp.Diff(tc.want, buf.String()); diff != "" {
@@ -900,7 +945,7 @@ func TestPrintStartRunning(t *testing.T) {
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
 
-			err := printStartRunning(cfg, tc.res)
+			err := printStartRunning(cfg, tc.res, "a2a-serve restart")
 
 			if err != nil {
 				t.Fatalf("printStartRunning() error = %v", err)

@@ -88,13 +88,13 @@ workspace unless --allow-broad-mount names it.
 			if res.Running {
 				if mode.service {
 					if err := lifecycle.CheckServiceStart(d, service.System{}, res.Name); err != nil {
-						if perr := printConfigResult(cfg, res, false); perr != nil {
+						if perr := printConfigResult(cfg, res, restartHint(cmd.Context(), sf, d)); perr != nil {
 							return perr
 						}
 						return err
 					}
 				}
-				return printStartRunning(cfg, res)
+				return printStartRunning(cfg, res, restartHint(cmd.Context(), sf, d))
 			}
 			nameNote := agentdir.NameNote(s.Name)
 			if !res.Created {
@@ -107,7 +107,7 @@ workspace unless --allow-broad-mount names it.
 						shown.Warnings = []string{nameNote}
 					}
 				}
-				if err := printConfigResult(cfg, &shown, false); err != nil {
+				if err := printConfigResult(cfg, &shown, ""); err != nil {
 					return err
 				}
 			} else if nameNote != "" {

@@ -115,7 +115,10 @@ func (c *Config) Validate() error {
 		add("no name: set one with --name")
 	}
 	checkNetwork := func(flag, v string) {
-		if v != "" && v != NetworkTailscale && !IsNetworkURL(v) {
+		switch {
+		case v == NetworkNone:
+			invalid(flag, v, "remove the key from config.yaml for no network")
+		case v != "" && v != NetworkTailscale && !IsNetworkURL(v):
 			invalid(flag, v, "want %s, a network URL such as https://relay.example.com, or none", NetworkTailscale)
 		}
 	}

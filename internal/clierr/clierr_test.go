@@ -284,6 +284,17 @@ func TestClassifyTimeoutHint(t *testing.T) {
 	}
 }
 
+func TestClassifyAgentStartTimeoutHint(t *testing.T) {
+	t.Parallel()
+	err := agenterr.WithHint(fmt.Errorf("starting claude: initializing acp agent: %w", context.DeadlineExceeded), agenterr.HintAgentStartTimeout, "")
+
+	got := Classify(err)
+
+	if want := "the agent didn't answer within a minute; check that its command runs, with `a2a-serve doctor`, then run `a2a-serve start` again"; got.Hint != want {
+		t.Fatalf("Classify(agent start timeout).Hint = %q, want %q", got.Hint, want)
+	}
+}
+
 func TestClassifyWordsHint(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

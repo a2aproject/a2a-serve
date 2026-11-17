@@ -51,7 +51,8 @@ func newRelayRunCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 		Long: `Run a relay: one process that serves HTTP on --listen and runs a network
 behind it on loopback, at the version this a2a-serve pins: Agent Mesh's
 agentmesh-one, or with --backend slim a SLIM node. The first run creates the
-relay directory here and downloads that program.
+relay directory here and downloads that program. Agents can't join a SLIM
+relay yet; that is planned.
 
 The relay needs an address that doesn't change, since agents and pairing
 tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
@@ -111,7 +112,7 @@ invites only, and keeps its members in the relay directory.
 	fs.StringVar(&f.dir, "dir", "", "Relay directory (default: the nearest relay directory up from the current one, or else the current directory)")
 	fs.StringVar(&s.URL, "url", "", "The relay's address, which agents join: https://..., or http:// on loopback")
 	fs.StringVar(&s.Listen, "listen", "", "Address to serve HTTP on (default "+relaydir.DefaultListen+")")
-	fs.StringVar(&s.Backend, "backend", "", "The network the relay runs: "+relaydir.BackendAgentMesh+", the default, or "+relaydir.BackendSLIM+"; set on the first run")
+	fs.StringVar(&s.Backend, "backend", "", "The network the relay runs: "+relaydir.BackendAgentMesh+", the default, or "+relaydir.BackendSLIM+" (planned: agents can't join a SLIM relay yet); set on the first run")
 	fs.StringVar(&s.Tunnel, "tunnel", "", "Publish the relay through a Cloudflare quick tunnel (cloudflare, or none); needs cloudflared on PATH")
 	fs.StringVar(&s.AdminToken, "admin-token", "", "The relay's admin token, at least 32 characters, as a "+flagparse.SecretSyntax+" (default: generated on the first run)")
 	fs.StringVar(&s.Database, "database", "", "A PostgreSQL DSN, as a "+flagparse.SecretSyntax+" (default: SQLite in the relay directory; none goes back to it)")
@@ -120,7 +121,7 @@ invites only, and keeps its members in the relay directory.
 	fs.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of the relay's Google app, as a "+flagparse.SecretSyntax)
 	fs.BoolVar(&runService, "service", false, "Install and start the relay as a launchd or systemd user service")
 	must(cmd.RegisterFlagCompletionFunc("tunnel", fixedCompletions(relaydir.TunnelCloudflare, "none")))
-	must(cmd.RegisterFlagCompletionFunc("backend", fixedCompletions(relaydir.BackendAgentMesh, relaydir.BackendSLIM)))
+	must(cmd.RegisterFlagCompletionFunc("backend", fixedCompletions(relaydir.BackendAgentMesh, cobra.CompletionWithDesc(relaydir.BackendSLIM, "planned: agents can't join a SLIM relay yet"))))
 	return cmd
 }
 

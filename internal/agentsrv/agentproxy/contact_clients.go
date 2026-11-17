@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -162,7 +163,7 @@ func (cc *ContactClients) RefreshPeers(ctx context.Context) ([]network.PeerInfo,
 
 func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Duration) ([]network.PeerInfo, error) {
 	if cc.private == nil {
-		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
+		return nil, agenterr.Invalidf("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
 	}
 	if err := network.HealthOf(cc.private).Err(); err != nil {
 		return nil, err

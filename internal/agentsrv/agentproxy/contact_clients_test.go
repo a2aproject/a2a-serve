@@ -37,6 +37,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/egress"
@@ -662,6 +663,8 @@ func TestContactClientsLocate(t *testing.T) {
 		wantURL   string
 		wantVia   string
 		wantError string
+		// wantRequest is set when the error is the caller's to fix.
+		wantRequest bool
 	}{
 		{name: "explicit URL without a private network", agent: "coder", url: "https://coder.test", wantURL: "https://coder.test", wantVia: ViaDirect},
 		{name: "explicit URL of a peer", private: peers, agent: "ben", url: "http://ben.test:4000", wantURL: "http://ben.test:4000", wantVia: ViaPrivate},
@@ -669,7 +672,7 @@ func TestContactClientsLocate(t *testing.T) {
 		{name: "peer by name", private: peers, agent: "ben", wantURL: "http://ben.test:4000/", wantVia: ViaPrivate},
 		{name: "peer by name in other case", private: peers, agent: "BEN", wantURL: "http://ben.test:4000/", wantVia: ViaPrivate},
 		{name: "unknown peer", private: peers, agent: "nobody", wantError: `no agent named "nobody" on the private network; pass its URL with --url`},
-		{name: "name without a private network", agent: "ben", wantError: "this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`"},
+		{name: "name without a private network", agent: "ben", wantError: "this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`", wantRequest: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -681,6 +684,9 @@ func TestContactClientsLocate(t *testing.T) {
 			if tc.wantError != "" {
 				if err == nil || err.Error() != tc.wantError {
 					t.Fatalf("ContactClients.locate() error = %v, want %q", err, tc.wantError)
+				}
+				if agenterr.IsRequest(err) != tc.wantRequest {
+					t.Fatalf("agenterr.IsRequest(ContactClients.locate() error) = %v, want %v", !tc.wantRequest, tc.wantRequest)
 				}
 				return
 			}

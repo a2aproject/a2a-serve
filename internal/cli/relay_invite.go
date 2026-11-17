@@ -23,6 +23,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/slimbackend"
 )
 
 func newRelayInviteCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
@@ -66,6 +67,15 @@ back. It joins again with its identity, so it keeps its URLs.
 			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(inv)
+			}
+			st, err := c.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if backend, _ := st.Versions.BackendOrDefault(); backend == slimbackend.Name {
+				_, err := fmt.Fprintf(cfg.Out, "invite %s for %s, one agent, until %s:\n  %s\n! agents can't join a SLIM relay yet; joining SLIM relays is planned\n",
+					inv.Name, inv.URL, inv.Expires.UTC().Format("2006-01-02 15:04 MST"), inv.Token)
+				return err
 			}
 			if _, err := fmt.Fprintf(cfg.Out, "invite %s for %s, one agent, until %s:\n  %s\non that agent: a2a-serve config set --private %s --public %s --network-token -\non a new agent: a2a-serve config set --agent <agent> --private %s --public %s --network-token -\n",
 				inv.Name, inv.URL, inv.Expires.UTC().Format("2006-01-02 15:04 MST"), inv.Token, inv.URL, inv.URL, inv.URL, inv.URL); err != nil {
