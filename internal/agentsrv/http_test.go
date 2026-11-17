@@ -457,7 +457,6 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	}
 
 	hitl := statusOf(t, http.MethodGet, ts.localURL()+"/hitl/unknown", "", nil)
-	download := statusOf(t, http.MethodGet, ts.localURL()+"/download/a2a-serve", "", nil)
 	owner := statusOf(t, http.MethodPost, ts.localURL()+"/", listTasksRPC, http.Header{"Content-Type": {"application/json"}, "Authorization": {bearer}})
 
 	if refused != http.StatusTooManyRequests {
@@ -465,9 +464,6 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	}
 	if hitl != http.StatusTooManyRequests {
 		t.Fatalf("GET /hitl/unknown while the client's pairing requests stall status = %d, want %d", hitl, http.StatusTooManyRequests)
-	}
-	if download != http.StatusTooManyRequests {
-		t.Fatalf("GET /download/a2a-serve while the client's pairing requests stall status = %d, want %d", download, http.StatusTooManyRequests)
 	}
 	if owner != http.StatusOK {
 		t.Fatalf("POST / of the owner while the client's pairing requests stall status = %d, want %d", owner, http.StatusOK)
@@ -540,21 +536,118 @@ func TestRelayCallersShareOnlyTheTotalUnauthenticatedLimit(t *testing.T) {
 
 func TestUnreadDownloadsGiveBackTheirRequests(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadTimeout = time.Second }})
-	for range httpserver.MaxUnauthenticatedPerClient {
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) {
+		tm.DownloadIdleTimeout = time.Second
+		tm.DownloadWait = time.Millisecond
+	}})
+	for range maxDownloadsPerClient {
 		if resp := startRequest(t, ts.localURL(), http.MethodGet, "/download/a2a-serve", nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET /download/a2a-serve status = %d, want %d", resp.StatusCode, http.StatusOK)
 		}
 	}
 
-	got := http.StatusTooManyRequests
-	for deadline := time.Now().Add(30 * time.Second); got == http.StatusTooManyRequests && time.Now().Before(deadline); {
-		got = statusOf(t, http.MethodGet, ts.localURL()+"/hitl/unknown", "", nil)
+	got := http.StatusServiceUnavailable
+	for deadline := time.Now().Add(30 * time.Second); got == http.StatusServiceUnavailable && time.Now().Before(deadline); {
+		got = statusOf(t, http.MethodGet, ts.localURL()+"/download/a2a-serve", "", nil)
 	}
 
-	if got == http.StatusTooManyRequests {
-		t.Fatalf("GET /hitl/unknown after the client's unread downloads timed out status = %d, want them to give back their requests", got)
+	if got != http.StatusOK {
+		t.Fatalf("GET /download/a2a-serve after the client's unread downloads stalled status = %d, want %d", got, http.StatusOK)
 	}
+}
+
+// sendRequest sends the request line and headers of a GET of path on a new
+// connection to u, which stays open until the test ends, and doesn't read
+// the response.
+func sendRequest(t *testing.T, u, path string) net.Conn {
+	t.Helper()
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", path, parsed.Host); err != nil {
+		t.Fatal(err)
+	}
+	return conn
+}
+
+func TestStalledDownloadsLeavePairingRoom(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadWait = time.Hour }})
+	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
+	if err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	for range maxDownloadsPerClient {
+		if resp := startRequest(t, ts.localURL(), http.MethodGet, "/download/a2a-serve", nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /download/a2a-serve status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	}
+	for range httpserver.MaxUnauthenticated {
+		sendRequest(t, ts.localURL(), "/download/a2a-serve")
+	}
+
+	got := statusOf(t, http.MethodPost, ts.localURL()+"/pair", `{"code":"`+code.Code+`"}`, http.Header{"Content-Type": {"application/json"}})
+
+	if got != http.StatusOK {
+		t.Fatalf("POST /pair while the client's downloads stall status = %d, want %d", got, http.StatusOK)
+	}
+}
+
+func TestDownloadsOverTheClientLimitWait(t *testing.T) {
+	t.Parallel()
+	const wait = 200 * time.Millisecond
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadWait = wait }})
+	var held []net.Conn
+	for range maxDownloadsPerClient {
+		conn := sendRequest(t, ts.localURL(), "/download/a2a-serve")
+		if resp := responseHead(t, conn); resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /download/a2a-serve status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+		held = append(held, conn)
+	}
+
+	start := time.Now()
+	refused := sendRequest(t, ts.localURL(), "/download/a2a-serve")
+	resp := responseHead(t, refused)
+	answered := time.Since(start)
+	waiting := sendRequest(t, ts.localURL(), "/download/a2a-serve")
+	if err := held[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+	served := responseHead(t, waiting)
+
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("GET /download/a2a-serve over the client's limit = %d with Retry-After %q, want %d with Retry-After", resp.StatusCode, resp.Header.Get("Retry-After"), http.StatusServiceUnavailable)
+	}
+	if answered < wait {
+		t.Fatalf("GET /download/a2a-serve over the client's limit answered after %v, want it to wait %v", answered, wait)
+	}
+	if served.StatusCode != http.StatusOK {
+		t.Fatalf("GET /download/a2a-serve once a download of the client ended status = %d, want %d", served.StatusCode, http.StatusOK)
+	}
+}
+
+// responseHead reads the head of the response on conn.
+func responseHead(t *testing.T, conn net.Conn) *http.Response {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("reading the response to a download: %v", err)
+	}
+	return resp
 }
 
 func TestMembersAndGuestsLeaveRequestsToTheOwner(t *testing.T) {

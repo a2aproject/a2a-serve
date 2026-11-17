@@ -79,6 +79,10 @@ type Timings struct {
 	// DownloadTimeout bounds writing a whole download of a binary, which
 	// callers fetch before they authenticate.
 	DownloadTimeout time.Duration
+	// DownloadIdleTimeout bounds each 64 KiB of a download, and DownloadWait
+	// how long a download over its limit waits for room.
+	DownloadIdleTimeout time.Duration
+	DownloadWait        time.Duration
 	// ResponseTimeout bounds writing a whole A2A response that isn't a
 	// stream, and IdleTimeout each 64 KiB of any A2A response. They bound
 	// how long a client that doesn't read holds its request.
@@ -116,6 +120,8 @@ func (t Timings) withDefaults() Timings {
 	t.NarrowedCancelGrace = cmp.Or(t.NarrowedCancelGrace, 10*time.Second)
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	t.DownloadTimeout = cmp.Or(t.DownloadTimeout, 10*time.Minute)
+	t.DownloadIdleTimeout = cmp.Or(t.DownloadIdleTimeout, time.Minute)
+	t.DownloadWait = cmp.Or(t.DownloadWait, 30*time.Second)
 	t.ResponseTimeout = cmp.Or(t.ResponseTimeout, 10*time.Minute)
 	t.IdleTimeout = cmp.Or(t.IdleTimeout, time.Minute)
 	return t

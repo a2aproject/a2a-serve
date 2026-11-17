@@ -117,6 +117,55 @@ func TestKeyedLimiter(t *testing.T) {
 	}
 }
 
+func TestKeyedLimiterWaitHandler(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	l := NewKeyedLimiter(1, 1, func(r *http.Request) string { return "a" })
+	block := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/block" {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+	serve := func(wait time.Duration, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		l.WaitHandler(wait, http.HandlerFunc(block)).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+	blocked := make(chan int, 1)
+	go func() { blocked <- serve(time.Minute, "/block").Code }()
+	<-entered
+
+	timedOut := serve(10*time.Millisecond, "/")
+	waited := make(chan int, 1)
+	go func() { waited <- serve(time.Minute, "/").Code }()
+	for !l.hasWaiting() {
+		time.Sleep(time.Millisecond)
+	}
+	overWaiting := serve(time.Minute, "/")
+	close(release)
+
+	if code := <-blocked; code != http.StatusOK {
+		t.Fatalf("KeyedLimiter.WaitHandler() blocking request status = %d, want %d", code, http.StatusOK)
+	}
+	if code := <-waited; code != http.StatusOK {
+		t.Fatalf("KeyedLimiter.WaitHandler() request waiting for room status = %d, want %d", code, http.StatusOK)
+	}
+	if overWaiting.Code != http.StatusServiceUnavailable {
+		t.Fatalf("KeyedLimiter.WaitHandler() request over the waiting limit status = %d, want %d", overWaiting.Code, http.StatusServiceUnavailable)
+	}
+	if timedOut.Code != http.StatusServiceUnavailable || timedOut.Header().Get("Retry-After") == "" {
+		t.Fatalf("KeyedLimiter.WaitHandler() request that waited too long = %d with Retry-After %q, want %d with Retry-After", timedOut.Code, timedOut.Header().Get("Retry-After"), http.StatusServiceUnavailable)
+	}
+}
+
+func (l *KeyedLimiter) hasWaiting() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.waiting > 0
+}
+
 func TestSharesHandler(t *testing.T) {
 	t.Parallel()
 	entered, release := make(chan struct{}), make(chan struct{})

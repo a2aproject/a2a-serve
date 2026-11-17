@@ -84,6 +84,11 @@ const (
 	maxPairBody = 4 << 10
 	// maxHITLBody bounds the form that answers a question at /hitl.
 	maxHITLBody = 4 << 10
+
+	// maxDownloads is how many downloads of a binary one listener serves at
+	// once, and maxDownloadsPerClient how many of those one client may hold.
+	maxDownloads          = 8
+	maxDownloadsPerClient = 2
 )
 
 // routes returns the HTTP handler of one listener.
@@ -110,9 +115,13 @@ func (s *Server) routes(l listener) http.Handler {
 	})
 	// Routes that serve callers before they authenticate share a pool of
 	// their own, limited for each client that the server can tell apart.
-	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
+	client := func(r *http.Request) string { return s.pairClient(r, l) }
+	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
+	// Downloads take long, so they get a pool of their own, which leaves
+	// the others room for pairing, sign-in and approvals.
+	downloads := httpserver.NewKeyedLimiter(maxDownloads, maxDownloadsPerClient, client)
 	download := func(h http.HandlerFunc) http.Handler {
-		return unauthenticated.Handler(httpserver.WriteTimeout(s.timings.DownloadTimeout, s.timings.DownloadTimeout, h))
+		return downloads.WaitHandler(s.timings.DownloadWait, httpserver.WriteTimeout(s.timings.DownloadTimeout, s.timings.DownloadIdleTimeout, h))
 	}
 	mux.Handle("GET /download/a2a", download(handleDownloadCLI))
 	mux.Handle("GET /download/a2a-serve", download(handleDownloadServe))
