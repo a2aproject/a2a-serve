@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -214,7 +215,7 @@ func (c *ChatTurns) firstSeen(ctx context.Context, in messenger.Inbound) bool {
 
 func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTicket) {
 	if t != nil {
-		defer c.queue.release(t)
+		defer func() { c.queue.release(t) }()
 	}
 	ch := c.supervisor.Messenger(in.Messenger)
 	if ch == nil {
@@ -275,8 +276,14 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	if !c.firstSeen(ctx, in) {
 		return
 	}
+	arrivedIn := in.Conv
 	if in.Prepare != nil && !c.prepare(ctx, ch, &in, p) {
 		return
+	}
+	// A message that started a conversation of its own, such as a Discord
+	// thread, waits in that conversation's line from now on.
+	if in.Conv != arrivedIn {
+		t = c.queue.move(t, in.Messenger, in.Conv)
 	}
 	// Commands that don't wait for the turn, such as /stop, and answers
 	// must not wait for the turn they stop or unblock, which holds the
@@ -309,6 +316,13 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	if batch == nil {
 		return
 	}
+	last := batch[len(batch)-1].in
+	if ctx.Err() != nil {
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+		defer cancel()
+		c.reply(stopCtx, ch, last, "The server restarted before your message reached the agent. Send it again.")
+		return
+	}
 	contextID, err := c.ContextOf(ctx, in.Messenger, in.Conv)
 	if err != nil {
 		slog.Error("resolving conversation context", "error", err)
@@ -317,7 +331,6 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	if err := c.store.UseConversation(ctx, in.Messenger, string(in.Conv), p.ID, contextID); err != nil {
 		slog.Warn("recording the use of a conversation", "user", p.ID, "error", err)
 	}
-	last := batch[len(batch)-1].in
 	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts(batch)...)
 	msg.ID = in.Messenger + ":" + in.MessageID
 	msg.ContextID = contextID
@@ -499,14 +512,25 @@ func (c *ChatTurns) stream(ctx context.Context, ch messenger.Messenger, conv mes
 // streamThen is stream which calls accepted once the agent accepted the
 // message, with its first event, or with the error it was refused with.
 // With quiet, a refusal isn't shown in the chat.
+//
+// The stream outlives ctx by stopGrace: when the server stops, it ends the
+// turn with a final status, which is still shown in the chat.
 func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest, quiet bool, accepted func(error)) {
+	if err := ctx.Err(); err != nil {
+		accepted(err)
+		return
+	}
 	if c.voiceReplies(ctx, p) {
 		req = withVoiceReply(req)
 	}
+	streamCtx, stopStream := outlive(ctx, stopGrace)
+	defer stopStream()
+	render := &graceContext{ctx: ctx, grace: stopGrace}
+	defer render.stop()
 	rd := newRenderer(c.chat, ch, conv, replyTo, p)
 	rd.onWaitForOwner = func(taskID a2a.TaskID) { c.chat.followOwnerAnswer(ctx, ch, conv, p, taskID) }
 	first := true
-	for ev, err := range c.sender.SendStreamingMessage(auth.InProcess(ctx, p), req) {
+	for ev, err := range c.sender.SendStreamingMessage(auth.InProcess(streamCtx, p), req) {
 		if first {
 			first = false
 			accepted(err)
@@ -514,16 +538,62 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 				return
 			}
 		}
-		if err != nil {
-			rd.fail(ctx, err)
+		// The stream of a turn that outlived its grace ends with an error;
+		// its stored state tells how it ended.
+		if err != nil && ctx.Err() != nil {
+			rd.finish(render.get())
 			return
 		}
-		if rd.onEvent(ctx, ev) {
+		if err != nil {
+			rd.fail(render.get(), err)
+			return
+		}
+		if rd.onEvent(render.get(), ev) {
 			return
 		}
 	}
 	if first {
 		accepted(errors.New("the agent ended the stream without a reply"))
 	}
-	rd.finish(ctx)
+	rd.finish(render.get())
+}
+
+// stopGrace bounds how long a turn waits for its end once the server began
+// to stop, and then how long it may take to show the end in its chat.
+const stopGrace = 5 * time.Second
+
+// outlive returns a context with the values of ctx that ends grace after
+// ctx ends, or when the returned function is called.
+func outlive(ctx context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	out, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, func() { time.AfterFunc(grace, cancel) })
+	return out, func() {
+		stop()
+		cancel()
+	}
+}
+
+// graceContext is ctx until it ends, and then a context with the values of
+// ctx that lasts grace from the first call of get after that.
+type graceContext struct {
+	ctx    context.Context
+	grace  time.Duration
+	after  context.Context
+	cancel context.CancelFunc
+}
+
+func (g *graceContext) get() context.Context {
+	if g.ctx.Err() == nil {
+		return g.ctx
+	}
+	if g.after == nil {
+		g.after, g.cancel = context.WithTimeout(context.WithoutCancel(g.ctx), g.grace)
+	}
+	return g.after
+}
+
+func (g *graceContext) stop() {
+	if g.cancel != nil {
+		g.cancel()
+	}
 }

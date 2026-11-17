@@ -41,7 +41,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-const agentReply = "Hello from the agent."
+const (
+	agentReply        = "Hello from the agent."
+	serverStoppedText = "The server stopped before this task finished. Send the message again."
+)
 
 type senderCall struct {
 	req       *a2a.SendMessageRequest
@@ -57,7 +60,10 @@ type fakeTurnSender struct {
 	reply     func(*a2a.SendMessageRequest) []a2a.Event
 	streamErr error
 	// hold, if set, keeps a stream from yielding until it is closed.
-	hold      chan struct{}
+	hold chan struct{}
+	// stopped ends a held stream with a failed status, as the server's
+	// executor ends the turns when the server stops.
+	stopped   <-chan struct{}
 	sendErr   error
 	cancelErr error
 
@@ -93,6 +99,10 @@ func (s *fakeTurnSender) SendStreamingMessage(ctx context.Context, req *a2a.Send
 		if s.hold != nil {
 			select {
 			case <-s.hold:
+			case <-s.stopped:
+				msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(serverStoppedText))
+				yield(&a2a.TaskStatusUpdateEvent{TaskID: "stopped", ContextID: req.Message.ContextID, Status: a2a.TaskStatus{State: a2a.TaskStateFailed, Message: msg}}, nil)
+				return
 			case <-ctx.Done():
 				return
 			}
@@ -202,6 +212,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 	ch := messengertest.NewMessenger("fake")
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
+	sender.stopped = fx.ctx.Done()
 	unattended := &ContextSet{}
 	tf := &turnsFixture{chatFixture: fx, ch: ch, sender: sender, unattended: unattended}
 	tf.cfg.Store(&agentdir.Config{Name: "coder"})
@@ -1058,6 +1069,71 @@ func TestChatTurnsHandlesConversationInArrivalOrder(t *testing.T) {
 		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "first\nsecond")
 	}
 	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsShowsTheEndOfATurnTheServerStopped(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.ch.Write("telegram:1", "dm1", "slow")
+	fx.sender.nextStream(t)
+
+	fx.cancel()
+
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
+}
+
+func TestChatTurnsTellsAWaitingMessageThatTheServerStopped(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.ch.Write("telegram:1", "dm1", "slow")
+	fx.sender.nextStream(t)
+	waiting := fx.ch.Message("telegram:1", "dm1", "and then?")
+	fx.ch.Deliver(waiting)
+	waitFor(t, "the message to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 1 })
+
+	fx.cancel()
+
+	_, got := fx.ch.WaitFor(t, "dm1", messengertest.HasText("The server restarted before your message reached the agent. Send it again."))
+	if got.ReplyTo.ID != waiting.MessageID {
+		t.Fatalf("Send() reply to = %q, want the waiting message %q", got.ReplyTo.ID, waiting.MessageID)
+	}
+	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsMessagesThatMovedToNewThreadsDontWaitForEachOther(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	toThread := func(text, thread string) messenger.Inbound {
+		in := fx.ch.Message("telegram:1", "channel", text)
+		in.Prepare = func(_ context.Context, in *messenger.Inbound) error {
+			in.Conv = messenger.ConvKey(thread)
+			return nil
+		}
+		return in
+	}
+
+	fx.ch.Deliver(toThread("alice", "thread1"))
+	if got := sentMessageOf(fx.sender.nextStream(t).req.Message).Text; got != "alice" {
+		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "alice")
+	}
+	fx.ch.Deliver(toThread("bob", "thread2"))
+
+	if got := sentMessageOf(fx.sender.nextStream(t).req.Message).Text; got != "bob" {
+		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "bob")
+	}
+	fx.ch.Write("telegram:1", "thread1", "alice again")
+	waitFor(t, "the reply in the thread to wait", func() bool { return waitingMessages(fx.queue, "fake", "thread1") == 1 })
+	fx.sender.wantIdle(t)
+	if fx.queue.busy("fake", "channel") {
+		t.Fatal("ConversationQueue.busy(channel) = true, want the messages out of the channel's line")
+	}
+	close(fx.sender.hold)
+	if got := sentMessageOf(fx.sender.nextStream(t).req.Message).Text; got != "alice again" {
+		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "alice again")
+	}
 }
 
 func TestChatTurnsSendsMessagesThatWaitedForATurnTogether(t *testing.T) {
