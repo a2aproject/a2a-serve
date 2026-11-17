@@ -59,6 +59,8 @@ type StopOptions struct {
 	// KillAfter is how long a server that doesn't answer gets to exit
 	// after SIGTERM before it is killed. Zero means 10 seconds.
 	KillAfter time.Duration
+	// Services is the service manager.
+	Services ServiceManager
 }
 
 // StopResult is what [Stop] did.
@@ -74,6 +76,10 @@ type StopResult struct {
 	// Unresponsive is whether the server didn't answer, so that it was
 	// stopped by the PID in its PID file.
 	Unresponsive bool
+	// ByService is whether the server was stopped through its user service.
+	ByService bool
+	// NewPID is the PID of a server that started while this one stopped.
+	NewPID int
 }
 
 // Stop stops the agent of dir through client. With [WaitStopped] it returns
@@ -86,7 +92,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	pid, byPID := 0, false
 	switch {
 	case err == nil:
-		res.Running, res.Name = true, st.Name
+		res.Running, res.Name, pid = true, st.Name, st.PID
 	case errors.Is(err, agenterr.ErrNotRunning):
 		pid, byPID = findStarting(dir)
 		res.Running = byPID
@@ -100,20 +106,35 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 		res.Running, res.Unresponsive = true, true
 	}
 	name := dir.ServiceName()
-	res.ServiceInstalled = service.Installed(name)
+	res.ServiceInstalled = opts.Services.Installed(name)
 	if res.ServiceInstalled && opts.Uninstall {
 		if err := service.Uninstall(name); err != nil {
 			return res, err
 		}
 		res.ServiceRemoved = true
 	}
-	// A detached agent, or one the service manager didn't stop.
-	if byPID {
-		if err := terminate(pid); err != nil {
-			return res, fmt.Errorf("stopping the server (pid %d): %w", pid, err)
+	managed := res.ServiceInstalled && !res.ServiceRemoved
+	switch {
+	case byPID:
+		if managed {
+			res.ByService = stopService(opts.Services, name, pid)
 		}
-	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
-		return res, err
+		// A detached agent, or one the service manager didn't stop.
+		if !res.ByService {
+			if err := terminate(pid); err != nil {
+				return res, fmt.Errorf("stopping the server (pid %d): %w", pid, err)
+			}
+		}
+	case res.Running:
+		if err := client.Stop(ctx); err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
+			return res, err
+		}
+	case managed:
+		// The service manager may be about to restart a server that
+		// failed.
+		if err := opts.Services.Stop(name); err != nil {
+			slog.Debug("stopping the user service", "name", name, "error", err)
+		}
 	}
 	// A server that is shutting down removes its PID file before it
 	// releases the lock.
@@ -127,7 +148,27 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 			return killProcess(pid)
 		}
 	}
-	return res, waitStopped(ctx, dir, cmp.Or(opts.KillAfter, killAfter), kill)
+	res.NewPID, err = waitStopped(ctx, dir, pid, cmp.Or(opts.KillAfter, killAfter), kill)
+	return res, err
+}
+
+// stopService stops the user service name through the service manager if
+// it runs the server with pid, which a service manager would otherwise start
+// again once the server is killed. It reports whether it did.
+func stopService(services ServiceManager, name string, pid int) bool {
+	mainPID, err := services.MainPID(name)
+	if err != nil {
+		slog.Debug("asking the service manager for the server's PID", "name", name, "error", err)
+		return false
+	}
+	if mainPID != pid {
+		return false
+	}
+	if err := services.Stop(name); err != nil {
+		slog.Debug("stopping the user service", "name", name, "error", err)
+		return false
+	}
+	return true
 }
 
 // Unanswered returns err, the error of a call to the server of dir, with
@@ -140,38 +181,54 @@ func Unanswered(dir agentdir.Dir, err error) error {
 	return agenterr.WithHint(err, agenterr.HintStopUnanswered, "")
 }
 
-// waitStopped waits until the server releases the lock of the agent
-// directory, which it holds until everything is shut down. kill runs once
-// the server is still running after killAfter. A missing lock file means
-// that the state directory is gone, and a server without it stops on its
-// own.
-func waitStopped(ctx context.Context, d agentdir.Dir, killAfter time.Duration, kill func() error) error {
+// waitStopped waits until the server with pid has exited, or with pid zero
+// until no server holds the lock of the agent directory, which a server holds
+// until everything is shut down. It returns the PID of a new server that the
+// PID file names, which started meanwhile. kill runs once the server is still
+// running after killAfter. A missing lock file means that the state directory
+// is gone, and a server without it stops on its own.
+func waitStopped(ctx context.Context, d agentdir.Dir, pid int, killAfter time.Duration, kill func() error) (int, error) {
 	start := time.Now()
 	killed := false
 	for {
+		if pid != 0 {
+			if newPID := newServer(d, pid); newPID != 0 || !processExists(pid) {
+				return newPID, nil
+			}
+		}
 		release, err := d.Lock()
 		if err == nil {
-			return release()
+			return 0, release()
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return 0, nil
 		}
 		if !errors.Is(err, fsutil.ErrLocked) {
-			return fmt.Errorf("checking that the server stopped: %w", err)
+			return 0, fmt.Errorf("checking that the server stopped: %w", err)
 		}
 		if !killed && time.Since(start) > killAfter {
 			if err := kill(); err != nil {
-				return fmt.Errorf("killing the server: %w", err)
+				return 0, fmt.Errorf("killing the server: %w", err)
 			}
 			killed = true
 		}
 		if time.Since(start) > stopTimeout {
-			return fmt.Errorf("the server did not stop in time; see %s", d.LogPath())
+			return 0, fmt.Errorf("the server did not stop in time; see %s", d.LogPath())
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// newServer returns the PID of a server other than the one with pid that
+// the PID file of d names, or zero.
+func newServer(d agentdir.Dir, pid int) int {
+	other, err := d.ServerPID()
+	if err != nil || other == pid {
+		return 0
+	}
+	return other
 }

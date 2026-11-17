@@ -60,6 +60,8 @@ type ServiceManager interface {
 	// MainPID returns the PID of the process that the service name runs,
 	// or zero if it doesn't run.
 	MainPID(name string) (int, error)
+	// Stop stops the service name and keeps it installed.
+	Stop(name string) error
 }
 
 // Restart stops the running agent and starts it again in the same mode,
@@ -93,7 +95,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, ser
 		return err
 	}
 	if pid != 0 {
-		if _, err := Stop(ctx, d, client, StopOptions{Wait: WaitStopped}); err != nil {
+		if _, err := Stop(ctx, d, client, StopOptions{Wait: WaitStopped, Services: services}); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(out, "✓ stopped %s\n", cfg.Name); err != nil {

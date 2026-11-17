@@ -119,7 +119,7 @@ func TestStopKillsServerThatDoesNotAnswer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	got, err := Stop(ctx, dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), StopOptions{Wait: WaitStopped, KillAfter: 100 * time.Millisecond})
+	got, err := Stop(ctx, dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), StopOptions{Wait: WaitStopped, KillAfter: 100 * time.Millisecond, Services: fakeServices{}})
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestStopErrorOfServerThatDoesNotAnswer(t *testing.T) {
 	dir := newAgent(t)
 	serveControl(t, dir, hangingControl{})
 
-	_, err := Stop(t.Context(), dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), StopOptions{})
+	_, err := Stop(t.Context(), dir, controlapi.NewClient(dir, controlapi.WithTimeout(100*time.Millisecond)), StopOptions{Services: fakeServices{}})
 	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "http://") {
 		t.Fatalf("Stop() error = %v, want a timeout without the internal URL", err)
 	}

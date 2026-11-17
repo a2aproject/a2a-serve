@@ -137,3 +137,13 @@ func bootout(name, path string) error {
 
 // UnitFile returns the path of the launchd plist of the service name.
 func UnitFile(name string) (string, error) { return plistPath(name) }
+
+// Stop unloads the launchd agent, which stops it without a KeepAlive
+// restart. The plist stays, so launchd loads it again at the next login.
+func Stop(name string) error {
+	path, err := plistPath(name)
+	if err != nil {
+		return err
+	}
+	return bootout(name, path)
+}

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestStop(t *testing.T) {
 				serveControl(t, dir, f)
 			}
 
-			got, err := Stop(t.Context(), dir, controlapi.NewClient(dir), StopOptions{Wait: tc.wait})
+			got, err := Stop(t.Context(), dir, controlapi.NewClient(dir), StopOptions{Wait: tc.wait, Services: fakeServices{}})
 			if err != nil {
 				t.Fatalf("Stop() error = %v", err)
 			}
@@ -91,7 +92,7 @@ func TestStopSignalsServerThatIsStarting(t *testing.T) {
 				proc = pidFileProcess(t, dir)
 			}
 
-			got, err := Stop(t.Context(), dir, controlapi.NewClient(dir), StopOptions{})
+			got, err := Stop(t.Context(), dir, controlapi.NewClient(dir), StopOptions{Services: fakeServices{}})
 			if err != nil {
 				t.Fatalf("Stop() error = %v", err)
 			}
@@ -122,7 +123,7 @@ func TestStopWithoutStateDir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped})
+	got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped, Services: fakeServices{}})
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -156,9 +157,121 @@ func TestWaitStoppedWithoutLockFile(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 
-			err := waitStopped(ctx, dir, time.Minute, func() error { return nil })
+			_, err := waitStopped(ctx, dir, 0, time.Minute, func() error { return nil })
 			if gotErr := err != nil; gotErr != tc.wantErr || errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("waitStopped() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestWaitStoppedEndsWhenANewServerStarted(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	dir := newAgent(t)
+	old := pidFileProcess(t, dir)
+	next := startingServer(t, dir)
+	if err := os.WriteFile(dir.PIDPath(), []byte(strconv.Itoa(next.pid)), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	if err := terminate(old.pid); err != nil {
+		t.Fatalf("terminate() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	got, err := waitStopped(ctx, dir, old.pid, time.Minute, func() error { return nil })
+	if err != nil {
+		t.Fatalf("waitStopped() error = %v", err)
+	}
+	if got != next.pid {
+		t.Fatalf("waitStopped() = %d, want the new server's PID %d", got, next.pid)
+	}
+}
+
+func TestStopReportsANewServer(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	dir := newAgent(t)
+	old := pidFileProcess(t, dir)
+	serveControl(t, dir, &fakeControl{pid: old.pid})
+	next := startingServer(t, dir)
+	if err := os.WriteFile(dir.PIDPath(), []byte(strconv.Itoa(next.pid)), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	if err := terminate(old.pid); err != nil {
+		t.Fatalf("terminate() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped, Services: fakeServices{}})
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if want := (StopResult{Name: "coder", Running: true, NewPID: next.pid}); got != want {
+		t.Fatalf("Stop() = %+v, want %+v", got, want)
+	}
+}
+
+func TestStopThroughTheServiceManager(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	tests := []struct {
+		name        string
+		running     bool
+		mainPID     func(pid int) int
+		wantStopped bool
+		wantRunning bool
+		wantService bool
+	}{
+		{name: "the service runs the server", running: true, mainPID: func(pid int) int { return pid }, wantStopped: true, wantRunning: true, wantService: true},
+		{name: "the service runs another process", running: true, mainPID: func(int) int { return 1 }, wantRunning: true},
+		{name: "not running", mainPID: func(int) int { return 0 }, wantStopped: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			pid := 0
+			var proc *fakeProcess
+			if tc.running {
+				proc = startingServer(t, dir)
+				pid = proc.pid
+			}
+			var stopped []string
+			services := fakeServices{installed: true, mainPID: tc.mainPID(pid), stop: func(name string) error {
+				stopped = append(stopped, name)
+				if proc != nil {
+					return terminate(proc.pid)
+				}
+				return nil
+			}}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+
+			got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped, Services: services})
+			if err != nil {
+				t.Fatalf("Stop() error = %v", err)
+			}
+			if got.Running != tc.wantRunning || got.ByService != tc.wantService {
+				t.Fatalf("Stop() = %+v, want Running %v and ByService %v", got, tc.wantRunning, tc.wantService)
+			}
+			var want []string
+			if tc.wantStopped {
+				want = []string{dir.ServiceName()}
+			}
+			if diff := cmp.Diff(want, stopped); diff != "" {
+				t.Fatalf("Stop() wrong service stops (-want +got) diff = %s", diff)
+			}
+			if proc != nil && !proc.exited() {
+				t.Fatalf("Stop() did not stop the server")
 			}
 		})
 	}

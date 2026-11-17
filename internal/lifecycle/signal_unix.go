@@ -40,3 +40,9 @@ func killProcess(pid int) error {
 	}
 	return nil
 }
+
+// processExists reports whether a process with pid exists.
+func processExists(pid int) bool {
+	err := unix.Kill(pid, 0)
+	return err == nil || errors.Is(err, unix.EPERM)
+}
