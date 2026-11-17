@@ -262,14 +262,14 @@ func TestStartWhileRunningNamesTheRunningAgent(t *testing.T) {
 					}
 				})
 			}
-			serveControl(t, dir, &fakeControl{})
+			serveControl(t, dir, &fakeControl{pid: 4242})
 
 			var out strings.Builder
 			if err := Start(t.Context(), dir, StartOptions{Mode: mode, Quiet: true, Out: &out}); err != nil {
 				t.Fatalf("Start() error = %v", err)
 			}
 
-			if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+			if want := "✓ coder (pid 4242) is already running (a2a-serve status)\n"; out.String() != want {
 				t.Fatalf("Start() output = %q, want %q", out.String(), want)
 			}
 		})
@@ -293,7 +293,7 @@ func TestStartServiceWhileRunning(t *testing.T) {
 		{
 			name:     "service installed",
 			services: fakeServices{installed: true},
-			want:     result{Out: "✓ coder is already running (a2a-serve status)\n"},
+			want:     result{Out: "✓ coder (pid 4242) is already running (a2a-serve status)\n"},
 		},
 		{
 			name: "no service",
@@ -308,7 +308,7 @@ func TestStartServiceWhileRunning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := newAgent(t)
-			serveControl(t, dir, &fakeControl{})
+			serveControl(t, dir, &fakeControl{pid: 4242})
 
 			var out strings.Builder
 			err := Start(t.Context(), dir, StartOptions{Mode: Service, Quiet: true, Out: &out, Services: tc.services})
@@ -401,13 +401,13 @@ func TestStartForegroundWhileRunning(t *testing.T) {
 			t.Errorf("release() error = %v", err)
 		}
 	})
-	serveControl(t, dir, &fakeControl{})
+	serveControl(t, dir, &fakeControl{pid: 4242})
 
 	var out strings.Builder
 	if err := Start(t.Context(), dir, StartOptions{Mode: Foreground, Quiet: true, Out: &out}); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+	if want := "✓ coder (pid 4242) is already running (a2a-serve status)\n"; out.String() != want {
 		t.Fatalf("Start() output = %q, want %q", out.String(), want)
 	}
 }

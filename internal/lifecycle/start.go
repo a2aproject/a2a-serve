@@ -112,7 +112,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 		return err
 	}
 	if st != nil {
-		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
+		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(cmp.Or(st.Name, cfg.Name), st.PID))
 		return err
 	}
 	if err := logfile.Rotate(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
@@ -248,7 +248,7 @@ func background(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
+		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(cmp.Or(st.Name, cfg.Name), st.PID))
 		return err
 	}
 	// The child's stdout is the log, so it is rotated before the child opens it.

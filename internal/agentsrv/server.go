@@ -380,7 +380,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	}
 	release, err := s.dir.LockWithin(agentdir.ProbeWait)
 	if errors.Is(err, fsutil.ErrLocked) {
-		return fmt.Errorf("the server is already running in %s (a2a-serve status)", s.dir.Root)
+		return s.dir.AlreadyRunning()
 	}
 	if err != nil {
 		return fmt.Errorf("locking the agent directory: %w", err)

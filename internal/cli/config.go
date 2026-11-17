@@ -177,10 +177,10 @@ func printStartRunning(cfg *globalConfig, res *agentctl.Result, hint string) err
 		return err
 	}
 	if len(res.Restart) > 0 {
-		_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running; restart to apply %s (%s)\n", res.Name, strings.Join(res.Restart, ", "), hint)
+		_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running; restart to apply %s (%s)\n", agentdir.RunningLabel(res.Name, res.PID), strings.Join(res.Restart, ", "), hint)
 		return err
 	}
-	_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
+	_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(res.Name, res.PID))
 	return err
 }
 

@@ -16,6 +16,7 @@ package agentdir
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -783,6 +784,39 @@ func TestUpdateConfigLocksInState(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{".gitignore", "config.yaml", "state"}, got); diff != "" {
 		t.Fatalf("Dir.UpdateConfig() wrong .a2a entries (-want +got) diff = %s", diff)
+	}
+}
+
+func TestAlreadyRunning(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pidFile string
+		want    string
+	}{
+		{name: "PID file", pidFile: "4242\n", want: "the server (pid 4242) is already running in %s (a2a-serve status)"},
+		{name: "no PID file", want: "the server is already running in %s (a2a-serve status)"},
+		{name: "PID file without a PID", pidFile: "x", want: "the server is already running in %s (a2a-serve status)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			if err := d.Init(); err != nil {
+				t.Fatalf("Dir.Init() error = %v", err)
+			}
+			if tc.pidFile != "" {
+				if err := os.WriteFile(d.PIDPath(), []byte(tc.pidFile), 0o600); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			}
+
+			err := d.AlreadyRunning()
+
+			if want := fmt.Sprintf(tc.want, d.Root); err == nil || err.Error() != want {
+				t.Fatalf("Dir.AlreadyRunning() error = %v, want %v", err, want)
+			}
+		})
 	}
 }
 

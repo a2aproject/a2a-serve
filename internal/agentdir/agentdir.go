@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,6 +318,38 @@ func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock
 
 // PIDPath returns the path of the file holding the PID of the running server.
 func (d Dir) PIDPath() string { return filepath.Join(d.StateDir(), "server.pid") }
+
+// ServerPID returns the PID in the PID file, which a server writes once it
+// holds the lock. It returns 0 when the file holds no PID.
+func (d Dir) ServerPID() (int, error) {
+	data, err := os.ReadFile(d.PIDPath())
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, nil
+	}
+	return pid, nil
+}
+
+// RunningLabel names a running server by name and, when pid is known, its PID.
+func RunningLabel(name string, pid int) string {
+	if pid <= 0 {
+		return name
+	}
+	return fmt.Sprintf("%s (pid %d)", name, pid)
+}
+
+// AlreadyRunning returns the error of a start while a server holds the
+// lock. It names the server's PID when the PID file holds one.
+func (d Dir) AlreadyRunning() error {
+	pid, err := d.ServerPID()
+	if err != nil {
+		pid = 0
+	}
+	return fmt.Errorf("%s is already running in %s (a2a-serve status)", RunningLabel("the server", pid), d.Root)
+}
 
 // Lock takes the lock the running server holds, and returns the function
 // that releases it. It returns [fsutil.ErrLocked] while another process
