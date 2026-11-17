@@ -52,7 +52,9 @@ func removeEntry(root *os.Root, name, path string) error {
 	if !info.IsDir() {
 		return at(path, ignoreNotExist(root.Remove(name)))
 	}
-	if err := root.Chmod(name, info.Mode().Perm()|0o700); err != nil {
+	// A directory that another user owns can't be changed, but its entries
+	// may still be deletable. The deletes below report what isn't.
+	if err := root.Chmod(name, info.Mode().Perm()|0o700); err != nil && !errors.Is(err, fs.ErrPermission) {
 		return at(path, err)
 	}
 	dir, err := root.OpenRoot(name)
