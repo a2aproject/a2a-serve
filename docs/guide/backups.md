@@ -23,7 +23,11 @@ a2a-serve backup list
 a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
 ```
 
-The restore takes the latest snapshot. `--snapshot` names another one. A destination that several agents share needs `--snapshot`, since the latest snapshot there can belong to another agent. Snapshot names start with the agent name. The directory must have no `.a2a`, or only the `config.yaml`, `recipe.lock` and `.gitignore` of a fresh clone. The snapshot's `config.yaml` replaces the one in the clone, and the output says so when they differ. A failed or interrupted restore leaves the directory as it was, so you can run it again. If the restore is killed, the next restore, `a2a-serve start` or `a2a-serve doctor --fix` removes what it left.
+The restore takes the latest snapshot. `--snapshot` names another one. A destination that several agents share needs `--snapshot`, since the latest snapshot there can belong to another agent. Snapshot names start with the agent name.
+
+The directory must have no `.a2a`, or only the `config.yaml`, `recipe.lock` and `.gitignore` of a fresh clone. The snapshot's `config.yaml` replaces the one in the clone, and the output says so when they differ. If commands such as `a2a-serve pair list` created `.a2a/state` before the restore, and nobody used the agent, the restore moves it to `.a2a/state.before-restore-<time>` and says so.
+
+A failed or interrupted restore leaves the directory as it was, so you can run it again. If the restore is killed, the next restore, `a2a-serve start` or `a2a-serve doctor --fix` removes what it left.
 
 Add `--take-over` to keep the agent's network identity and URLs. Stop the agent on the old machine first.
 

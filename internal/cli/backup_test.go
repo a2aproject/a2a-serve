@@ -72,8 +72,8 @@ func TestBackupAndRestore(t *testing.T) {
 	if conf, err := restored.LoadConfig(); err != nil || conf.Name != "coder" {
 		t.Fatalf("restored config = %+v, %v, want coder", conf, err)
 	}
-	if _, err := runCMD(t, "backup", "restore", to, "--dir", target, "--backup-key", "k"); err == nil {
-		t.Fatalf("a2a-serve backup restore into an existing agent error = nil, want error")
+	if out, err := runCMD(t, "backup", "restore", to, "--dir", target, "--backup-key", "k"); err != nil || !strings.Contains(out, "which held no agent data, to .a2a/state.before-restore-") {
+		t.Fatalf("a2a-serve backup restore into an agent nobody used = %q, %v, want its state moved aside", out, err)
 	}
 }
 
