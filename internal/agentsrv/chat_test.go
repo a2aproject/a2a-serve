@@ -314,6 +314,37 @@ func TestRouterStop(t *testing.T) {
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Stopped."))
 }
 
+func TestRouterStopTellsTheChatThatTheServerStopped(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
+	db, err := sql.Open("sqlite", ts.dir.DBPath())
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	go ts.ch.Write("telegram:1", "dm1", "slow")
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("..."))
+	waiting := ts.ch.Message("telegram:1", "dm1", "and then?")
+	ts.ch.Deliver(waiting)
+	waitFor(t, "the message to wait for its turn", func() bool {
+		var n int
+		return db.QueryRow(`SELECT COUNT(*) FROM seen WHERE key = ?`, waiting.Messenger+"|"+waiting.MessageID).Scan(&n) == nil && n == 1
+	})
+
+	ts.stop()
+
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText(stoppedMessage))
+	_, got := ts.ch.WaitFor(t, "dm1", messengertest.HasText("The server restarted before your message reached the agent. Send it again."))
+	if got.ReplyTo.ID != waiting.MessageID {
+		t.Fatalf("Send() reply to = %q, want the waiting message %q", got.ReplyTo.ID, waiting.MessageID)
+	}
+}
+
 // linkAs links identity as name with role in conversation conv.
 func linkAs(t *testing.T, ts *testServer, name, role, identity, conv string) {
 	t.Helper()

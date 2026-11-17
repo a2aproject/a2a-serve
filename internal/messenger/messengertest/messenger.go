@@ -115,8 +115,12 @@ func (c *Messenger) Run(ctx context.Context, in chan<- messenger.Inbound, _ func
 	return nil
 }
 
-// Send implements [messenger.Messenger].
-func (c *Messenger) Send(_ context.Context, m messenger.Outbound) (messenger.Ref, error) {
+// Send implements [messenger.Messenger]. Like the real messengers, it fails
+// once ctx ended.
+func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.Ref, error) {
+	if err := ctx.Err(); err != nil {
+		return messenger.Ref{}, err
+	}
 	c.mu.Lock()
 	id := nextID()
 	c.msgs[id] = m
@@ -126,8 +130,12 @@ func (c *Messenger) Send(_ context.Context, m messenger.Outbound) (messenger.Ref
 	return messenger.Ref{Conv: m.Conv, ID: id, Text: m.Text}, nil
 }
 
-// Edit implements [messenger.Messenger].
-func (c *Messenger) Edit(_ context.Context, ref messenger.Ref, m messenger.Outbound) error {
+// Edit implements [messenger.Messenger]. Like the real messengers, it fails
+// once ctx ended.
+func (c *Messenger) Edit(ctx context.Context, ref messenger.Ref, m messenger.Outbound) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.msgs[ref.ID] = m

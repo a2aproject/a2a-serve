@@ -80,6 +80,14 @@ func (q *ConversationQueue) release(t *convTicket) {
 	})
 }
 
+// move puts a ticket at the end of the line of the conversation conv and
+// takes t out of its line. It returns the new ticket.
+func (q *ConversationQueue) move(t *convTicket, ch string, conv messenger.ConvKey) *convTicket {
+	next := q.enqueue(ch, conv)
+	q.release(t)
+	return next
+}
+
 // waitTurn waits for the turn of t with message m. It returns m and the
 // messages waiting right behind it that m joins, which leave the line, so
 // that messages that arrived during a turn reach the agent in one turn. It

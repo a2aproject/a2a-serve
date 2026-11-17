@@ -44,7 +44,7 @@ type PostedTurn struct {
 	Key string
 	// Accepted, if set, is called once the agent accepted the turn, or with
 	// the error it refused it with. It isn't called if the server stops
-	// before the turn is sent.
+	// while the turn waits in its context's line.
 	Accepted func(error)
 	// Quiet keeps a refusal out of the conversation's chat, for a turn
 	// posted again after the agent refused it.

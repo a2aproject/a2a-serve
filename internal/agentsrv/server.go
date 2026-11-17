@@ -664,8 +664,10 @@ func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Messenger) (<-chan error, error) {
 	errc := make(chan error, 1)
 	s.chatTurns.Start(ctx)
-	closers.push(s.chatTurns.Wait)
+	// The messengers stop after the chat turns, which show in their chats
+	// how the stop ended them.
 	closers.push(s.supervisor.StopAll)
+	closers.push(s.chatTurns.Wait)
 	closers.push(s.harness.serve(ctx, s.proxy.Routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
