@@ -37,7 +37,14 @@ import (
 // a directory that others can open, since whoever controls that directory
 // could stand in for the server.
 func SocketTransport(path string) *http.Transport {
+	return SocketTransportFunc(func() string { return path })
+}
+
+// SocketTransportFunc is [SocketTransport] for the path that socket
+// returns at each dial.
+func SocketTransportFunc(socket func() string) *http.Transport {
 	return &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		path := socket()
 		if err := fsutil.CheckPrivate(filepath.Dir(path)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, &net.OpError{Op: "dial", Net: "unix", Err: err}

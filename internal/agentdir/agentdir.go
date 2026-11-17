@@ -20,6 +20,7 @@ package agentdir
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -353,8 +354,9 @@ func (d Dir) AlreadyRunning() error {
 
 // Lock takes the lock the running server holds, and returns the function
 // that releases it. It returns [fsutil.ErrLocked] while another process
-// holds it. It removes the PID file a crashed server left behind, so that a
-// holder other than the server isn't taken for a starting server.
+// holds it. It removes the PID file and the control socket record that a
+// crashed server left behind, so that a holder other than the server isn't
+// taken for a starting server, nor a starting server for one that serves.
 func (d Dir) Lock() (release func() error, err error) {
 	release, err = fsutil.TryLock(d.LockPath())
 	if err != nil {
@@ -362,6 +364,9 @@ func (d Dir) Lock() (release func() error, err error) {
 	}
 	if err := os.Remove(d.PIDPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Join(fmt.Errorf("removing a stale PID file: %w", err), release())
+	}
+	if err := d.RemoveControlRecord(); err != nil {
+		return nil, errors.Join(fmt.Errorf("removing a stale control socket record: %w", err), release())
 	}
 	return release, nil
 }
@@ -414,6 +419,55 @@ func runtimeDir() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
 }
 
+// ControlRecordPath returns the path of the file in which the running
+// server records its control socket.
+func (d Dir) ControlRecordPath() string { return filepath.Join(d.StateDir(), "control.json") }
+
+// controlRecord is the control socket a server serves.
+type controlRecord struct {
+	PID    int    `json:"pid"`
+	Socket string `json:"socket"`
+}
+
+// RecordControlSocket records path as the control socket that this process
+// serves, so that clients find it whatever their environment.
+func (d Dir) RecordControlSocket(path string) error {
+	data, err := json.Marshal(controlRecord{PID: os.Getpid(), Socket: path})
+	if err != nil {
+		return err
+	}
+	return fsutil.WriteAtomic(d.ControlRecordPath(), data, 0o600)
+}
+
+// RemoveControlRecord removes the record of the control socket.
+func (d Dir) RemoveControlRecord() error {
+	if err := os.Remove(d.ControlRecordPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// ControlSocketPath returns the control socket that the server recorded, or
+// [Dir.SocketPath] when none did.
+func (d Dir) ControlSocketPath() string {
+	if rec, ok := d.controlRecord(); ok {
+		return rec.Socket
+	}
+	return d.SocketPath()
+}
+
+func (d Dir) controlRecord() (controlRecord, bool) {
+	var rec controlRecord
+	data, err := os.ReadFile(d.ControlRecordPath())
+	if err != nil {
+		return rec, false
+	}
+	if err := json.Unmarshal(data, &rec); err != nil || rec.PID <= 0 || !filepath.IsAbs(rec.Socket) {
+		return rec, false
+	}
+	return rec, true
+}
+
 // HarnessSocketIDLen is the length of the names of the directories in
 // [Dir.HarnessSocketDir].
 const HarnessSocketIDLen = 12
@@ -433,10 +487,70 @@ func (d Dir) HarnessSocketDir() string {
 }
 
 // ID is a short stable identifier of the agent directory, used in container
-// and service names.
+// and service names. It is the ID stored when the state directory was
+// created, which another spelling of the same root, such as through a
+// symlink, shares. A copy of the directory, or an agent created before IDs
+// were stored, gets the hash of its root.
 func (d Dir) ID() string {
-	sum := sha256.Sum256([]byte(d.Root))
-	return hex.EncodeToString(sum[:])[:10]
+	if id, ok := d.storedID(); ok {
+		return id
+	}
+	return hashID(d.Root)
+}
+
+// idRecord is the ID of an agent and the root it was created at.
+type idRecord struct {
+	ID   string `json:"id"`
+	Root string `json:"root"`
+}
+
+func (d Dir) idPath() string { return filepath.Join(d.StateDir(), "id.json") }
+
+func (d Dir) storedID() (string, bool) {
+	data, err := os.ReadFile(d.idPath())
+	if err != nil {
+		return "", false
+	}
+	var rec idRecord
+	if err := json.Unmarshal(data, &rec); err != nil || !validID(rec.ID) || !filepath.IsAbs(rec.Root) {
+		return "", false
+	}
+	if rec.Root == d.Root {
+		return rec.ID, true
+	}
+	created, err := os.Stat(rec.Root)
+	if err != nil {
+		return "", false
+	}
+	root, err := os.Stat(d.Root)
+	if err != nil || !os.SameFile(created, root) {
+		return "", false
+	}
+	return rec.ID, true
+}
+
+// writeID stores the ID of the agent, the hash of its root.
+func (d Dir) writeID() error {
+	data, err := json.Marshal(idRecord{ID: hashID(d.Root), Root: d.Root})
+	if err != nil {
+		return err
+	}
+	return fsutil.WriteAtomic(d.idPath(), data, 0o600)
+}
+
+func hashID(root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return hex.EncodeToString(sum[:])[:idLen]
+}
+
+const idLen = 10
+
+func validID(id string) bool {
+	if len(id) != idLen {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil && strings.ToLower(id) == id
 }
 
 // ServiceName is the name of the agent's background service.
@@ -462,13 +576,22 @@ func (d Dir) Init() error {
 }
 
 // mkdirState creates the .a2a and state directories, and refuses a state
-// directory that another user owns or that others can open. Call it before
-// the first write to the state directory.
+// directory that another user owns or that others can open. It stores the
+// agent's ID in a state directory it creates. Call it before the first write
+// to the state directory.
 func (d Dir) mkdirState() error {
 	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
 		return err
 	}
-	return fsutil.MkdirOwned(d.StateDir())
+	_, err := os.Lstat(d.StateDir())
+	created := errors.Is(err, os.ErrNotExist)
+	if err := fsutil.MkdirOwned(d.StateDir()); err != nil {
+		return err
+	}
+	if !created {
+		return nil
+	}
+	return d.writeID()
 }
 
 // WriteGitignore writes the .gitignore which keeps state out of version

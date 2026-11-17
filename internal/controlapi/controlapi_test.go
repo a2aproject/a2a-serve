@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func newDir(t *testing.T) agentdir.Dir {
@@ -389,5 +390,45 @@ func TestClientWithTimeout(t *testing.T) {
 				t.Fatalf("Client.Status() error = %v, want error %t", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestClientDialsTheRecordedSocket(t *testing.T) {
+	t.Parallel()
+	dir := newDir(t)
+	if err := dir.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	path := filepath.Join(testutil.ShortTempDir(t), "control.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(Status{Name: "coder"}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	}), ReadHeaderTimeout: time.Second}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve() error = %v", err)
+		}
+	}()
+	t.Cleanup(func() {
+		if err := srv.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	client := NewClient(dir)
+	if err := dir.RecordControlSocket(path); err != nil {
+		t.Fatalf("Dir.RecordControlSocket() error = %v", err)
+	}
+
+	got, err := client.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Client.Status() error = %v", err)
+	}
+	if got.Name != "coder" {
+		t.Fatalf("Client.Status().Name = %q, want %q", got.Name, "coder")
 	}
 }

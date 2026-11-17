@@ -535,8 +535,7 @@ func WithTimeout(d time.Duration) Option {
 
 // NewClient returns a client for the agent in dir.
 func NewClient(dir agentdir.Dir, opts ...Option) *Client {
-	path := dir.SocketPath()
-	c := &Client{dir: dir, hc: &http.Client{Timeout: DefaultTimeout, Transport: ctlhttp.SocketTransport(path)}}
+	c := &Client{dir: dir, hc: &http.Client{Timeout: DefaultTimeout, Transport: ctlhttp.SocketTransportFunc(dir.ControlSocketPath)}}
 	for _, o := range opts {
 		o(c)
 	}
