@@ -78,9 +78,9 @@ type Runner struct {
 	// schedules, which stay due in the store so that a restart runs them
 	// again, and the retries of refused recurring runs.
 	pending map[string]bool
-	// refused are the recurring schedules whose last run the agent refused.
-	// Each check posts the run again until the agent accepts it, the user
-	// loses access, or the next run is due.
+	// refused are the schedules whose last run the agent refused. Each check
+	// posts the run again, quietly, until the agent accepts it, the user
+	// loses access, or the next run of a recurring schedule is due.
 	refused map[string]bool
 }
 
@@ -147,8 +147,9 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 		if s.NextRun.IsZero() {
 			continue
 		}
-		// A due run merges into a retry that waits in its conversation.
-		retrying := sc.isRefused(s.Name)
+		// A due run of a recurring schedule merges into a retry that waits
+		// in its conversation.
+		retrying := s.At.IsZero() && sc.isRefused(s.Name)
 		if sc.isPending(s.Name) && (!retrying || s.NextRun.After(now)) {
 			continue
 		}
@@ -185,15 +186,18 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 
 // runOnce starts the run of a one-time schedule, which stays due until the
 // agent accepts its turn. A run that fails stays due, so that the next
-// check retries it, unless its user can no longer call the agent.
+// check retries it, unless its user can no longer call the agent. The chat
+// shows the first refusal, and the retries are quiet.
 func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
 	sc.setPending(s.Name, true)
-	err := sc.start(ctx, s, false, func(err error) {
+	err := sc.start(ctx, s, sc.isRefused(s.Name), func(err error) {
 		sc.setPending(s.Name, false)
 		if err != nil {
 			sc.record(context.WithoutCancel(sc.ctx), s.Name, sc.now(), err)
+			sc.setRefused(s.Name, true)
 			return
 		}
+		sc.setRefused(s.Name, false)
 		sc.finish(context.WithoutCancel(sc.ctx), s.Name)
 	})
 	if err == nil {
@@ -204,6 +208,7 @@ func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) 
 	if !errors.Is(err, errNoAccess) {
 		return
 	}
+	sc.setRefused(s.Name, false)
 	if err := sc.store.SetScheduleNextRun(ctx, s.Name, time.Time{}); err != nil {
 		slog.Error("clearing the run of a schedule whose user lost access", "schedule", s.Name, "error", err)
 	}

@@ -104,6 +104,9 @@ type tweakedMessenger struct {
 	*messengertest.Messenger
 	noEdit  bool
 	sendErr error
+	// split makes Send cut text into messages of at most this many bytes,
+	// as a messenger with a message limit does.
+	split int
 }
 
 func (c *tweakedMessenger) Caps() messenger.Caps {
@@ -118,7 +121,23 @@ func (c *tweakedMessenger) Send(ctx context.Context, m messenger.Outbound) (mess
 	if c.sendErr != nil {
 		return messenger.Ref{}, c.sendErr
 	}
-	return c.Messenger.Send(ctx, m)
+	if c.split == 0 {
+		return c.Messenger.Send(ctx, m)
+	}
+	var ref messenger.Ref
+	pieces := messenger.Split(m.Text, c.split)
+	for i, text := range pieces {
+		out := m
+		out.Text = text
+		if i < len(pieces)-1 {
+			out.Question = nil
+		}
+		var err error
+		if ref, err = c.Messenger.Send(ctx, out); err != nil {
+			return ref, err
+		}
+	}
+	return ref, nil
 }
 
 type readyWaiter interface{ WaitReady(t testing.TB) }

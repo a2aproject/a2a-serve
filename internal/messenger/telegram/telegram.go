@@ -510,7 +510,7 @@ func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.R
 		if err != nil {
 			return ref, apiError("sendMessage", err)
 		}
-		ref = messenger.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID)}
+		ref = messenger.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID), Text: piece}
 	}
 	return ref, nil
 }

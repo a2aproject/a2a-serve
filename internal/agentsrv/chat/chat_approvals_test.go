@@ -192,6 +192,51 @@ func TestChatApprovalsEndQuestion(t *testing.T) {
 	}
 }
 
+func TestChatApprovalsEndQuestionOfSplitMessage(t *testing.T) {
+	t.Parallel()
+	const (
+		limit = 40
+		note  = "✓ Allow by anna"
+		first = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	)
+	tests := []struct {
+		name   string
+		header string
+		want   []string
+	}{
+		{
+			name:   "note follows the end of the question",
+			header: first + "\nmore",
+			want:   []string{first + "\nmore:", "Run git push?\n\n" + note},
+		},
+		{
+			name:   "note stays when the end of the question fills the message",
+			header: first + "\nBBBBBBBBBB",
+			want:   []string{first, "…BBB:\nRun git push?\n\n" + note},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ch := &tweakedMessenger{Messenger: messengertest.NewMessenger("fake"), split: limit}
+			ch.MaxText = limit
+			fx := newChatFixture(t, "", ch)
+			rec := fx.newQuestion(t, "t1", "c1", auth.OwnerID)
+			fx.chat.Ask(fx.ctx, approvals.Chat{Messenger: "fake", Conv: "dm1"}, tc.header, rec)
+
+			fx.chat.MarkAnswered(fx.ctx, rec.ID, "Allow", "anna")
+
+			var got []string
+			for _, m := range ch.Transcript() {
+				got = append(got, m.Text)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("messages after answering the question wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestChatApprovalsOwnerChat(t *testing.T) {
 	t.Parallel()
 	local := func(ch, conv string) linkSpec {

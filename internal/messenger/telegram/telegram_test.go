@@ -85,8 +85,8 @@ func TestMessenger(t *testing.T) {
 	if diff := cmp.Diff(wantMsgs, api.Messages()); diff != "" {
 		t.Fatalf("Send() wrong messages (-want +got) diff = %s", diff)
 	}
-	if ref != (messenger.Ref{Conv: "42", ID: "1"}) {
-		t.Fatalf("Send() ref = %+v, want message 1", ref)
+	if want := (messenger.Ref{Conv: "42", ID: "1", Text: "Run **git push**?"}); ref != want {
+		t.Fatalf("Send() ref = %+v, want %+v", ref, want)
 	}
 	if err := c.Edit(ctx, ref, messenger.Outbound{Conv: "42", Text: "✓ Allow by Anna"}); err != nil {
 		t.Fatalf("Edit() error = %v", err)
@@ -448,6 +448,37 @@ func TestSendAndEditShowLiteralTextWithoutMarkup(t *testing.T) {
 			}
 			if got := calls[len(calls)-1]; got.Get("text") != text || got.Has("parse_mode") {
 				t.Fatalf("%s = %v, want the text as written and no parse mode", tc.method, got)
+			}
+		})
+	}
+}
+
+func TestSendReturnsTheTextOfTheLastMessage(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("a", maxText) + "\nthe end"
+	tests := []struct {
+		name string
+		m    messenger.Outbound
+		want string
+	}{
+		{name: "short text", m: messenger.Outbound{Conv: "42", Text: "hello", Literal: true}, want: "hello"},
+		{name: "text split into messages", m: messenger.Outbound{Conv: "42", Text: long, Literal: true}, want: "the end"},
+		{name: "text that is formatted", m: messenger.Outbound{Conv: "42", Text: "*bold*"}, want: "*bold*"},
+		{name: "file without text", m: messenger.Outbound{Conv: "42", Files: []messenger.File{{Name: "a.txt", Data: []byte("x")}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
+			c := New("123:abc", nil)
+			c.ServerURL = api.URL
+
+			ref, err := c.Send(t.Context(), tc.m)
+			if err != nil {
+				t.Fatalf("Messenger.Send() error = %v, want nil", err)
+			}
+			if ref.Text != tc.want {
+				t.Fatalf("Messenger.Send() text = %q, want %q", ref.Text, tc.want)
 			}
 		})
 	}

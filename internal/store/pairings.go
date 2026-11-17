@@ -136,12 +136,12 @@ func removedTasksOf(users []PairingUser) (string, []any) {
 
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
 // its webhook node and the node's watches. users are the users the pairing
-// acts as. Their schedules, watches, questions, allowed tool calls, voice
-// replies and chat histories go with it, and so do their tasks and every
-// task of the conversations that run in their agent processes. The
-// messenger conversations, agent sessions and handles of the contexts left
-// without tasks go too, so a new pairing with the same name starts with
-// none of them.
+// acts as. Their schedules, the schedules that deliver to them, watches,
+// questions, allowed tool calls, voice replies and chat histories go with
+// it, and so do their tasks and every task of the conversations that run in
+// their agent processes. The messenger conversations, agent sessions and
+// handles of the contexts left without tasks go too, so a new pairing with
+// the same name starts with none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, users ...PairingUser) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?)`, name); err != nil {
@@ -150,6 +150,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, users ...Pairing
 		for _, u := range users {
 			for _, del := range []string{
 				`DELETE FROM schedules WHERE user_id = ?`,
+				`DELETE FROM schedules WHERE deliver_user = ?`,
 				`DELETE FROM watches WHERE on_behalf_of = ?`,
 				`DELETE FROM questions WHERE user_id = ?`,
 				`DELETE FROM tool_grants WHERE user_id = ?`,
@@ -221,7 +222,7 @@ func (s *Store) PairingRemoval(ctx context.Context, name string, users ...Pairin
 		{&r.Tokens, `SELECT COUNT(*) FROM tokens WHERE pairing = ?`, []any{name}},
 		{&r.Links, `SELECT COUNT(*) FROM links WHERE pairing = ?`, []any{name}},
 		{&r.Codes, `SELECT COUNT(*) FROM codes WHERE pairing = ?`, []any{name}},
-		{&r.Schedules, `SELECT COUNT(*) FROM schedules WHERE user_id IN ` + in, principals},
+		{&r.Schedules, `SELECT COUNT(*) FROM schedules WHERE user_id IN ` + in + ` OR deliver_user IN ` + in, slices.Concat(principals, principals)},
 		{&r.Watches, `SELECT COUNT(*) FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?) OR on_behalf_of IN ` + in, append([]any{name}, principals...)},
 		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE ` + removed + `))`, slices.Concat(principals, removedArgs)},
 		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE ` + removed, removedArgs},

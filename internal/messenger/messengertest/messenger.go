@@ -123,7 +123,7 @@ func (c *Messenger) Send(_ context.Context, m messenger.Outbound) (messenger.Ref
 	c.order = append(c.order, id)
 	c.mu.Unlock()
 	time.Sleep(c.SendDelay)
-	return messenger.Ref{Conv: m.Conv, ID: id}, nil
+	return messenger.Ref{Conv: m.Conv, ID: id, Text: m.Text}, nil
 }
 
 // Edit implements [messenger.Messenger].

@@ -656,6 +656,26 @@ func TestLiteralPiecesFitTheLimitAndKeepTheText(t *testing.T) {
 	}
 }
 
+func TestTextPiecesAreTheLiteralPiecesBeforeEscaping(t *testing.T) {
+	t.Parallel()
+	m := messenger.Outbound{Text: strings.Repeat("[x](y) ", 600) + "\nthe (end)", Literal: true}
+
+	pieces := textPieces(m)
+
+	escaped := messagePieces(m)
+	if len(pieces) != len(escaped) || len(pieces) < 2 {
+		t.Fatalf("textPieces() made %d pieces, want %d, at least 2", len(pieces), len(escaped))
+	}
+	for i, p := range pieces {
+		if got := escapeMarkdown(p); got != escaped[i] {
+			t.Fatalf("escapeMarkdown(textPieces()[%d]) = %q, want %q", i, got, escaped[i])
+		}
+	}
+	if got, want := pieces[len(pieces)-1], "the (end)"; !strings.HasSuffix(got, want) {
+		t.Fatalf("textPieces() last piece = %q, want it to end with %q", got, want)
+	}
+}
+
 func TestCatchUpRetriesWhatMayPass(t *testing.T) {
 	t.Parallel()
 	dm := &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM}

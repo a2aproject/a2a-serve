@@ -192,10 +192,26 @@ func (a *ChatApprovals) endQuestion(ctx context.Context, questionID, note string
 			continue
 		}
 		ref := messenger.Ref{Conv: messenger.ConvKey(m.Conv), ID: m.MessageID}
-		if err := ch.Edit(ctx, ref, messenger.Outbound{Conv: ref.Conv, Text: m.Text + "\n\n" + note, Literal: true}); err != nil {
+		text := withNote(m.Text, note, ch.Caps().MaxText)
+		if err := ch.Edit(ctx, ref, messenger.Outbound{Conv: ref.Conv, Text: text, Literal: true}); err != nil {
 			slog.Debug("updating a question message", "error", err)
 		}
 	}
+}
+
+// withNote returns text followed by note. If the result would exceed limit,
+// it keeps the end of text, so that the note and the last lines that the
+// answer refers to stay visible.
+func withNote(text, note string, limit int) string {
+	const sep = "\n\n"
+	room := limit - len(sep) - len(note)
+	if limit <= 0 || len(text) <= room {
+		return text + sep + note
+	}
+	if room <= 0 {
+		return note
+	}
+	return "…" + messenger.TruncateStart(text, room-len("…")) + sep + note
 }
 
 // Ask sends a question to a chat.
@@ -234,7 +250,9 @@ func (a *ChatApprovals) answerHint(ctx context.Context, rec store.Question, q *a
 // to a rate limit or a brief outage, and records it. It is pending in the
 // chat before it is sent, so that a reply typed right after it arrives
 // answers it. The text is shown literally: the owner has to see all of what
-// they approve.
+// they approve. text is the question without the hint on how to answer, which
+// out may end with. The record keeps the text of the last message without
+// the hint, which is what answering the question edits.
 func (a *ChatApprovals) sendQuestion(ctx context.Context, ch messenger.Messenger, out messenger.Outbound, questionID, text string, r *retrier) {
 	if err := a.store.AddPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
 		slog.Warn("recording pending question", "error", err)
@@ -253,7 +271,7 @@ func (a *ChatApprovals) sendQuestion(ctx context.Context, ch messenger.Messenger
 		}
 		return
 	}
-	if err := a.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Messenger: ch.Name(), Conv: string(ref.Conv), MessageID: ref.ID, Text: text}); err != nil {
+	if err := a.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Messenger: ch.Name(), Conv: string(ref.Conv), MessageID: ref.ID, Text: strings.TrimSuffix(ref.Text, strings.TrimPrefix(out.Text, text))}); err != nil {
 		slog.Warn("recording a question message", "error", err)
 	}
 }

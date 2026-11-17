@@ -820,13 +820,21 @@ func escapeWithin(text string, limit int) string {
 	return escaped
 }
 
-// messagePieces splits the text of m into messages.
-func messagePieces(m messenger.Outbound) []string {
+// textPieces splits the text of m into the parts of its messages, as given.
+func textPieces(m messenger.Outbound) []string {
 	if !m.Literal {
 		return messenger.Split(m.Text, maxText)
 	}
 	// Escaping at most doubles the size.
-	pieces := messenger.Split(m.Text, maxText/2)
+	return messenger.Split(m.Text, maxText/2)
+}
+
+// messagePieces splits the text of m into messages.
+func messagePieces(m messenger.Outbound) []string {
+	pieces := textPieces(m)
+	if !m.Literal {
+		return pieces
+	}
 	for i, p := range pieces {
 		pieces[i] = escapeMarkdown(p)
 	}
@@ -875,12 +883,17 @@ func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.R
 		return messenger.Ref{}, err
 	}
 	var ref messenger.Ref
-	for _, send := range messageSends(m) {
+	sends := messageSends(m)
+	for i, send := range sends {
 		msg, err := c.s.ChannelMessageSendComplex(string(m.Conv), send, discordgo.WithContext(ctx))
 		if err != nil {
 			return ref, fmt.Errorf("discord send: %w", err)
 		}
 		ref = messenger.Ref{Conv: m.Conv, ID: msg.ID}
+		if i == len(sends)-1 && send.Content != "" {
+			pieces := textPieces(m)
+			ref.Text = pieces[len(pieces)-1]
+		}
 		c.trackSent(string(m.Conv), msg.ID)
 	}
 	return ref, nil

@@ -576,6 +576,49 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	}
 }
 
+func TestDeletePairingDeletesSchedulesDeliveredToItsUsers(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "member"})
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "member"})
+	for _, sc := range []Schedule{
+		{Name: "anna-own", Cron: "@daily", Prompt: "p", UserID: "pair:anna"},
+		{Name: "owner-to-anna", Cron: "@daily", Prompt: "p", UserID: "user:owner", DeliverMessenger: "telegram", DeliverUser: "pair:anna"},
+		{Name: "bob-to-anna", Cron: "@daily", Prompt: "p", UserID: "pair:bob", DeliverMessenger: "telegram", DeliverUser: "pair:anna"},
+		{Name: "owner-to-bob", Cron: "@daily", Prompt: "p", UserID: "user:owner", DeliverMessenger: "telegram", DeliverUser: "pair:bob"},
+		{Name: "owner-own", Cron: "@daily", Prompt: "p", UserID: "user:owner"},
+	} {
+		if err := s.AddSchedule(ctx, sc); err != nil {
+			t.Fatalf("AddSchedule(%s) error = %v", sc.Name, err)
+		}
+	}
+
+	counts, err := s.PairingRemoval(ctx, "anna", usersOf("anna")...)
+	if err != nil {
+		t.Fatalf("Store.PairingRemoval() error = %v", err)
+	}
+	if counts.Schedules != 3 {
+		t.Fatalf("Store.PairingRemoval().Schedules = %d, want 3", counts.Schedules)
+	}
+	if err := s.DeletePairing(ctx, "anna", usersOf("anna")...); err != nil {
+		t.Fatalf("Store.DeletePairing() error = %v", err)
+	}
+
+	all, err := s.Schedules(ctx)
+	if err != nil {
+		t.Fatalf("Store.Schedules() error = %v", err)
+	}
+	var got []string
+	for _, sc := range all {
+		got = append(got, sc.Name)
+	}
+	slices.Sort(got)
+	if diff := cmp.Diff([]string{"owner-own", "owner-to-bob"}, got); diff != "" {
+		t.Fatalf("Store.Schedules() after DeletePairing() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
