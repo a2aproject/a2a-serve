@@ -820,3 +820,73 @@ func TestTakeReportsFailedRetention(t *testing.T) {
 		t.Fatalf("List() = %v, %v, want the new snapshot and the two old ones", snaps, err)
 	}
 }
+
+// stallingDest serves the first n bytes of each snapshot, then closes
+// stalled and blocks until the read context ends.
+type stallingDest struct {
+	Dest
+	n       int
+	stalled chan struct{}
+}
+
+func (s stallingDest) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	rc, err := s.Dest.Get(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &stallingReader{r: io.LimitReader(rc, int64(s.n)), c: rc, ctx: ctx, stalled: s.stalled}, nil
+}
+
+type stallingReader struct {
+	r       io.Reader
+	c       io.Closer
+	ctx     context.Context
+	stalled chan struct{}
+}
+
+func (r *stallingReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if !errors.Is(err, io.EOF) {
+		return n, err
+	}
+	close(r.stalled)
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
+
+func (r *stallingReader) Close() error { return r.c.Close() }
+
+func TestRestoreDirIsIgnoredByGitWhileExtracting(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, newAgent(t), inner, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+	dest := stallingDest{Dest: inner, n: 1000, stalled: make(chan struct{})}
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Restore(ctx, dest, snap.Name, "k", root, false)
+		done <- err
+	}()
+
+	<-dest.stalled
+	dirs, err := filepath.Glob(filepath.Join(root, agentdir.RestorePrefix+"*"))
+	if err != nil || len(dirs) != 1 {
+		t.Fatalf("restore directories = %v, %v, want one", dirs, err)
+	}
+	got, err := os.ReadFile(filepath.Join(dirs[0], ".gitignore"))
+	cancel()
+	if err != nil || string(got) != "*\n" {
+		t.Fatalf("restore directory .gitignore = %q, %v, want %q", got, err, "*\n")
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Restore() error = %v, want %v", err, context.Canceled)
+	}
+}

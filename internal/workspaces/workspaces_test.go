@@ -73,6 +73,7 @@ func TestPrepareOwnCopiesOnce(t *testing.T) {
 	writeFile(t, filepath.Join(src, ".git", "HEAD"), "ref")
 	writeFile(t, filepath.Join(src, ".a2a", "state", "secrets"), "KEY=v")
 	writeFile(t, filepath.Join(src, "sub", ".a2a", "config.yaml"), "x")
+	writeFile(t, filepath.Join(src, ".a2a.restore-123", "state", "secrets"), "KEY=v")
 	if err := os.Symlink("main.go", filepath.Join(src, "link")); err != nil {
 		t.Fatal(err)
 	}

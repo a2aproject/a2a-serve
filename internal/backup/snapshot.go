@@ -161,33 +161,37 @@ func stageDir(stateDir string) (dir string, release func() error, err error) {
 // removeLeftoverStages removes the staging directories in stateDir that no
 // backup holds locked.
 func removeLeftoverStages(stateDir string) {
-	removeLeftovers(filepath.Join(stateDir, "backup-*"), func(dir string) (func() error, error) {
+	err := removeLeftovers(filepath.Join(stateDir, "backup-*"), func(dir string) (func() error, error) {
 		return fsutil.TryLock(filepath.Join(dir, stageLock))
 	})
+	if err != nil {
+		slog.Warn("removing leftover backup files", "error", err)
+	}
 }
 
 // removeLeftovers removes the directories matching pattern whose lock it
-// can take, keeping the ones in use. A failure is logged: it doesn't stop
-// the operation that cleans up.
-func removeLeftovers(pattern string, lock func(dir string) (release func() error, err error)) {
+// can take, keeping the ones in use. It goes on after a failure, and
+// returns the failures.
+func removeLeftovers(pattern string, lock func(dir string) (release func() error, err error)) error {
 	dirs, err := filepath.Glob(pattern)
 	if err != nil {
-		slog.Warn("listing leftover directories", "pattern", pattern, "error", err)
-		return
+		return err
 	}
+	var errs []error
 	for _, dir := range dirs {
 		release, err := lock(dir)
 		if errors.Is(err, fsutil.ErrLocked) {
 			continue
 		}
 		if err != nil {
-			slog.Warn("checking a leftover directory", "dir", dir, "error", err)
+			errs = append(errs, fmt.Errorf("checking %s: %w", dir, err))
 			continue
 		}
 		if err := errors.Join(release(), os.RemoveAll(dir)); err != nil {
-			slog.Warn("removing a leftover directory", "dir", dir, "error", err)
+			errs = append(errs, fmt.Errorf("removing %s: %w", dir, err))
 		}
 	}
+	return errors.Join(errs...)
 }
 
 // addDB adds a copy of the database made with VACUUM INTO, which is

@@ -23,8 +23,16 @@ import (
 	"strings"
 )
 
+// RestorePrefix starts the names of the directories next to .a2a that
+// `backup restore` extracts a snapshot into. Until the restore renames one
+// to .a2a, it holds the agent's secrets.
+const RestorePrefix = Name + ".restore-"
+
+// IsAgentEntry reports whether name is .a2a or a directory of RestorePrefix.
+func IsAgentEntry(name string) bool { return name == Name || strings.HasPrefix(name, RestorePrefix) }
+
 // FindBelow returns the .a2a entries in root and below it, directories or
-// symlinks, without descending into them. It fails after visiting more
+// symlinks, and the directories of restores, without descending into them. It fails after visiting more
 // than limit directories. Directories it may not read are skipped: the
 // sandbox, which runs as the same user, can't read them either.
 func FindBelow(root string, limit int) ([]string, error) {
@@ -37,7 +45,7 @@ func FindBelow(root string, limit int) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if e.Name() == Name && path != root && (e.IsDir() || e.Type()&fs.ModeSymlink != 0) {
+		if IsAgentEntry(e.Name()) && path != root && (e.IsDir() || e.Type()&fs.ModeSymlink != 0) {
 			out = append(out, path)
 			if e.IsDir() {
 				return fs.SkipDir

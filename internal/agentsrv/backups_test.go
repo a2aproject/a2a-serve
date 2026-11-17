@@ -17,6 +17,9 @@ package agentsrv
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestServerTakesBackups(t *testing.T) {
@@ -112,5 +116,23 @@ func TestBackupsRecord(t *testing.T) {
 				t.Fatalf("backups.get() after record() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestStartRemovesLeftoverRestores(t *testing.T) {
+	t.Parallel()
+	dir := testutil.ShortTempDir(t)
+	leftover := filepath.Join(dir, agentdir.RestorePrefix+"1")
+	if err := os.MkdirAll(filepath.Join(leftover, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leftover, "state", "secrets"), []byte("KEY: plaintext\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	startServer(t, serverOpts{dir: dir})
+
+	if _, err := os.Stat(leftover); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("os.Stat(leftover restore) after start error = %v, want %v", err, fs.ErrNotExist)
 	}
 }

@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +84,9 @@ on the old host before taking over.
 				return err
 			}
 			// Installed after the key prompt, which Ctrl-C still interrupts.
-			ctx, stop := signalContext(ctx)
+			// A closed SSH session sends SIGHUP, which would otherwise leave
+			// the plaintext secrets of a partial restore behind.
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer stop()
 			dest, err := backup.Open(args[0], nil)
 			if err != nil {

@@ -282,8 +282,11 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 			return nil, err
 		}
 	}
-	if err := agentdir.WriteGitignore(tmp); err != nil {
-		return nil, err
+	if !slices.ContainsFunc(committed, func(f committedFile) bool { return f.name == ".gitignore" }) {
+		// Replaced atomically, so git ignores the secrets in tmp throughout.
+		if err := fsutil.WriteAtomic(filepath.Join(tmp, ".gitignore"), []byte(agentdir.Gitignore), 0o644); err != nil {
+			return nil, err
+		}
 	}
 	return notes, moveIntoPlace(tmp, d.Path(), committed)
 }
@@ -381,17 +384,21 @@ func removeCreated(dir, created string) {
 }
 
 // restoreDir creates the directory next to the .a2a directory of d to
-// restore into, and returns it locked. It first removes the directories of
+// restore into, with a .gitignore that keeps all of it out of git, and
+// returns it locked. It first removes the directories of
 // interrupted restores, which can hold plaintext secrets, keeping the ones
 // that another restore holds locked. The lock on the root keeps a
 // concurrent restore from removing a directory before it is locked.
 func restoreDir(d agentdir.Dir) (dir string, release func() error, err error) {
 	err = fsutil.WithDirLock(d.Root, func() error {
-		removeLeftovers(filepath.Join(d.Root, agentdir.Name+".restore-*"), func(dir string) (func() error, error) {
-			return lockRestored(d, dir)
-		})
-		if dir, err = os.MkdirTemp(d.Root, agentdir.Name+".restore-"); err != nil {
+		if err := removeLeftoverRestores(d); err != nil {
+			slog.Warn("removing leftovers of interrupted restores", "error", err)
+		}
+		if dir, err = os.MkdirTemp(d.Root, agentdir.RestorePrefix); err != nil {
 			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+			return errors.Join(err, os.RemoveAll(dir))
 		}
 		if release, err = lockRestored(d, dir); err != nil {
 			return errors.Join(err, os.RemoveAll(dir))
@@ -399,6 +406,44 @@ func restoreDir(d agentdir.Dir) (dir string, release func() error, err error) {
 		return nil
 	})
 	return dir, release, err
+}
+
+// LeftoverRestores returns the directories that interrupted restores into
+// the root of d left behind, which can hold plaintext secrets. A directory
+// that a restore in progress holds locked isn't one.
+func LeftoverRestores(d agentdir.Dir) ([]string, error) {
+	dirs, err := filepath.Glob(filepath.Join(d.Root, agentdir.RestorePrefix+"*"))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, dir := range dirs {
+		release, err := lockRestored(d, dir)
+		if errors.Is(err, fsutil.ErrLocked) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := release(); err != nil {
+			return nil, err
+		}
+		out = append(out, dir)
+	}
+	return out, nil
+}
+
+// RemoveLeftoverRestores removes the directories of [LeftoverRestores].
+func RemoveLeftoverRestores(d agentdir.Dir) error {
+	return fsutil.WithDirLock(d.Root, func() error { return removeLeftoverRestores(d) })
+}
+
+// removeLeftoverRestores is [RemoveLeftoverRestores] for a caller that
+// holds the lock of the root.
+func removeLeftoverRestores(d agentdir.Dir) error {
+	return removeLeftovers(filepath.Join(d.Root, agentdir.RestorePrefix+"*"), func(dir string) (func() error, error) {
+		return lockRestored(d, dir)
+	})
 }
 
 // lockRestored takes the lock of the agent directory of d in tmp, where it

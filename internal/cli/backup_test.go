@@ -15,11 +15,16 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
@@ -153,5 +158,72 @@ esac
 	entries, err := os.ReadDir(store)
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("os.ReadDir(bucket) = %v, %v, want the new snapshot and the old one", entries, err)
+	}
+}
+
+// envRunCLI makes the test binary run the CLI with the arguments it holds,
+// one per line.
+const envRunCLI = "A2A_SERVE_TEST_RUN_CLI"
+
+func TestRestoreCleansUpOnHangup(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGHUP on this platform")
+	}
+	bucket := t.TempDir()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Backup: agentdir.BackupConfig{To: bucket, Key: "secret:BACKUP_KEY"}})
+	if err := d.SaveSecrets(agentdir.Secrets{"BACKUP_KEY": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCMD(t, "backup", "now", "--dir", d.Root); err != nil {
+		t.Fatalf("a2a-serve backup now error = %v", err)
+	}
+	bin := t.TempDir()
+	script := `#!/bin/sh
+case "$2" in
+ls) ls "$FAKE_BUCKET" | sed "s|^|$3|" ;;
+cat) head -c 1000 "$FAKE_BUCKET/$(basename "$3")"; exec sleep 60 ;;
+esac
+`
+	testutil.WriteExecutable(t, filepath.Join(bin, "gcloud"), []byte(script))
+	target := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe)
+	args := []string{"backup", "restore", "gs://bucket/coder", "--dir", target, "--backup-key", "k"}
+	cmd.Env = append(os.Environ(), envRunCLI+"="+strings.Join(args, "\n"), "FAKE_BUCKET="+bucket,
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GORACE=atexit_sleep_ms=0")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting the restore: %v", err)
+	}
+	pattern := filepath.Join(target, agentdir.RestorePrefix+"*")
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if dirs, _ := filepath.Glob(pattern); len(dirs) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the restore didn't start extracting; stderr: %s", stderr.String())
+		}
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("hanging up the restore: %v", err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(30 * time.Second):
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("killing the restore: %v", err)
+		}
+		t.Fatalf("the restore didn't exit after a hangup; stderr: %s", stderr.String())
+	}
+	if dirs, err := filepath.Glob(pattern); err != nil || len(dirs) > 0 {
+		t.Fatalf("restore directories after a hangup = %v, %v, want none; stderr: %s", dirs, err, stderr.String())
 	}
 }

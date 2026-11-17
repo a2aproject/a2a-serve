@@ -438,6 +438,9 @@ func (d Dir) mkdirState() error {
 	return fsutil.MkdirOwned(d.StateDir())
 }
 
+// Gitignore is the content of the .gitignore of an .a2a directory.
+const Gitignore = "state/\n"
+
 // WriteGitignore writes the .gitignore which keeps state out of version
 // control into dir, an .a2a directory, unless dir has one. It leaves a
 // symlink in its place alone, even one to a missing file.
@@ -449,7 +452,7 @@ func WriteGitignore(dir string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString("state/\n"); err != nil {
+	if _, err := f.WriteString(Gitignore); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	return f.Close()
