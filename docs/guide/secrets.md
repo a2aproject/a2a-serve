@@ -81,6 +81,8 @@ What the rules don't protect:
 
 Flags that give the server a token or password, such as `messenger add --token`, `config set --tailscale-authkey` or `config set --voice-key`, store the value in `state/secrets` too. The agent never sees these values.
 
+A token is deleted with the setting that uses it: `messenger rm` deletes the messenger's token, `config unset google-client-id` deletes the Google app's secret, and leaving the last network URL deletes its join token.
+
 ### Value forms
 
 | Form | Meaning |

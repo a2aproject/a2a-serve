@@ -530,3 +530,137 @@ func TestEditRefusesDraftOfOlderFile(t *testing.T) {
 		t.Fatalf("saved config = %+v, want only the change saved since", cfg)
 	}
 }
+
+func TestEditRepairsFileThatDoesNotParseWithAMessenger(t *testing.T) {
+	t.Parallel()
+	const (
+		messengers = "messengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"
+		fixed      = "name: coder\nagent: opencode\nport: 39487\n" + messengers
+	)
+	tests := []struct {
+		name string
+		file string
+	}{
+		{name: "a typo", file: "name: coder\nagent: opencode\nport: 39487x\n" + messengers},
+		{name: "a merge conflict marker", file: "name: coder\nagent: opencode\n<<<<<<< HEAD\nport: 39487\n=======\nport: 39488\n>>>>>>> theirs\n" + messengers},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, agentdir.Secrets{agentdir.SecretTelegram: "123:abc"})
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.file), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			giveUp := func(error) (bool, error) { return false, nil }
+
+			if _, err := Edit(t.Context(), d, controlapi.NewClient(d), func(path string) error { return os.WriteFile(path, []byte(fixed), 0o600) }, giveUp); err != nil {
+				t.Fatalf("Edit() error = %v", err)
+			}
+
+			var opened string
+			if _, err := Edit(t.Context(), d, controlapi.NewClient(d), func(path string) error {
+				data, err := os.ReadFile(path)
+				opened = string(data)
+				return err
+			}, giveUp); err != nil {
+				t.Fatalf("second Edit() error = %v", err)
+			}
+			if diff := cmp.Diff(fixed, opened); diff != "" {
+				t.Fatalf("second Edit() opened wrong content (-want +got) diff = %s", diff)
+			}
+			if _, err := os.Stat(d.ConfigDraftPath()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("os.Stat(draft) error = %v, want no draft", err)
+			}
+		})
+	}
+}
+
+func TestEditStillRefusesMessengersOfAFileWithATypo(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, agentdir.Secrets{agentdir.SecretTelegram: "123:abc", "TOK": "t2"})
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nport: 39487x\nmessengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(path string) error {
+		return os.WriteFile(path, []byte("name: coder\nagent: opencode\nport: 39487\nmessengers:\n    telegram:\n        token: secret:TOK\n"), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if err == nil || !strings.Contains(err.Error(), "messengers are changed with a2a-serve messenger add") {
+		t.Fatalf("Edit() error = %v, want the messengers refused", err)
+	}
+}
+
+func TestEditSavesWhenOnlyMissingSecretsRemain(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nport: 39487x\nsecrets:\n    - API_A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const fixed = "name: coder\nagent: opencode\nport: 39487\nsecrets:\n    - API_A\n"
+	edit := func(path string) error { return os.WriteFile(path, []byte(fixed), 0o600) }
+
+	res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	want := []string{"config.yaml: secret API_A is not stored: run `a2a-serve config set --secret API_A` with the variable set"}
+	if diff := cmp.Diff(want, res.Problems); diff != "" {
+		t.Fatalf("Edit() problems wrong result (-want +got) diff = %s", diff)
+	}
+	if got, err := os.ReadFile(d.ConfigPath()); err != nil || string(got) != fixed {
+		t.Fatalf("config.yaml = %q, %v, want %q", got, err, fixed)
+	}
+}
+
+func TestEditRefusesAProblemTheFileHad(t *testing.T) {
+	t.Parallel()
+	const file = "name: coder\nagent: opencode\nsandbox: vm\n"
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	if err := os.WriteFile(d.ConfigPath(), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(path string) error {
+		return os.WriteFile(path, []byte("name: coder\nagent: opencode\nsandbox: vm\ndescription: reviews code\n"), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if err == nil || !strings.Contains(err.Error(), `config.yaml: sandbox has "vm"`) {
+		t.Fatalf("Edit() error = %v, want the sandbox refused", err)
+	}
+	if got, err := os.ReadFile(d.ConfigPath()); err != nil || string(got) != file {
+		t.Fatalf("config.yaml = %q, %v, want it unchanged", got, err)
+	}
+}
+
+func TestEditAppliesTheDraftOfAFileThatDoesNotParse(t *testing.T) {
+	t.Parallel()
+	const (
+		broken = "name: coder\nagent: opencode\nport: 39487x\nmessengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"
+		fixed  = "name: coder\nagent: opencode\nport: 39487\nmessengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"
+	)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, agentdir.Secrets{agentdir.SecretTelegram: "123:abc"})
+	if err := os.WriteFile(d.ConfigPath(), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.ConfigDraftPath(), []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.ConfigDraftBasePath(), []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), func(string) error { return nil }, func(error) (bool, error) { return false, nil }); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	if got, err := os.ReadFile(d.ConfigPath()); err != nil || string(got) != fixed {
+		t.Fatalf("config.yaml = %q, %v, want %q", got, err, fixed)
+	}
+	if _, err := os.Stat(d.ConfigDraftPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(draft) error = %v, want the draft removed", err)
+	}
+}

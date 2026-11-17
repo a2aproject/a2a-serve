@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -1039,71 +1040,60 @@ func TestApplyThen(t *testing.T) {
 func TestApplyToInvalidFile(t *testing.T) {
 	t.Parallel()
 	const file = "name: coder\nagent: opencode\napprovals:\n    deny:\n        - exec\n"
+	setSandbox := func(d agentdir.Dir) (*Result, error) {
+		return Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+	}
 	tests := []struct {
-		name     string
-		file     string
-		apply    func(d agentdir.Dir) error
-		wantErr  string
-		wantHint string
-		wantDeny []string
+		name         string
+		file         string
+		apply        func(d agentdir.Dir) (*Result, error)
+		wantErr      string
+		wantHint     string
+		wantProblems []string
+		wantDeny     []string
 	}{
 		{
 			name: "unset repairs the file",
 			file: file,
-			apply: func(d agentdir.Dir) error {
-				_, err := Unset(t.Context(), d, controlapi.NewClient(d), "deny-tools", []string{"exec"}, false)
-				return err
+			apply: func(d agentdir.Dir) (*Result, error) {
+				return Unset(t.Context(), d, controlapi.NewClient(d), "deny-tools", []string{"exec"}, false)
 			},
 		},
 		{
 			name: "set names the entry in the file",
 			file: file,
-			apply: func(d agentdir.Dir) error {
-				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"execute"}}, false)
-				return err
+			apply: func(d agentdir.Dir) (*Result, error) {
+				return Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"execute"}}, false)
 			},
-			wantErr:  `config.yaml: approvals.deny has "exec"`,
-			wantHint: "fix it with `a2a-serve config unset deny-tools exec`",
-			wantDeny: []string{"exec"},
+			wantProblems: []string{`config.yaml: approvals.deny has "exec": want ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other) or a glob such as *, tool:<server>.<tool> or command:<command>: fix it with ` + "`a2a-serve config unset deny-tools exec`"},
+			wantDeny:     []string{"exec", "execute"},
 		},
 		{
 			name: "set names the flag",
 			file: "name: coder\nagent: opencode\n",
-			apply: func(d agentdir.Dir) error {
-				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"exec"}}, false)
-				return err
+			apply: func(d agentdir.Dir) (*Result, error) {
+				return Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"exec"}}, false)
 			},
 			wantErr: `invalid --deny-tools "exec"`,
 		},
 		{
-			name: "a file that doesn't parse",
-			file: "name: coder\nsandbox: [\n",
-			apply: func(d agentdir.Dir) error {
-				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
-				return err
-			},
+			name:     "a file that doesn't parse",
+			file:     "name: coder\nsandbox: [\n",
+			apply:    setSandbox,
 			wantErr:  "config.yaml: yaml: line 2",
 			wantHint: "fix it with `a2a-serve config edit`",
 		},
 		{
-			name: "a card skill without an id",
-			file: "name: coder\nagent: opencode\ncard:\n    skills:\n        - name: Review\n",
-			apply: func(d agentdir.Dir) error {
-				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
-				return err
-			},
-			wantErr:  `config.yaml: card.skills has a skill named "Review": want a non-empty id`,
-			wantHint: "fix it with `a2a-serve config edit`",
+			name:         "a card skill without an id",
+			file:         "name: coder\nagent: opencode\ncard:\n    skills:\n        - name: Review\n",
+			apply:        setSandbox,
+			wantProblems: []string{`config.yaml: card.skills has a skill named "Review": want a non-empty id`},
 		},
 		{
-			name: "a problem without a key in the file",
-			file: "name: coder\nagent: opencode\nbackup:\n    to: /backups\n",
-			apply: func(d agentdir.Dir) error {
-				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
-				return err
-			},
-			wantErr:  "config.yaml: --backup needs --backup-key",
-			wantHint: "fix it with `a2a-serve config edit`",
+			name:         "a problem without a key in the file",
+			file:         "name: coder\nagent: opencode\nbackup:\n    to: /backups\n",
+			apply:        setSandbox,
+			wantProblems: []string{"config.yaml: --backup needs --backup-key: snapshots are always encrypted"},
 		},
 	}
 	for _, tc := range tests {
@@ -1114,7 +1104,7 @@ func TestApplyToInvalidFile(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := tc.apply(d)
+			res, err := tc.apply(d)
 
 			if tc.wantErr == "" && err != nil {
 				t.Fatalf("apply() error = %v, want nil", err)
@@ -1131,8 +1121,310 @@ func TestApplyToInvalidFile(t *testing.T) {
 			if tc.wantErr != "" {
 				return
 			}
+			if diff := cmp.Diff(tc.wantProblems, res.Problems); diff != "" {
+				t.Fatalf("apply() problems wrong result (-want +got) diff = %s", diff)
+			}
 			if diff := cmp.Diff(tc.wantDeny, loadConfig(t, d).Approvals.Deny); diff != "" {
 				t.Fatalf("saved deny-tools wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestApplySavesChangesThatAddNoProblem(t *testing.T) {
+	t.Parallel()
+	set := func(s agentdir.Settings) func(agentdir.Dir) (*Result, error) {
+		return func(d agentdir.Dir) (*Result, error) { return Set(t.Context(), d, controlapi.NewClient(d), s, false) }
+	}
+	unset := func(setting string) func(agentdir.Dir) (*Result, error) {
+		return func(d agentdir.Dir) (*Result, error) {
+			return Unset(t.Context(), d, controlapi.NewClient(d), setting, nil, false)
+		}
+	}
+	const (
+		clone      = "name: coder\nagent: opencode\nsecrets:\n    - API_A\n    - API_B\n"
+		cloneMount = "name: coder\nagent: opencode\nmounts:\n    - /nonexistent-a2a:/docs\nsecrets:\n    - API_A\n"
+		lan        = "name: coder\nagent: opencode\nnetwork:\n    private: lan\nmessengers:\n    telegram:\n        token: secret:TELEGRAM_BOT_TOKEN\n"
+	)
+	missingB := "config.yaml: secret API_B is not stored: run `a2a-serve config set --secret API_B` with the variable set"
+	tests := []struct {
+		name  string
+		file  string
+		steps []func(agentdir.Dir) (*Result, error)
+		// wantProblems are the problems each step reports, or nil for a
+		// step that is refused.
+		wantProblems [][]string
+		wantSecrets  agentdir.Secrets
+	}{
+		{
+			name: "two missing secrets fixed one at a time",
+			file: clone,
+			steps: []func(agentdir.Dir) (*Result, error){
+				set(agentdir.Settings{Secrets: []string{"API_A"}, SecretValues: agentdir.Secrets{"API_A": "a"}}),
+				set(agentdir.Settings{Secrets: []string{"API_B"}, SecretValues: agentdir.Secrets{"API_B": "b"}}),
+			},
+			wantProblems: [][]string{{missingB}, {}},
+			wantSecrets:  agentdir.Secrets{"API_A": "a", "API_B": "b"},
+		},
+		{
+			name: "missing mount source and missing secret",
+			file: cloneMount,
+			steps: []func(agentdir.Dir) (*Result, error){
+				set(agentdir.Settings{Secrets: []string{"API_A"}, SecretValues: agentdir.Secrets{"API_A": "a"}}),
+			},
+			wantProblems: [][]string{{"config.yaml: --mount /nonexistent-a2a:/docs: the source does not exist"}},
+			wantSecrets:  agentdir.Secrets{"API_A": "a"},
+		},
+		{
+			name: "a change that adds a problem is refused",
+			file: clone,
+			steps: []func(agentdir.Dir) (*Result, error){
+				set(agentdir.Settings{Secrets: []string{"API_A"}, SecretValues: agentdir.Secrets{"API_A": "a"}, Mounts: []string{"/nonexistent-a2a"}}),
+			},
+			wantProblems: [][]string{nil},
+			wantSecrets:  agentdir.Secrets{},
+		},
+		{
+			name: "private lan with a messenger whose secret is missing",
+			file: lan,
+			steps: []func(agentdir.Dir) (*Result, error){
+				unset("private"),
+				func(d agentdir.Dir) (*Result, error) {
+					m, closer, err := Open(t.Context(), d, controlapi.NewClient(d))
+					if err != nil {
+						return nil, err
+					}
+					_, err = m.DeleteMessenger(t.Context(), agentdir.MessengerTelegram)
+					return &Result{}, errors.Join(err, closer.Close())
+				},
+			},
+			wantProblems: [][]string{{"config.yaml: telegram token (a2a-serve messenger add telegram --token): secret TELEGRAM_BOT_TOKEN is not set; pass it again with the flag that set it"}, {}},
+			wantSecrets:  agentdir.Secrets{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.file), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for i, step := range tc.steps {
+				before, err := os.ReadFile(d.ConfigPath())
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := step(d)
+				if tc.wantProblems[i] == nil {
+					var se *agentdir.SettingsError
+					if !errors.As(err, &se) {
+						t.Fatalf("step %d error = %v, want a SettingsError", i, err)
+					}
+					if after, rerr := os.ReadFile(d.ConfigPath()); rerr != nil || string(after) != string(before) {
+						t.Fatalf("step %d changed config.yaml to %q, %v, want it unchanged", i, after, rerr)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("step %d error = %v, want nil", i, err)
+				}
+				if diff := cmp.Diff(tc.wantProblems[i], res.Problems, cmpopts.EquateEmpty()); diff != "" {
+					t.Fatalf("step %d problems wrong result (-want +got) diff = %s", i, diff)
+				}
+			}
+			secrets, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.wantSecrets, secrets); diff != "" {
+				t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+			}
+			if last := tc.wantProblems[len(tc.wantProblems)-1]; last != nil && len(last) == 0 {
+				if _, err := d.LoadConfig(); err != nil {
+					t.Fatalf("LoadConfig() error = %v, want a valid config", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSetMovingASecretKeepsItStored(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{
+		Name: "coder", Harness: "opencode",
+		Voice: agentdir.VoiceConfig{Service: "openai", Key: "secret:" + agentdir.SecretVoiceKey},
+	}, agentdir.Secrets{agentdir.SecretVoiceKey: "sk-voice"})
+
+	_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{
+		Secrets:       []string{"OPENAI_API_KEY"},
+		SecretSources: map[string]string{"OPENAI_API_KEY": agentdir.SecretVoiceKey},
+		VoiceKey:      "secret:OPENAI_API_KEY",
+	}, false)
+
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if got, want := loadConfig(t, d).Voice.Key, "secret:OPENAI_API_KEY"; got != want {
+		t.Fatalf("saved voice key = %q, want %q", got, want)
+	}
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatalf("LoadSecrets() error = %v", err)
+	}
+	if diff := cmp.Diff(agentdir.Secrets{"OPENAI_API_KEY": "sk-voice"}, secrets); diff != "" {
+		t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestUnsetGoogleApp(t *testing.T) {
+	t.Parallel()
+	for _, setting := range []string{"google-client-id", "google-client-secret"} {
+		t.Run(setting, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{
+				Name: "coder", Harness: "opencode",
+				Policy: agentdir.PolicyConfig{AllowEmails: []string{"anna@example.com"}},
+				Auth:   agentdir.AuthConfig{GoogleClientID: "id.apps.googleusercontent.com", GoogleClientSecret: "secret:" + agentdir.SecretGoogleClient},
+			}, agentdir.Secrets{agentdir.SecretGoogleClient: "gsecret"})
+
+			got, err := Unset(t.Context(), d, controlapi.NewClient(d), setting, nil, false)
+
+			if err != nil {
+				t.Fatalf("Unset(%s) error = %v", setting, err)
+			}
+			if diff := cmp.Diff([]SecretChange{{Name: agentdir.SecretGoogleClient, Action: SecretDeleted}}, got.Secrets); diff != "" {
+				t.Fatalf("Unset(%s) wrong secrets (-want +got) diff = %s", setting, diff)
+			}
+			if diff := cmp.Diff(agentdir.AuthConfig{}, loadConfig(t, d).Auth); diff != "" {
+				t.Fatalf("saved auth wrong result (-want +got) diff = %s", diff)
+			}
+			secrets, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(agentdir.Secrets{}, secrets); diff != "" {
+				t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestUnsetLastAllowedEmailOfAGoogleAppNamesTheFix(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{
+		Name: "coder", Harness: "opencode",
+		Policy: agentdir.PolicyConfig{AllowEmails: []string{"anna@example.com"}},
+		Auth:   agentdir.AuthConfig{GoogleClientID: "id.apps.googleusercontent.com", GoogleClientSecret: "secret:" + agentdir.SecretGoogleClient},
+	}, agentdir.Secrets{agentdir.SecretGoogleClient: "gsecret"})
+
+	_, err := Unset(t.Context(), d, controlapi.NewClient(d), "allow-email", []string{"anna@example.com"}, false)
+
+	const hint = "fix it with `a2a-serve config unset google-client-id`"
+	if got := agenterr.HintText(err); got != hint {
+		t.Fatalf("Unset(allow-email) error = %v, hint %q, want hint %q", err, got, hint)
+	}
+	if _, err := Unset(t.Context(), d, controlapi.NewClient(d), "google-client-id", nil, false); err != nil {
+		t.Fatalf("Unset(google-client-id) error = %v", err)
+	}
+	if _, err := Unset(t.Context(), d, controlapi.NewClient(d), "allow-email", []string{"anna@example.com"}, false); err != nil {
+		t.Fatalf("Unset(allow-email) after the hint error = %v", err)
+	}
+}
+
+func TestLeavingANetworkDeletesItsToken(t *testing.T) {
+	t.Parallel()
+	const (
+		relay = "https://relay.example.com"
+		other = "https://other.example.com"
+	)
+	tokens := agentdir.Secrets{agentdir.SecretNetworkToken: "join", agentdir.SecretRelayToken: "old"}
+	tests := []struct {
+		name  string
+		cfg   agentdir.NetworkConfig
+		leave func(context.Context, agentdir.Dir, *controlapi.Client) (*Result, error)
+		want  agentdir.Secrets
+	}{
+		{
+			name: "unset private",
+			cfg:  agentdir.NetworkConfig{Private: relay},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Unset(ctx, d, c, "private", nil, false)
+			},
+			want: agentdir.Secrets{},
+		},
+		{
+			name: "set private tailscale",
+			cfg:  agentdir.NetworkConfig{Private: relay},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Private: "tailscale"}, false)
+			},
+			want: agentdir.Secrets{},
+		},
+		{
+			name: "set private to another URL",
+			cfg:  agentdir.NetworkConfig{Private: relay},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Set(ctx, d, c, agentdir.Settings{Private: other}, false)
+			},
+			want: tokens,
+		},
+		{
+			name: "unset private keeps the public URL",
+			cfg:  agentdir.NetworkConfig{Private: relay, Public: relay},
+			leave: func(ctx context.Context, d agentdir.Dir, c *controlapi.Client) (*Result, error) {
+				return Unset(ctx, d, c, "private", nil, false)
+			},
+			want: tokens,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: tc.cfg}, tokens)
+
+			if _, err := tc.leave(t.Context(), d, controlapi.NewClient(d)); err != nil {
+				t.Fatalf("leave error = %v", err)
+			}
+
+			secrets, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, secrets); diff != "" {
+				t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestSetDescriptionOnAProviderNetworkWaitsForRestart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		network     agentdir.NetworkConfig
+		wantApplied []string
+		wantRestart []string
+	}{
+		{name: "provider network", network: agentdir.NetworkConfig{Private: "https://relay.example.com"}, wantRestart: []string{"description"}},
+		{name: "tailscale", network: agentdir.NetworkConfig{Private: "tailscale"}, wantApplied: []string{"description"}},
+		{name: "a config that doesn't validate", network: agentdir.NetworkConfig{Private: "lan"}, wantRestart: []string{"description"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: tc.network}, nil)
+			serveFake(t, d, &fakeServer{})
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Description: "reviews code"}, false)
+
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.wantApplied, got.Applied); diff != "" {
+				t.Fatalf("Set().Applied wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
+				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

@@ -547,18 +547,42 @@ func ParseConfig(data []byte) (*Config, error) {
 			return nil, err
 		}
 	}
-	if cfg.Harness == "" {
-		cfg.Harness = cfg.LegacyHarness
-	}
-	cfg.LegacyHarness = ""
-	if cfg.Workspace == defaultWorkspace {
-		cfg.Workspace = ""
-	}
-	if len(cfg.Mounts) == 0 {
-		cfg.Mounts = nil
-	}
-	cfg.Policy.normalize()
+	cfg.normalize()
 	return &cfg, nil
+}
+
+// PartialConfig decodes what it can of the config.yaml content data that
+// [ParseConfig] rejects for values of the wrong type, leaving those values
+// out. ok is false when data isn't YAML, and the config is empty then.
+func PartialConfig(data []byte) (_ *Config, ok bool) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return &Config{}, false
+	}
+	renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
+	var cfg Config
+	var typeErr *yaml.TypeError
+	if err := doc.Decode(&cfg); err != nil && !errors.As(err, &typeErr) {
+		return &Config{}, false
+	}
+	cfg.normalize()
+	return &cfg, true
+}
+
+// normalize rewrites the values of a parsed config that have several
+// spellings, such as legacy keys, to the one the server uses.
+func (c *Config) normalize() {
+	if c.Harness == "" {
+		c.Harness = c.LegacyHarness
+	}
+	c.LegacyHarness = ""
+	if c.Workspace == defaultWorkspace {
+		c.Workspace = ""
+	}
+	if len(c.Mounts) == 0 {
+		c.Mounts = nil
+	}
+	c.Policy.normalize()
 }
 
 // UnknownKey is a key of config.yaml that Config doesn't have.

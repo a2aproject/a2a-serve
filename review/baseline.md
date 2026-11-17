@@ -56,6 +56,8 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **One-time `--at` schedules skip the 5-minute minimum between runs** (at `5bd409f`: `internal/schedulesvc/schedules.go:59-62`). A one-time schedule runs once, and the cap of 50 schedules still holds.
 - **Nothing caps the open watches of calls to other agents** (from the release review at `3890ffe`: `internal/agentsrv/agentproxy/harness_proxy.go:555-583`). Each call that doesn't finish at once keeps a poller for up to 7 days. Reaching many of them takes a misbehaving model, and the per-caller task limits bound the calls a person starts.
 
+- **A running agent on a network provider sends a new description to the network only at its next start** (from #564). `config set --description` reports the description as waiting for a restart. A provider protocol method that updates the description is deferred.
+
 ### Performance
 
 - **The event bus subscription queue has no bound** (`internal/agentsrv/executor.go:504-533`). The length of one task bounds it.

@@ -46,9 +46,10 @@ type offline struct {
 }
 
 // openOffline opens the database of the agent in d, whose directory lock
-// release releases.
+// release releases. A config.yaml that parses but doesn't validate still
+// opens, so that removing a messenger can repair it.
 func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
-	cfg, err := d.LoadConfig()
+	cfg, err := d.ReadConfig()
 	if err != nil {
 		return nil, err
 	}

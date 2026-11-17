@@ -82,12 +82,6 @@ func TestUsageHints(t *testing.T) {
 		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", "{dir}"}, want: "run `a2a-serve config unset --help` for its flags"},
 		{name: "invalid flag value", args: []string{"config", "set", "--deny-tools", "exec", "--dir", "{dir}"}, want: "run `a2a-serve config set --help` for its flags"},
 		{
-			name: "invalid entry in the file",
-			file: "name: coder\nagent: opencode\napprovals:\n    deny: [exec]\n",
-			args: []string{"config", "set", "--deny-tools", "execute", "--dir", "{dir}"},
-			want: "fix it with `a2a-serve config unset deny-tools exec`",
-		},
-		{
 			name: "invalid file on start",
 			file: "name: coder\nagent: opencode\nsandbox: vm\n",
 			args: []string{"start", "--dir", "{dir}"},

@@ -24,8 +24,8 @@ import (
 )
 
 // FieldError is an invalid entry of a setting. It names the setting by its
-// flag, or by its key in config.yaml once [FileProblems] or
-// [FileProblemsOf] found the entry there.
+// flag, or by its key in config.yaml once [FileProblems] found the entry
+// there.
 type FieldError struct {
 	Flag  string
 	Entry string
@@ -85,15 +85,42 @@ func EditProblems(err error) error {
 	return markProblems(err, func(error) bool { return true }, func(*FieldError) (agenterr.Hint, string) { return agenterr.HintConfigEdit, "" })
 }
 
-// FileProblemsOf is [FileProblems] for the problems of err that old, the
-// error of the saved config, has too. The others are problems of the
-// settings just given, and keep naming their flags.
-func FileProblemsOf(err, old error) error {
-	var saved []string
-	for _, p := range problems(old) {
-		saved = append(saved, p.Error())
+// AddedProblems returns the problems of err, the error of a changed
+// config, that before, the error of the config before the change, doesn't
+// have, joined. They keep naming their flags.
+func AddedProblems(err, before error) error {
+	var had []string
+	for _, p := range problems(before) {
+		had = append(had, p.Error())
 	}
-	return markProblems(err, func(p error) bool { return slices.Contains(saved, p.Error()) }, fixHint)
+	var out []error
+	for _, p := range problems(err) {
+		if !slices.Contains(had, p.Error()) {
+			out = append(out, p)
+		}
+	}
+	return errors.Join(out...)
+}
+
+// ProblemTexts words each problem of err as a problem of config.yaml,
+// followed by the command that fixes it where one names its entry.
+func ProblemTexts(err error) []string {
+	var out []string
+	for _, p := range problems(err) {
+		var fe *FieldError
+		if !errors.As(p, &fe) {
+			out = append(out, (&fileError{err: p}).Error())
+			continue
+		}
+		marked := *fe
+		marked.inFile = true
+		text := marked.Error()
+		if h, arg := fixHint(fe); h != agenterr.HintConfigEdit {
+			text += ": " + agenterr.HintText(agenterr.WithHint(p, h, arg))
+		}
+		out = append(out, text)
+	}
+	return out
 }
 
 func markProblems(err error, inFile func(error) bool, fix func(*FieldError) (agenterr.Hint, string)) error {
