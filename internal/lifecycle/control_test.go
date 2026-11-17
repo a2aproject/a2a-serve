@@ -16,10 +16,12 @@ package lifecycle
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -142,6 +144,18 @@ func pidFileProcess(t *testing.T, dir agentdir.Dir) *fakeProcess {
 	})
 	if err := os.WriteFile(dir.PIDPath(), []byte(strconv.Itoa(p.pid)), 0o600); err != nil {
 		t.Fatalf("writing the PID file: %v", err)
+	}
+	return p
+}
+
+// serverWithoutSocket simulates a server that holds the lock of dir and
+// recorded its control socket, which is gone.
+func serverWithoutSocket(t *testing.T, dir agentdir.Dir) *fakeProcess {
+	t.Helper()
+	p := startingServer(t, dir)
+	rec := fmt.Sprintf(`{"pid":%d,"socket":%q}`, p.pid, filepath.Join(dir.StateDir(), "gone.sock"))
+	if err := os.WriteFile(dir.ControlRecordPath(), []byte(rec), 0o600); err != nil {
+		t.Fatalf("writing the control socket record: %v", err)
 	}
 	return p
 }

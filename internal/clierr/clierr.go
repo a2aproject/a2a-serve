@@ -216,6 +216,11 @@ func classify(err error) *Error {
 		return Wrap(CodeNotRunning, err)
 	}
 
+	var unreachable *agenterr.UnreachableError
+	if errors.As(err, &unreachable) {
+		return Wrap(CodeIO, err)
+	}
+
 	var busy *agenterr.BusyError
 	if errors.As(err, &busy) {
 		return Wrap(CodeBusy, err)

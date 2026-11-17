@@ -561,6 +561,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if ctlhttp.IsDialError(err) {
+			if pid, ok := c.dir.RecordedServer(); ok {
+				return agenterr.Unreachable(agentdir.RunningLabel(c.dir.NameOrDefault(), pid), pid)
+			}
 			return agenterr.ErrNotRunning
 		}
 		// The URL of the control socket is internal.

@@ -69,6 +69,24 @@ func (e *BusyError) Error() string {
 	return e.Name + " is starting or stopping; try again in a moment"
 }
 
+// UnreachableError is the error of a call to a server that runs, but whose
+// control socket doesn't answer, as when its runtime directory was removed.
+type UnreachableError struct {
+	// Server names the server, with its PID.
+	Server string
+	PID    int
+}
+
+func (e *UnreachableError) Error() string {
+	return e.Server + " is running, but its control socket doesn't answer"
+}
+
+// Unreachable returns an [UnreachableError] with the hint to restart the
+// server, which binds the socket again.
+func Unreachable(server string, pid int) error {
+	return WithHint(&UnreachableError{Server: server, PID: pid}, HintRestart, "")
+}
+
 // IsRequest reports whether err is a refused request: not found, invalid
 // or in conflict.
 func IsRequest(err error) bool {
@@ -150,6 +168,8 @@ const (
 	// HintStopUnanswered stops a server that holds its directory but
 	// doesn't answer.
 	HintStopUnanswered Hint = "stop-unanswered"
+	// HintRestart restarts a server whose control socket doesn't answer.
+	HintRestart Hint = "restart"
 	// HintMessengerList lists the messengers.
 	HintMessengerList Hint = "messenger-list"
 	// HintAgentStartTimeout checks the agent that didn't start in time.

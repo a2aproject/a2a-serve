@@ -686,7 +686,7 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 			for _, e := range entries {
 				names = append(names, e.Name())
 			}
-			if diff := cmp.Diff([]string{"home", "run"}, names); diff != "" {
+			if diff := cmp.Diff([]string{"home", "id.json", "run"}, names); diff != "" {
 				t.Fatalf("Server.prepareHarness() wrote into the state directory (-want +got) diff = %s", diff)
 			}
 			home, err := os.ReadDir(dir.HomeDir())

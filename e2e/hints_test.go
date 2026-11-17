@@ -17,11 +17,14 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -284,5 +287,33 @@ func TestScheduleNoChatHintsWorkAsPrinted(t *testing.T) {
 	out := owner.run(coder.dir, serveCommand(printedCommands(t, err.Error(), "a2a-serve restart")[0])...)
 	if !strings.Contains(out, "link yourself as owner: ") {
 		t.Fatalf("the printed restart output = %q, want the owner link", out)
+	}
+}
+
+func TestControlSocketGoneHintWorksAsPrinted(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	before := coder.status().PID
+	if err := os.Remove(filepath.Join(coder.dir, ".a2a", "state", "server.sock")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := owner.exec(coder.dir, "a2a", "serve", "status")
+	if err == nil {
+		t.Fatalf("a2a-serve status error = nil, want it to report the missing control socket")
+	}
+	if want := fmt.Sprintf("coder (pid %d) is running, but its control socket doesn't answer", before); !strings.Contains(err.Error(), want) {
+		t.Fatalf("a2a-serve status error = %v, want %q", err, want)
+	}
+	start := time.Now()
+	if _, err := owner.exec(coder.dir, "a2a", "serve", "start", "--detach"); err == nil || time.Since(start) > 30*time.Second {
+		t.Fatalf("a2a-serve start --detach error = %v after %v, want it to fail at once", err, time.Since(start))
+	}
+
+	cmd := printedCommands(t, err.Error(), "a2a-serve restart")[0]
+	owner.run(coder.dir, serveCommand(cmd)...)
+	if st := coder.status(); !st.Running || st.PID == before {
+		t.Fatalf("a2a-serve status after the printed command = %+v, want a new running server", st)
 	}
 }

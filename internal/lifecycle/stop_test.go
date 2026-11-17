@@ -17,6 +17,8 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -275,4 +278,56 @@ func TestStopThroughTheServiceManager(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerWithoutControlSocket(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	const want = "coder (pid %d) is running, but its control socket doesn't answer: run `a2a-serve restart`"
+	t.Run("start", func(t *testing.T) {
+		t.Parallel()
+		dir := newAgent(t)
+		proc := serverWithoutSocket(t, dir)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+
+		err := Start(ctx, dir, StartOptions{Mode: Detached, Quiet: true, Out: io.Discard})
+
+		if got, want := agenterr.Text(err), fmt.Sprintf(want, proc.pid); got != want {
+			t.Fatalf("Start() error = %q, want %q", got, want)
+		}
+	})
+	t.Run("restart finds its PID", func(t *testing.T) {
+		t.Parallel()
+		dir := newAgent(t)
+		proc := serverWithoutSocket(t, dir)
+
+		got, err := runningPID(t.Context(), dir, controlapi.NewClient(dir), "coder")
+		if err != nil {
+			t.Fatalf("runningPID() error = %v", err)
+		}
+		if got != proc.pid {
+			t.Fatalf("runningPID() = %d, want %d", got, proc.pid)
+		}
+	})
+	t.Run("stop", func(t *testing.T) {
+		t.Parallel()
+		dir := newAgent(t)
+		proc := serverWithoutSocket(t, dir)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+
+		got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped, Services: fakeServices{}})
+		if err != nil {
+			t.Fatalf("Stop() error = %v", err)
+		}
+		if !got.Running {
+			t.Fatalf("Stop() = %+v, want a running server", got)
+		}
+		if !proc.exited() {
+			t.Fatalf("Stop() did not stop the server")
+		}
+	})
 }

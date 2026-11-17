@@ -456,6 +456,31 @@ func (d Dir) ControlSocketPath() string {
 	return d.SocketPath()
 }
 
+// RecordedServer returns the PID of the server that holds the lock of d and
+// recorded its control socket, which a server does once it serves it and
+// undoes before it stops serving it. A caller that can't reach the socket
+// of such a server knows that the socket is gone.
+func (d Dir) RecordedServer() (int, bool) {
+	rec, ok := d.controlRecord()
+	if !ok {
+		return 0, false
+	}
+	pid, err := d.ServerPID()
+	if err != nil || pid != rec.PID {
+		return 0, false
+	}
+	release, err := d.Lock()
+	if err == nil {
+		if err := release(); err != nil {
+			return 0, false
+		}
+	}
+	if !errors.Is(err, fsutil.ErrLocked) {
+		return 0, false
+	}
+	return pid, true
+}
+
 func (d Dir) controlRecord() (controlRecord, bool) {
 	var rec controlRecord
 	data, err := os.ReadFile(d.ControlRecordPath())
