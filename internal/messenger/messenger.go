@@ -258,6 +258,10 @@ type Question struct {
 type Ref struct {
 	Conv ConvKey
 	ID   string
+	// Text is what [Messenger.Send] returns to say which part of the sent
+	// text the message shows, as it was given to Send: the last piece of a
+	// text that was split. It is empty for a message that carries no text.
+	Text string
 }
 
 // ActionData encodes a button payload: h:<question id>:<option index>.
@@ -315,6 +319,19 @@ func Truncate(text string, limit int) string {
 		cut--
 	}
 	return text[:cut]
+}
+
+// TruncateStart cuts text to its last limit bytes at most, without splitting
+// a character.
+func TruncateStart(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := len(text) - max(limit, 0)
+	for cut < len(text) && !isRuneStart(text[cut]) {
+		cut++
+	}
+	return text[cut:]
 }
 
 // KV persists small messenger state, such as the last message seen, across

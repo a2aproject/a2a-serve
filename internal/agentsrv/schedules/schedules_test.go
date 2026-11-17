@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -186,6 +188,27 @@ func TestSchedulesRetryRefusedRuns(t *testing.T) {
 				t.Fatalf("turns posted after the retry was accepted = %d, want 2", got)
 			}
 		})
+	}
+}
+
+func TestSchedulesOneTimeRunShowsOnlyTheFirstRefusal(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "once", At: due, NextRun: due})
+
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[1].Accept(errors.New("anna has 8 unfinished tasks"))
+	fx.sc.RunDue(fx.ctx)
+
+	var got []bool
+	for _, p := range fx.turns.turns() {
+		got = append(got, p.Quiet)
+	}
+	if diff := cmp.Diff([]bool{false, true, true}, got); diff != "" {
+		t.Fatalf("Quiet of the turns posted after each refusal wrong (-want +got) diff = %s", diff)
 	}
 }
 

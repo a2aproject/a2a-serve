@@ -113,7 +113,7 @@ func TestPairRmDryRun(t *testing.T) {
 	want := "would remove the pairing anna:\n" +
 		"  1 token\n" +
 		"  1 linked chat account: telegram telegram:1\n" +
-		"  1 schedule that runs as it\n" +
+		"  1 schedule that runs as it or posts to its chat\n" +
 		"  the agent home directory " + home + "\n" +
 		"(dry run: nothing removed)\n"
 	if !strings.HasPrefix(out, want) {

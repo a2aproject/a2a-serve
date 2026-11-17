@@ -48,6 +48,30 @@ type failingReader struct{ err error }
 
 func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
 
+func TestTruncateStart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		text  string
+		limit int
+		want  string
+	}{
+		{name: "within the limit", text: "hello", limit: 5, want: "hello"},
+		{name: "cut", text: "hello", limit: 3, want: "llo"},
+		{name: "character not split", text: "héllo", limit: 4, want: "llo"},
+		{name: "zero limit", text: "hello", limit: 0, want: ""},
+		{name: "negative limit", text: "hello", limit: -1, want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := TruncateStart(tc.text, tc.limit); got != tc.want {
+				t.Fatalf("TruncateStart(%q, %d) = %q, want %q", tc.text, tc.limit, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReadLimited(t *testing.T) {
 	t.Parallel()
 	readErr := errors.New("connection reset")

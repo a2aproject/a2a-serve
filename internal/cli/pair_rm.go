@@ -37,8 +37,8 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Aliases: []string{"delete"},
 		Short:   "Revoke a pairing, remove a webhook node, or forget an agent you joined",
 		Long: `Delete a pairing with its tokens, linked messenger accounts, pending
-codes, the schedules that run as it, and its tasks, approvals and
-conversations, or remove a webhook node with its schedules. Its
+codes, the schedules that run as it or post to its chat, and its tasks,
+approvals and conversations, or remove a webhook node with its schedules. Its
 conversations go with your messages in them. Its running tasks are
 canceled, its agent process stops, and its agent home directory is
 deleted. A new pairing with the same name starts with none of them. The
@@ -197,7 +197,7 @@ func removalPreviewText(name string, p *controlapi.RemovalPreview) string {
 	if p.Node {
 		sb.WriteString("  the webhook node\n")
 	}
-	line(p.Schedules, "schedule that runs as it", "schedules that run as it")
+	line(p.Schedules, "schedule that runs as it or posts to its chat", "schedules that run as it or post to its chat")
 	line(p.Watches, "watch", "watches")
 	line(p.Approvals, "approval", "approvals")
 	line(p.Tasks, "task", "tasks")
