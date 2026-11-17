@@ -66,7 +66,11 @@ and ` + "`a2a-serve messenger rm`" + `.`,
 			if err != nil {
 				return err
 			}
-			return printConfigResult(cfg, res, false)
+			hint := ""
+			if len(res.Restart) > 0 {
+				hint = restartHint(cmd.Context(), sf, d)
+			}
+			return printConfigResult(cfg, res, hint)
 		},
 	}
 	markTextOnly(cmd)

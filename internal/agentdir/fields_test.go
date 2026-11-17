@@ -261,15 +261,17 @@ func TestCommands(t *testing.T) {
 		Policy:     PolicyConfig{PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"*@example.com"}},
 		Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 		Backup:     BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
+		Approvals:  ApprovalsConfig{OwnerChat: "telegram"},
 	}
 	var got []string
 	for _, args := range cfg.Commands(Secrets{SecretTailscaleKey: "k"}) {
 		got = append(got, ShellJoin(args))
 	}
 	want := []string{
-		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-allow-incoming anyone --allow-email '*@example.com'",
-		"a2a-serve config set --tailscale-authkey env:TS_AUTHKEY --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h",
+		"a2a-serve config set --agent acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-allow-incoming anyone --allow-email '*@example.com' --tailscale-authkey env:TS_AUTHKEY --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h",
 		"a2a-serve messenger add telegram --token env:BOT",
+		"a2a-serve config set --owner-chat telegram",
+		"a2a-serve start",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Commands() wrong result (-want +got) diff = %s", diff)

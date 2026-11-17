@@ -29,6 +29,30 @@ import (
 // foreground of a terminal, which can't be restarted from another one.
 var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a-serve start` again")
 
+// ErrNoTerminal is returned by [Restart] for an agent which runs neither
+// detached nor as a service, and in no terminal, such as one started with
+// nohup.
+var ErrNoTerminal = errors.New("it doesn't run detached or as a service; stop it with `a2a-serve stop`, then run `a2a-serve start --detach`")
+
+// RestartHint returns how to restart the running agent to apply settings:
+// `a2a-serve restart`, or for a server that restart refuses, what to run
+// instead.
+func RestartHint(ctx context.Context, d agentdir.Dir, client *controlapi.Client, services ServiceManager) string {
+	const restart = "a2a-serve restart"
+	st, err := client.Status(ctx)
+	if err != nil {
+		return restart
+	}
+	_, err = restartMode(services, d.ServiceName(), st.PID)
+	switch {
+	case errors.Is(err, ErrForeground):
+		return "press Ctrl-C in its terminal and run `a2a-serve start`"
+	case errors.Is(err, ErrNoTerminal):
+		return "`a2a-serve stop`, then `a2a-serve start --detach`"
+	}
+	return restart
+}
+
 // ServiceManager tells whether the service manager runs an agent.
 type ServiceManager interface {
 	// Installed reports whether the user service name exists.
@@ -62,7 +86,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, ser
 		return Unanswered(d, err)
 	}
 	mode, err := restartMode(services, d.ServiceName(), pid)
-	if errors.Is(err, ErrForeground) {
+	if errors.Is(err, ErrForeground) || errors.Is(err, ErrNoTerminal) {
 		return fmt.Errorf("%s (pid %d) can't be restarted: %w", cfg.Name, pid, err)
 	}
 	if err != nil {
@@ -99,7 +123,8 @@ func runningPID(ctx context.Context, d agentdir.Dir, client *controlapi.Client, 
 // server runs with pid, or zero if it is stopped. A server runs as a service
 // only if it is the service's process: a service may stay installed while
 // the agent runs in a terminal or detached. It returns ErrForeground for a
-// server that runs in the foreground of a terminal.
+// server that runs in the foreground of a terminal, and ErrNoTerminal for
+// one that left its terminal without detaching.
 func restartMode(services ServiceManager, name string, pid int) (Mode, error) {
 	installed := services.Installed(name)
 	if pid == 0 {
@@ -121,8 +146,15 @@ func restartMode(services ServiceManager, name string, pid int) (Mode, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !leader {
-		return 0, ErrForeground
+	if leader {
+		return Detached, nil
 	}
-	return Detached, nil
+	terminal, err := inTerminal(pid)
+	if err != nil {
+		return 0, err
+	}
+	if !terminal {
+		return 0, ErrNoTerminal
+	}
+	return 0, ErrForeground
 }

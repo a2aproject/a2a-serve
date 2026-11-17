@@ -24,6 +24,9 @@ import (
 	"github.com/google/shlex"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 func TestStartServiceWhileDetachedHintStopsTheAgent(t *testing.T) {
@@ -122,7 +125,8 @@ func TestStartOfARunningAgentNamesTheRunningAgent(t *testing.T) {
 		t.Fatalf("a2a-serve start opencode --name other error = %v", err)
 	}
 
-	if want := "✓ coder is already running; restart to apply name (a2a-serve restart)\n"; !strings.HasSuffix(out, want) {
+	hint := lifecycle.RestartHint(t.Context(), d, controlapi.NewClient(d), service.System{})
+	if want := "✓ coder is already running; restart to apply name (" + hint + ")\n"; !strings.HasSuffix(out, want) {
 		t.Fatalf("a2a-serve start opencode --name other output = %q, want it to end with %q", out, want)
 	}
 }

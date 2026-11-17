@@ -88,7 +88,11 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 		}
 		res.Restart = waiting
 	}
-	if err := printConfigResult(cfg, res, restart); err != nil {
+	hint := ""
+	if !restart && len(res.Restart) > 0 {
+		hint = restartHint(ctx, sf, d)
+	}
+	if err := printConfigResult(cfg, res, hint); err != nil {
 		return err
 	}
 	if !restart || len(res.Restart) == 0 {
@@ -97,10 +101,15 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 	return lifecycle.Restart(ctx, d, sf.controlClient(d), service.System{}, false, cfg.progress())
 }
 
+// restartHint returns how to restart the agent in d to apply settings.
+func restartHint(ctx context.Context, sf *serverFlags, d agentdir.Dir) string {
+	return lifecycle.RestartHint(ctx, d, sf.controlClient(d), service.System{})
+}
+
 // printConfigResult prints the diff of a change, and whether it applies now
-// or after a restart. With restarting, the restart follows, so it doesn't
-// ask for one.
-func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool) error {
+// or after a restart, which hint says how to do. Without a hint, a restart
+// follows or the change needs none, so it doesn't ask for one.
+func printConfigResult(cfg *globalConfig, res *agentctl.Result, hint string) error {
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(res)
 	}
@@ -139,8 +148,8 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool)
 	if len(res.Applied) > 0 {
 		fmt.Fprintf(&sb, "✓ applied to the running agent: %s\n", strings.Join(res.Applied, ", "))
 	}
-	if len(res.Restart) > 0 && !restarting {
-		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
+	if len(res.Restart) > 0 && hint != "" {
+		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: %s\n", res.Name, strings.Join(res.Restart, ", "), hint)
 	}
 	writeAccess(&sb, res.Access)
 	writeWarnings(&sb, res.Warnings)
@@ -149,17 +158,18 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool)
 }
 
 // printStartRunning prints the diff of a start on a running agent, then one
-// line that says the agent keeps running and what waits for a restart.
-func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
+// line that says the agent keeps running and what waits for a restart, which
+// hint says how to do.
+func printStartRunning(cfg *globalConfig, res *agentctl.Result, hint string) error {
 	shown := *res
 	if !cfg.IsJSON() {
 		shown.Restart = nil
 	}
-	if err := printConfigResult(cfg, &shown, false); err != nil {
+	if err := printConfigResult(cfg, &shown, ""); err != nil {
 		return err
 	}
 	if len(res.Restart) > 0 {
-		_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running; restart to apply %s (a2a-serve restart)\n", res.Name, strings.Join(res.Restart, ", "))
+		_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running; restart to apply %s (%s)\n", res.Name, strings.Join(res.Restart, ", "), hint)
 		return err
 	}
 	_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)

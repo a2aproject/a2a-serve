@@ -38,6 +38,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -81,7 +82,11 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(), s.acpConfig())
 	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
+		err = fmt.Errorf("starting %s: %w", h.profile.Name(), err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = agenterr.WithHint(err, agenterr.HintAgentStartTimeout, "")
+		}
+		return nil, nil, errors.Join(err, h.stop(ctx))
 	}
 	s.logf("✓ %s is running (ACP)", h.profile.Name())
 	return s.guardACP(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil

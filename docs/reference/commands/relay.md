@@ -132,7 +132,8 @@ Aliases: `rm`
 Run a relay: one process that serves HTTP on --listen and runs a network
 behind it on loopback, at the version this a2a-serve pins: Agent Mesh's
 agentmesh-one, or with --backend slim a SLIM node. The first run creates the
-relay directory here and downloads that program.
+relay directory here and downloads that program. Agents can't join a SLIM
+relay yet; that is planned.
 
 The relay needs an address that doesn't change, since agents and pairing
 tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
@@ -175,7 +176,7 @@ a2a-serve relay run --service
 |---|---|---|
 | `--admin-token string` |  | The relay's admin token, at least 32 characters, as a secret value: env:VAR, -, or the value (default: generated on the first run) |
 | `--allow-email email` |  | People who may sign in to the relay with Google: an email, or \*@domain for the accounts of a Google Workspace domain; replaces the saved list, and none turns sign-in off and forgets the Google app (repeatable; commas also separate values) |
-| `--backend string` |  | The network the relay runs: agentmesh, the default, or slim; set on the first run |
+| `--backend string` |  | The network the relay runs: agentmesh, the default, or slim (planned: agents can't join a SLIM relay yet); set on the first run |
 | `--database string` |  | A PostgreSQL DSN, as a secret value: env:VAR, -, or the value (default: SQLite in the relay directory; none goes back to it) |
 | `--dir string` |  | Relay directory (default: the nearest relay directory up from the current one, or else the current directory) |
 | `--google-client-id string` |  | Client ID of the relay's Google app, which people sign in with (none removes the app) |

@@ -94,7 +94,7 @@ func TestRenderConfigListsEverySetting(t *testing.T) {
 	secrets["API_KEY"] = agentctl.SecretStateStored
 	v := &agentctl.View{Path: "/a/.a2a/config.yaml", Config: cfg, Defaults: &agentdir.Config{}, Secrets: secrets, Pending: reported}
 	for _, all := range []bool{false, true} {
-		out := renderConfig(v, all)
+		out := renderConfig(v, all, "a2a-serve restart")
 		for _, c := range changes {
 			var values []string
 			if c.New != "" {
@@ -121,7 +121,7 @@ func TestRenderConfigSecretSettingsShowState(t *testing.T) {
 		Backup: agentdir.BackupConfig{To: "/backups", Key: "literal-passphrase"},
 	}
 	v := &agentctl.View{Path: "p", Config: cfg, Defaults: &agentdir.Config{}, Secrets: map[string]string{"google-client": agentctl.SecretStateStored}}
-	out := renderConfig(v, false)
+	out := renderConfig(v, false, "a2a-serve restart")
 	if strings.Contains(out, "literal-passphrase") {
 		t.Fatalf("renderConfig() = %q, want no secret value", out)
 	}
@@ -135,7 +135,7 @@ func TestRenderConfigSecretSettingsShowState(t *testing.T) {
 func TestRenderConfigImageOfLocalSandbox(t *testing.T) {
 	t.Parallel()
 	v := &agentctl.View{Path: "p", Config: &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local", Image: "img:x"}, Defaults: &agentdir.Config{}}
-	if out := renderConfig(v, false); !strings.Contains(out, "image img:x") {
+	if out := renderConfig(v, false, "a2a-serve restart"); !strings.Contains(out, "image img:x") {
 		t.Fatalf("renderConfig() = %q, want the image that is set", out)
 	}
 }
@@ -143,10 +143,10 @@ func TestRenderConfigImageOfLocalSandbox(t *testing.T) {
 func TestRenderConfigUnsetSettings(t *testing.T) {
 	t.Parallel()
 	v := &agentctl.View{Path: "p", Config: &agentdir.Config{Name: "coder", Harness: "opencode"}, Defaults: &agentdir.Config{}}
-	if out := renderConfig(v, false); strings.Contains(out, "task-ttl") || strings.Contains(out, "model") {
+	if out := renderConfig(v, false, "a2a-serve restart"); strings.Contains(out, "task-ttl") || strings.Contains(out, "model") {
 		t.Fatalf("renderConfig(all = false) = %q, want no line for unset settings", out)
 	}
-	out := renderConfig(v, true)
+	out := renderConfig(v, true, "a2a-serve restart")
 	for _, want := range []string{"model", "task-ttl", "backup", "disable-mcp", "allow-broad-mount", "contact-refresh", "google-client-id"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderConfig(all = true) = %q, want a line for %s", out, want)

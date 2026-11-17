@@ -79,8 +79,9 @@ To share the agent, invite someone:
 
 ```bash
 a2a-serve pair invite anna                   # prints a one-time code
-a2a-serve pair join <agent-url> <code>       # anna runs this
 ```
+
+Anna sends `join <code>` to the bot. To let her join from her own machine with `a2a-serve pair join`, give the agent a URL she can reach first ([Networks](guide/networks.md)).
 
 ## Next steps
 

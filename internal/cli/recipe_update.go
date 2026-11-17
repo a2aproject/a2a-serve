@@ -115,7 +115,7 @@ func (r *recipeRun) update(ctx context.Context, d agentdir.Dir, record *recipe.R
 	if err != nil {
 		return err
 	}
-	return r.printUpdated(u, res)
+	return r.printUpdated(u, res, restartHint(ctx, r.sf, d))
 }
 
 // planUpdate merges the agent's settings and files with the recipe's.
@@ -284,7 +284,7 @@ func mcpChanges(old, next []project.MCPServer) []string {
 	return out
 }
 
-func (r *recipeRun) printUpdated(u *recipeUpdate, res *agentctl.Result) error {
+func (r *recipeRun) printUpdated(u *recipeUpdate, res *agentctl.Result, hint string) error {
 	written := 0
 	for _, c := range u.changes {
 		if c.Action == recipe.FileAdd || c.Action == recipe.FileUpdate || c.Action == recipe.FileRemove || c.Action == recipe.FileConflict {
@@ -305,7 +305,7 @@ func (r *recipeRun) printUpdated(u *recipeUpdate, res *agentctl.Result) error {
 		restart = append(restart, "skills")
 	}
 	if len(restart) > 0 {
-		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(restart, ", "))
+		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: %s\n", res.Name, strings.Join(restart, ", "), hint)
 	}
 	writeAccess(&sb, res.Access)
 	_, err := io.WriteString(r.cfg.Out, sb.String())
