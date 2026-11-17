@@ -134,6 +134,9 @@ type RemoveResult struct {
 	// Kept is set when the pairing stays and only its credentials were
 	// revoked, as for the local pairing.
 	Kept bool
+	// Warnings are problems that left the pairing removed: an agent home
+	// that couldn't be deleted, with the path that is left.
+	Warnings []string
 }
 
 // RemovalPreview tells what [Service.Remove] would remove.

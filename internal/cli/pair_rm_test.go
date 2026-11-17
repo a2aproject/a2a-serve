@@ -175,3 +175,41 @@ func TestPairRmOfLocalServerURLKeepsItsOwnerToken(t *testing.T) {
 		t.Fatalf("creds.List() after pair rm wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestPairRmWarnsAboutAHomeThatStays(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root deletes in directories without write permission")
+	}
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
+	if _, err := runCMD(t, "pair", "invite", "anna", "--dir", d.Root); err != nil {
+		t.Fatalf("a2a-serve pair invite error = %v", err)
+	}
+	home := d.UserHomeDir("pair:anna")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	homes := filepath.Dir(home)
+	if err := os.Chmod(homes, 0o500); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(homes, 0o700); err != nil {
+			t.Errorf("Chmod() error = %v", err)
+		}
+	})
+
+	out, err := runCMD(t, "pair", "rm", "anna", "--dir", d.Root)
+
+	if err != nil {
+		t.Fatalf("a2a-serve pair rm error = %v, want the pairing removed", err)
+	}
+	for _, want := range []string{"✓ ", "! couldn't delete the agent home of anna", home} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a2a-serve pair rm = %q, want it to contain %q", out, want)
+		}
+	}
+	if _, err := runCMD(t, "pair", "get", "anna", "--dir", d.Root); err == nil {
+		t.Fatalf("a2a-serve pair get anna after the removal error = nil, want not found")
+	}
+}

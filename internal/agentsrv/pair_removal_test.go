@@ -175,6 +175,40 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 	}
 }
 
+func TestPairRmRevokesAMemberWhoseHomeHasReadOnlyDirectories(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	send(t, anna, userText("pid", "", ""))
+	home := ts.dir.UserHomeDir("pair:anna")
+	mod := filepath.Join(home, "go", "pkg", "mod", "x@v1")
+	if err := os.MkdirAll(mod, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(mod, 0o500); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	resp, err := controlapi.NewClient(ts.dir).Revoke(ctx, "anna")
+
+	if err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+	if len(resp.Warnings) > 0 {
+		t.Fatalf("Revoke() warnings = %q, want none", resp.Warnings)
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of anna's agent home error = %v, want %v", err, os.ErrNotExist)
+	}
+	if _, err := anna.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("pid", "", "")}); err == nil {
+		t.Fatalf("SendMessage() with the removed pairing's token error = nil, want it refused")
+	}
+}
+
 func TestPairRmDeletesTheOwnersTasksInTheUsersConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})

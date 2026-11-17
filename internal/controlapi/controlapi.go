@@ -387,6 +387,9 @@ type RevokeResponse struct {
 	Kept bool `json:"kept,omitempty"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
+	// Warnings are problems that left the pairing removed, such as an
+	// agent home that couldn't be deleted.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // RemovalPreview tells what `pair rm` would remove, and removes nothing.

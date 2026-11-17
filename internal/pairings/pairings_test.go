@@ -439,6 +439,84 @@ func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {
 	}
 }
 
+func TestRemoveDeletesHomesWithReadOnlyDirectories(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	users := &fakeUsers{t: t, homes: d}
+	s := newService(t, withUsers(users, d))
+	users.s = s
+	redeem(t, s, invite(t, s, InviteRequest{Name: "anna"}).Code, pairapi.PairingPerson)
+	mod := filepath.Join(d.UserHomeDir("pair:anna"), "go", "pkg", "mod", "x@v1")
+	if err := os.MkdirAll(mod, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(mod, 0o500); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	got, err := s.Remove(ctx, "anna")
+	if err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if len(got.Warnings) > 0 {
+		t.Fatalf("Remove() warnings = %q, want none", got.Warnings)
+	}
+	if _, err := os.Stat(d.UserHomeDir("pair:anna")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of the home error = %v, want %v", err, os.ErrNotExist)
+	}
+}
+
+type failingHomes struct {
+	Homes
+	err error
+}
+
+func (h failingHomes) RemoveUserHome(string) error { return h.err }
+
+func TestRemoveRevokesWhenAHomeCantBeDeleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	users := &fakeUsers{t: t, homes: d}
+	s := newService(t, withUsers(users, failingHomes{Homes: d, err: errors.New("unlinkat /home/pair-anna/f: permission denied")}))
+	users.s = s
+	redeemed, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "anna"}).Code, Via{URL: s.deps.BaseURL(), Kind: pairapi.PairingPerson})
+	if err != nil {
+		t.Fatalf("Redeem() error = %v", err)
+	}
+
+	got, err := s.Remove(ctx, "anna")
+	if err != nil {
+		t.Fatalf("Remove() error = %v, want the pairing removed", err)
+	}
+
+	if _, err := s.deps.Store.Pairing(ctx, "anna"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Pairing() after Remove() error = %v, want %v", err, store.ErrNotFound)
+	}
+	if _, err := s.deps.Store.LookupToken(ctx, redeemed.Token); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("LookupToken() after Remove() error = %v, want %v", err, store.ErrNotFound)
+	}
+	if len(got.Warnings) != 2 {
+		t.Fatalf("Remove() warnings = %q, want one for each of anna's users", got.Warnings)
+	}
+	for _, w := range got.Warnings {
+		if !strings.Contains(w, "/home/pair-anna/f") {
+			t.Fatalf("Remove() warning = %q, want it to name the leftover path", w)
+		}
+	}
+}
+
 func TestRemoveKeepsPairingWhenUsersDontStop(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

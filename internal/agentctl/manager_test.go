@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,8 +27,10 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // holdLock locks the agent directory in d as a starting server does.
@@ -202,5 +205,56 @@ func TestOfflineDeleteMessenger(t *testing.T) {
 				t.Fatalf("config.yaml has telegram = %v after DeleteMessenger(%s)", got, tc.kind)
 			}
 		})
+	}
+}
+
+func TestOfflineRevokeDeletesHomesWithReadOnlyDirectories(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	m, closer, err := Open(t.Context(), d, controlapi.NewClient(d))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := closer.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	if _, err := m.Pair(t.Context(), controlapi.PairCodeRequest{Name: "anna"}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	st := m.(*offline).store
+	const token = "a2p_secret"
+	if err := st.PutToken(t.Context(), token, store.Token{Pairing: "anna", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	home := d.UserHomeDir(auth.PairPrincipal("anna"))
+	mod := filepath.Join(home, "go", "pkg", "mod", "x@v1")
+	if err := os.MkdirAll(mod, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(mod, 0o500); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	resp, err := m.Revoke(t.Context(), "anna")
+
+	if err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+	if len(resp.Warnings) > 0 {
+		t.Fatalf("Revoke() warnings = %q, want none", resp.Warnings)
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of anna's agent home error = %v, want %v", err, os.ErrNotExist)
+	}
+	if _, err := st.LookupToken(t.Context(), token); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("LookupToken() after Revoke() error = %v, want %v", err, store.ErrNotFound)
+	}
+	if _, err := m.Pairing(t.Context(), "anna"); err == nil {
+		t.Fatalf("Pairing() after Revoke() error = nil, want anna removed")
 	}
 }

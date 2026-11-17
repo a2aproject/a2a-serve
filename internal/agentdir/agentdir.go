@@ -262,7 +262,7 @@ func (d Dir) CallerWorkspacesDirs(id string) ([]string, error) {
 // RemoveCallerHome deletes the home and the private workspaces of the agent
 // process that the member id runs for caller.
 func (d Dir) RemoveCallerHome(id, caller string) error {
-	return errors.Join(os.RemoveAll(d.CallerHomeDir(id, caller)), os.RemoveAll(filepath.Join(d.WorkspacesDir(), CallerName(id, caller))))
+	return errors.Join(fsutil.RemoveAll(d.CallerHomeDir(id, caller)), fsutil.RemoveAll(filepath.Join(d.WorkspacesDir(), CallerName(id, caller))))
 }
 
 // RemoveUserHome deletes the homes and the private workspaces of the agent
@@ -272,7 +272,7 @@ func (d Dir) RemoveUserHome(id string) error {
 	workspaces, werr := d.CallerWorkspacesDirs(id)
 	errs := []error{herr, werr}
 	for _, dir := range append(append(homes, workspaces...), d.UserHomeDir(id), d.UserWorkspacesDir(id)) {
-		errs = append(errs, os.RemoveAll(dir))
+		errs = append(errs, fsutil.RemoveAll(dir))
 	}
 	return errors.Join(errs...)
 }
