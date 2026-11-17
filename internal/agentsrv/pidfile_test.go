@@ -38,3 +38,20 @@ func TestServerKeepsPIDFileWhileRunning(t *testing.T) {
 		t.Fatalf("os.Stat(PIDPath) after stop error = %v, want %v", err, os.ErrNotExist)
 	}
 }
+
+func TestServerRecordsControlSocketWhileRunning(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+
+	if got, want := ts.dir.ControlSocketPath(), ts.dir.SocketPath(); got != want {
+		t.Fatalf("Dir.ControlSocketPath() = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(ts.dir.ControlRecordPath()); err != nil {
+		t.Fatalf("os.Stat(ControlRecordPath) error = %v", err)
+	}
+
+	ts.stop()
+	if _, err := os.Stat(ts.dir.ControlRecordPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(ControlRecordPath) after stop error = %v, want %v", err, os.ErrNotExist)
+	}
+}

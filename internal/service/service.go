@@ -112,3 +112,7 @@ func output(name string, args ...string) (string, error) {
 	}
 	return string(out), nil
 }
+
+// Stop stops the service name and keeps it installed, so that it starts
+// again at the next login.
+func (System) Stop(name string) error { return Stop(name) }

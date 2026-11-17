@@ -33,11 +33,20 @@ type fakeServices struct {
 	installed bool
 	mainPID   int
 	err       error
+	// stop, if set, stops the service the way the service manager does.
+	stop func(name string) error
 }
 
 func (f fakeServices) Installed(string) bool { return f.installed }
 
 func (f fakeServices) MainPID(string) (int, error) { return f.mainPID, f.err }
+
+func (f fakeServices) Stop(name string) error {
+	if f.stop == nil {
+		return nil
+	}
+	return f.stop(name)
+}
 
 func TestRestartForeground(t *testing.T) {
 	t.Parallel()

@@ -16,6 +16,7 @@ package agentdir
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -786,6 +787,39 @@ func TestUpdateConfigLocksInState(t *testing.T) {
 	}
 }
 
+func TestAlreadyRunning(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pidFile string
+		want    string
+	}{
+		{name: "PID file", pidFile: "4242\n", want: "the server (pid 4242) is already running in %s (a2a-serve status)"},
+		{name: "no PID file", want: "the server is already running in %s (a2a-serve status)"},
+		{name: "PID file without a PID", pidFile: "x", want: "the server is already running in %s (a2a-serve status)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			if err := d.Init(); err != nil {
+				t.Fatalf("Dir.Init() error = %v", err)
+			}
+			if tc.pidFile != "" {
+				if err := os.WriteFile(d.PIDPath(), []byte(tc.pidFile), 0o600); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			}
+
+			err := d.AlreadyRunning()
+
+			if want := fmt.Sprintf(tc.want, d.Root); err == nil || err.Error() != want {
+				t.Fatalf("Dir.AlreadyRunning() error = %v, want %v", err, want)
+			}
+		})
+	}
+}
+
 func TestLockWithin(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -865,5 +899,128 @@ func TestNameNote(t *testing.T) {
 				t.Fatalf("NameNote(%q) = %q, want %q", tc.given, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestControlSocketPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		record func(d Dir) error
+		want   func(d Dir) string
+	}{
+		{name: "recorded", record: func(d Dir) error { return d.RecordControlSocket("/run/a2a/agent.sock") }, want: func(Dir) string { return "/run/a2a/agent.sock" }},
+		{name: "not recorded", record: func(Dir) error { return nil }, want: Dir.SocketPath},
+		{name: "record without an absolute path", record: func(d Dir) error {
+			return os.WriteFile(d.ControlRecordPath(), []byte(`{"pid":1,"socket":"agent.sock"}`), 0o600)
+		}, want: Dir.SocketPath},
+		{name: "unreadable record", record: func(d Dir) error {
+			return os.WriteFile(d.ControlRecordPath(), []byte("x"), 0o600)
+		}, want: Dir.SocketPath},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			if err := d.Init(); err != nil {
+				t.Fatalf("Dir.Init() error = %v", err)
+			}
+			if err := tc.record(d); err != nil {
+				t.Fatalf("recording the control socket: %v", err)
+			}
+
+			if got, want := d.ControlSocketPath(), tc.want(d); got != want {
+				t.Fatalf("Dir.ControlSocketPath() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLockRemovesStaleControlRecord(t *testing.T) {
+	t.Parallel()
+	d := Dir{Root: t.TempDir()}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	if err := d.RecordControlSocket("/run/a2a/agent.sock"); err != nil {
+		t.Fatalf("Dir.RecordControlSocket() error = %v", err)
+	}
+
+	release, err := d.Lock()
+	if err != nil {
+		t.Fatalf("Dir.Lock() error = %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release() error = %v", err)
+	}
+
+	if got, want := d.ControlSocketPath(), d.SocketPath(); got != want {
+		t.Fatalf("Dir.ControlSocketPath() after Lock = %q, want %q", got, want)
+	}
+}
+
+func TestIDOfAnotherSpelling(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on this platform")
+	}
+	root := t.TempDir()
+	d := Dir{Root: filepath.Join(root, "project")}
+	if err := os.Mkdir(d.Root, 0o700); err != nil {
+		t.Fatalf("os.Mkdir() error = %v", err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	link := Dir{Root: filepath.Join(root, "link")}
+	if err := os.Symlink(d.Root, link.Root); err != nil {
+		t.Fatalf("os.Symlink() error = %v", err)
+	}
+
+	if got, want := link.ID(), d.ID(); got != want {
+		t.Fatalf("Dir.ID() through a symlink = %q, want %q", got, want)
+	}
+	if got, want := link.ServiceName(), d.ServiceName(); got != want {
+		t.Fatalf("Dir.ServiceName() through a symlink = %q, want %q", got, want)
+	}
+}
+
+func TestIDOfACopy(t *testing.T) {
+	t.Parallel()
+	d := Dir{Root: t.TempDir()}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	cp := Dir{Root: t.TempDir()}
+	if err := cp.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	want := cp.ID()
+	if err := os.RemoveAll(cp.StateDir()); err != nil {
+		t.Fatalf("os.RemoveAll() error = %v", err)
+	}
+	if err := os.CopyFS(cp.StateDir(), os.DirFS(d.StateDir())); err != nil {
+		t.Fatalf("os.CopyFS() error = %v", err)
+	}
+
+	if got := cp.ID(); got != want || got == d.ID() {
+		t.Fatalf("Dir.ID() of a copy = %q, want %q, which differs from the original's %q", got, want, d.ID())
+	}
+}
+
+func TestIDOfAnAgentWithoutAStoredID(t *testing.T) {
+	t.Parallel()
+	d := Dir{Root: t.TempDir()}
+	before := d.ID()
+	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+
+	if got := d.ID(); got != before {
+		t.Fatalf("Dir.ID() of an agent created before IDs were stored = %q, want %q", got, before)
 	}
 }

@@ -126,7 +126,7 @@ func TestStartOfARunningAgentNamesTheRunningAgent(t *testing.T) {
 	}
 
 	hint := lifecycle.RestartHint(t.Context(), d, controlapi.NewClient(d), service.System{})
-	if want := "✓ coder is already running; restart to apply name (" + hint + ")\n"; !strings.HasSuffix(out, want) {
+	if want := "✓ coder (pid 42) is already running; restart to apply name (" + hint + ")\n"; !strings.HasSuffix(out, want) {
 		t.Fatalf("a2a-serve start opencode --name other output = %q, want it to end with %q", out, want)
 	}
 }

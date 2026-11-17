@@ -543,8 +543,7 @@ func WithTimeout(d time.Duration) Option {
 
 // NewClient returns a client for the agent in dir.
 func NewClient(dir agentdir.Dir, opts ...Option) *Client {
-	path := dir.SocketPath()
-	c := &Client{dir: dir, hc: &http.Client{Timeout: DefaultTimeout, Transport: ctlhttp.SocketTransport(path)}}
+	c := &Client{dir: dir, hc: &http.Client{Timeout: DefaultTimeout, Transport: ctlhttp.SocketTransportFunc(dir.ControlSocketPath)}}
 	for _, o := range opts {
 		o(c)
 	}
@@ -570,6 +569,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if ctlhttp.IsDialError(err) {
+			if pid, ok := c.dir.RecordedServer(); ok {
+				return agenterr.Unreachable(agentdir.RunningLabel(c.dir.NameOrDefault(), pid), pid)
+			}
 			return agenterr.ErrNotRunning
 		}
 		// The URL of the control socket is internal.

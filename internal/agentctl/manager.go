@@ -72,7 +72,7 @@ type Manager interface {
 // calls the server through client. Otherwise it changes the agent directory,
 // which stays locked against a start until the closer is closed.
 func Open(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (Manager, io.Closer, error) {
-	release, err := connect(ctx, d, client)
+	_, release, err := connect(ctx, d, client)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -91,19 +91,19 @@ func Open(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (Manag
 // starts or stops.
 const lockWait = 3 * time.Second
 
-// connect finds out whether the agent in d runs. If it doesn't, connect
-// locks the agent directory and returns the function that releases it;
-// release is nil while the agent runs. It returns an
+// connect finds out whether the agent in d runs. If it does, connect
+// returns its status. If it doesn't, connect locks the agent directory and
+// returns the function that releases it. It returns an
 // [agenterr.BusyError] while the server starts or stops: then it holds
 // the directory without serving its control socket. It waits for the lock
 // for lockWait, or until the deadline of ctx if that comes first.
-func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (release func() error, err error) {
-	_, err = client.Status(ctx)
+func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (running *controlapi.Status, release func() error, err error) {
+	running, err = client.Status(ctx)
 	if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
-		return nil, err
+		return running, nil, err
 	}
 	if err := d.Init(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	deadline := time.Now().Add(lockWait)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
@@ -118,18 +118,18 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 	for {
 		release, err = d.Lock()
 		if !errors.Is(err, fsutil.ErrLocked) {
-			return release, err
+			return nil, release, err
 		}
-		_, err = client.Status(ctx)
+		running, err = client.Status(ctx)
 		if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
-			return nil, busy(err)
+			return running, nil, busy(err)
 		}
 		if time.Now().After(deadline) {
-			return nil, busyError(d)
+			return nil, nil, busyError(d)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, busy(ctx.Err())
+			return nil, nil, busy(ctx.Err())
 		case <-time.After(min(100*time.Millisecond, time.Until(deadline))):
 		}
 	}

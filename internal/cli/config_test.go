@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -345,7 +346,7 @@ func TestConfigRunningAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a-serve start acp on the running agent error = %v", err)
 	}
-	for _, want := range []string{"description  (default) → reviews code", "✓ applied to the running agent: description", "✓ coder is already running"} {
+	for _, want := range []string{"description  (default) → reviews code", "✓ applied to the running agent: description", fmt.Sprintf("✓ coder (pid %d) is already running", os.Getpid())} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("a2a-serve start acp on the running agent = %q, want %q", out, want)
 		}
@@ -948,13 +949,18 @@ func TestPrintStartRunning(t *testing.T) {
 	}{
 		{
 			name: "nothing to restart",
-			res:  &agentctl.Result{Name: "other", Running: true},
-			want: "  no changes\n✓ other is already running (a2a-serve status)\n",
+			res:  &agentctl.Result{Name: "other", Running: true, PID: 4242},
+			want: "  no changes\n✓ other (pid 4242) is already running (a2a-serve status)\n",
 		},
 		{
 			name: "settings wait for a restart",
-			res:  &agentctl.Result{Name: "other", Running: true, Restart: []string{"name", "env"}},
-			want: "  no changes\n✓ other is already running; restart to apply name, env (a2a-serve restart)\n",
+			res:  &agentctl.Result{Name: "other", Running: true, PID: 4242, Restart: []string{"name", "env"}},
+			want: "  no changes\n✓ other (pid 4242) is already running; restart to apply name, env (a2a-serve restart)\n",
+		},
+		{
+			name: "PID unknown",
+			res:  &agentctl.Result{Name: "other", Running: true},
+			want: "  no changes\n✓ other is already running (a2a-serve status)\n",
 		},
 	}
 	for _, tc := range tests {

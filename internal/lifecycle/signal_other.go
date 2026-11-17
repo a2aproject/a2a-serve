@@ -35,3 +35,9 @@ func terminate(pid int) error {
 
 // killProcess stops the process like [terminate].
 func killProcess(pid int) error { return terminate(pid) }
+
+// processExists reports whether a process with pid exists.
+func processExists(pid int) bool {
+	_, err := os.FindProcess(pid)
+	return err == nil
+}

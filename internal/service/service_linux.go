@@ -141,3 +141,10 @@ func Uninstall(name string) error {
 
 // UnitFile returns the path of the unit file of the service name.
 func UnitFile(name string) (string, error) { return unitPath(name) }
+
+// Stop stops the service without waiting, and keeps it enabled. systemd
+// doesn't restart a service that it stops, even when its process is killed
+// meanwhile.
+func Stop(name string) error {
+	return run("systemctl", "--user", "stop", "--no-block", name+".service")
+}

@@ -59,6 +59,11 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	if err := os.Chmod(path, 0o600); err != nil {
 		return errors.Join(err, ln.Close())
 	}
+	// Clients find the socket through the record, and a server that holds
+	// the lock with it has served the socket.
+	if err := s.dir.RecordControlSocket(path); err != nil {
+		return errors.Join(fmt.Errorf("recording the control socket: %w", err), ln.Close())
+	}
 	mux := control.Handler(control.Deps{
 		Ops:            s.ops,
 		Status:         s.status,
@@ -73,8 +78,10 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	})
 	srv := httpserver.New(ctx, mux)
 	closers.push(func(ctx context.Context) error {
+		// Removed first, so that clients take the server for one that stops.
+		recErr := s.dir.RemoveControlRecord()
 		err := srv.Shutdown(ctx)
-		return errors.Join(err, removeIfExists(path))
+		return errors.Join(recErr, err, removeIfExists(path))
 	})
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

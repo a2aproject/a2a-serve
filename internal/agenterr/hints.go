@@ -38,6 +38,7 @@ var hintTexts = map[Hint]string{
 	HintConfigEdit:        "fix it with `a2a-serve config edit`",
 	HintStopUnanswered:    "the server doesn't answer; stop it with `a2a-serve stop`, then start it with `a2a-serve restart`",
 	HintMessengerList:     "run `a2a-serve messenger list` to see the messengers",
+	HintRestart:           "run `a2a-serve restart`",
 	HintAgentStartTimeout: "the agent didn't answer within a minute; check that its command runs, with `a2a-serve doctor`, then run `a2a-serve start` again",
 }
 

@@ -45,6 +45,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **A member's schedule made in a group chat keeps running there after the member leaves the chat** (from the review of #483). A run checks the member's role, not their place in the chat. The run still gets only the member's sandbox, its prompt is fixed, and the owner or the member can remove it.
 
 - **A well-known network provider downloaded into the data directory isn't checked against its pin on every start** (`internal/netinstall/netinstall.go`, `local`). The pin is the archive's checksum, checked at download; the installed binary is as writable to the user as `a2a-serve` itself, which runs it. Bundled providers next to `a2a-serve` have the same trust as the server binary.
+- **Guests share one container and home, so one guest's transcripts sit in the home another guest's agent uses** (from the review at `cb010cd`: `agentkey.Of`). The transcripts are outside the workspace, and Claude Code and opencode ask before they read there; guests' approvals go to owners. At most this needs a note in `docs/advanced/security.md`.
 
 ### Correctness
 
@@ -55,6 +56,10 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Migrations read the schema version outside their transaction** (at `5bd409f`: `internal/store/store.go:519`). The offline CLI opens the database only while the server is stopped.
 - **One-time `--at` schedules skip the 5-minute minimum between runs** (at `5bd409f`: `internal/schedulesvc/schedules.go:59-62`). A one-time schedule runs once, and the cap of 50 schedules still holds.
 - **Nothing caps the open watches of calls to other agents** (from the release review at `3890ffe`: `internal/agentsrv/agentproxy/harness_proxy.go:555-583`). Each call that doesn't finish at once keeps a poller for up to 7 days. Reaching many of them takes a misbehaving model, and the per-caller task limits bound the calls a person starts.
+- **A failed scheduled backup waits a full interval before it tries again** (from the review at `cb010cd`: `internal/agentsrv/backups.go:96`). `status` shows the error, and `a2a-serve backup now` takes one at once.
+- **The retry state of a refused recurring schedule lives in memory, so a restart drops it** (from the review at `cb010cd`). The failure stays recorded as the schedule's last error, and the next run retries.
+- **The SLIM node readiness check passes if another process already listens on its port** (from the review at `cb010cd`: `internal/relay/slimbackend/backend.go`). It needs a port race right at start.
+- **`stop` during the restart gap of a crash-looping service prints "not running"** (from the review at `cb010cd`). It's rare, and the fix of #565 that stops through the service manager covers it.
 
 - **A running agent on a network provider sends a new description to the network only at its next start** (from #564). `config set --description` reports the description as waiting for a restart. A provider protocol method that updates the description is deferred.
 
@@ -63,6 +68,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **The event bus subscription queue has no bound** (`internal/agentsrv/executor.go:504-533`). The length of one task bounds it.
 - **The `localsrv` test servers keep tasks and output in memory.** They are for development only.
 - **SQLite `auto_vacuum` is off.** SQLite reuses freed pages, so the file stops growing after the first prune.
+- **`trimGuestBlobs` scans the tasks table in a write transaction after each finished guest task with attachments** (from the review at `cb010cd`: `internal/store/blobs.go:250`). It costs tens of milliseconds at the expected task counts.
 
 ### Architecture and developer experience
 
@@ -78,6 +84,14 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **`card-skills` can be set only with `config edit`, and `config unset` can clear it.** `docs/reference/configuration.md` documents this.
 - **The guests' home directory and stored IDs keep the name `anonymous`** (from the role rename: `state/home-anonymous`, `auth.GuestID`, `agentkey.Guest`). Tasks, conversations, ACP sessions and existing agent directories store them. Renaming them needs a migration of each and changes no behavior.
 - **Hints that name a command leave out `--dir`, even when the user passed it** (from #454: ``run `a2a-serve stop`, then `a2a-serve start --service` ``). The hints work as printed in the agent directory, where users run them, and the other hints about the user's own agent are written the same way. Only a hint about another agent names its `--dir`.
+- **`backup restore` without `--snapshot` restores the newest snapshot of any agent in the destination** (from the review at `cb010cd`: `internal/backup/backup.go:168-169`). Decided in #554: the default stays, and `docs/guide/backups.md` documents one destination prefix per agent. A shared destination needs `--snapshot`.
+- **Agent Mesh peers see a new `--description` only after a restart** (from the review at `cb010cd`: `internal/agentsrv/netsetup.go:60-66`). A network provider method that updates the description changes the provider protocol, so it's deferred. #564 reports the setting as waiting for a restart instead.
+- **`disable-mcp` is live, but open sessions keep the MCP server.** The docs say it applies to the next conversation.
+- **`Dir.Init` runs before the server takes the lock** (from the review at `cb010cd`: `internal/agentsrv/server.go:378`, `internal/agentctl/manager.go:105`). It is an idempotent `mkdir` plus an `O_EXCL` `.gitignore` write, and the lock file needs the directory.
+- **`agentdir` imports `sandbox`, `egress`, `netinstall` and `speech`** for setting validation and defaults. There is no cycle and no drift, and #498 covers the coupling.
+- **`agentctl.messengerKinds` repeats `agentdir.MessengerKinds`** (at `cb010cd`: `internal/agentctl/apply.go:378`). The lists are identical, and nothing has drifted.
+- **A contact added while the agent is stopped is stored as `direct`, even for a private-network URL.** The call still reaches the contact with its token, and the identity difference falls within the trust of the user's own devices.
+- **The owner's schedules made with the CLI skip the 5-minute minimum between runs.** `schedulesvc.AgentLimits` applies to the agent only, on purpose.
 
 ### User simulation
 
@@ -97,6 +111,7 @@ These came from the user-simulation round at `9341d2f`, and their locations refe
 - **`recipe --yes` reports one missing variable per run** (`internal/cli/recipe.go:437-445`). Each run names the variable and the flag that sets it.
 - **`pair invite --webhook -o json` prints a zero `created` time for the new node** (`internal/pairings/pairings.go:240-252`). `pair get` shows the real time.
 - **In an agent-to-agent call, the caller's agent may run `a2a send --task-id <callee task> once` itself.** That is model behavior. The callee's real approval reaches the user as its own task.
+- **Polish from the review at `cb010cd`:** `pair list` outside an agent directory fails with a hint, as documented. `pair invite -o json` gives `code` as a string and `pair set --rotate -o json` as an object. The `local` pairing shows `LAST USED never`. Rerunning `start claude --secret KEY` in a new shell asks for the stored key again, and later runs are `a2a-serve start` per the docs. The doctor detail reads `unknown command "serve" for "a2a"` (`internal/doctor/cli.go:118`).
 
 ### User testing
 

@@ -17,9 +17,6 @@ package lifecycle
 import (
 	"errors"
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
@@ -34,13 +31,12 @@ func findStarting(dir agentdir.Dir) (int, bool) {
 	if !ServerRunning(dir) {
 		return 0, false
 	}
-	data, err := os.ReadFile(dir.PIDPath())
+	pid, err := dir.ServerPID()
 	if err != nil {
 		slog.Debug("reading the PID file", "error", err)
 		return 0, false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
+	if pid == 0 {
 		slog.Debug("the PID file does not hold a PID", "path", dir.PIDPath())
 		return 0, false
 	}

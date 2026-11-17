@@ -53,6 +53,7 @@ type fakeMachine struct {
 	fails     map[string]bool
 	self      string
 	status    *controlapi.Status
+	statusErr error
 	busy      map[int]bool
 	unit      string
 	messenger error
@@ -137,6 +138,9 @@ func (m *fakeMachine) Env() Env {
 		},
 		HTTP: testHTTP,
 		Status: func(context.Context, agentdir.Dir) (*controlapi.Status, error) {
+			if m.statusErr != nil {
+				return nil, m.statusErr
+			}
 			if m.status == nil {
 				return nil, agenterr.ErrNotRunning
 			}
@@ -1246,5 +1250,23 @@ func TestCheckSecretsLineBreak(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("checkSecrets() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCheckServerWithoutControlSocket(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	m.statusErr = agenterr.Unreachable("coder (pid 4242)", 4242)
+	m.busy[46757] = true
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+
+	got := checkServer(t.Context(), m.Env(), d, &agentdir.Config{Name: "coder", Port: 46757})
+
+	want := []Result{{ID: "running", Status: StatusFail, Message: "coder (pid 4242) is running, but its control socket doesn't answer", Fix: "a2a-serve restart"}}
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Result{})); diff != "" {
+		t.Fatalf("checkServer() wrong result (-want +got) diff = %s", diff)
 	}
 }

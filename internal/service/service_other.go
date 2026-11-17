@@ -30,3 +30,6 @@ func Uninstall(string) error { return ErrUnsupported }
 
 // UnitFile is unsupported on this platform.
 func UnitFile(string) (string, error) { return "", ErrUnsupported }
+
+// Stop is not supported on this platform.
+func Stop(string) error { return ErrUnsupported }

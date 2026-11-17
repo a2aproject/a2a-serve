@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -112,7 +113,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 		return err
 	}
 	if st != nil {
-		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
+		_, err := fmt.Fprintf(opts.Out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(cmp.Or(st.Name, cfg.Name), st.PID))
 		return err
 	}
 	if err := logfile.Rotate(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
@@ -161,8 +162,9 @@ const busyWait = 2 * time.Minute
 
 // settle waits while a server holds the lock of dir without answering, as
 // one does while it starts or stops. It returns the status of a server that
-// answers, nil once no server holds the lock, or the error of
-// [checkNotRunning] after wait.
+// answers, nil once no server holds the lock, the error of a server whose
+// control socket is gone at once, or the error of [checkNotRunning] after
+// wait.
 func settle(ctx context.Context, dir agentdir.Dir, wait time.Duration) (*controlapi.Status, error) {
 	deadline := time.Now().Add(wait)
 	client := controlapi.NewClient(dir)
@@ -172,6 +174,9 @@ func settle(ctx context.Context, dir agentdir.Dir, wait time.Duration) (*control
 		cancel()
 		if err == nil {
 			return st, nil
+		}
+		if _, ok := errors.AsType[*agenterr.UnreachableError](err); ok {
+			return nil, err
 		}
 		err = checkNotRunning(dir)
 		if err == nil {
@@ -248,7 +253,7 @@ func background(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cmp.Or(st.Name, cfg.Name))
+		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(cmp.Or(st.Name, cfg.Name), st.PID))
 		return err
 	}
 	// The child's stdout is the log, so it is rotated before the child opens it.

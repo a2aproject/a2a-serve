@@ -61,6 +61,8 @@ type Result struct {
 	DryRun  bool              `json:"dryRun,omitempty"`
 	Created bool              `json:"created,omitempty"`
 	Running bool              `json:"running"`
+	// PID is the running server's PID.
+	PID int `json:"pid,omitempty"`
 	// Applied are the settings the running server applied.
 	Applied []string `json:"applied,omitempty"`
 	// Restart are the settings which wait for a restart of the running server.
@@ -255,11 +257,14 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		return res, nil
 	}
 	if !created {
-		release, err := connect(ctx, d, client)
+		running, release, err := connect(ctx, d, client)
 		if err != nil {
 			return nil, err
 		}
 		res.Running = release == nil
+		if running != nil {
+			res.PID = running.PID
+		}
 		if release != nil {
 			defer func() { err = errors.Join(err, release()) }()
 		}

@@ -490,6 +490,9 @@ func checkServer(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Con
 		}
 		return results
 	}
+	if unreachable, ok := errors.AsType[*agenterr.UnreachableError](err); ok {
+		return []Result{{ID: "running", Status: StatusFail, Message: unreachable.Error(), Fix: fixRestart}}
+	}
 	if err != nil {
 		return []Result{{ID: "running", Status: StatusFail, Message: "control socket: " + err.Error(), Fix: fixRestart}}
 	}

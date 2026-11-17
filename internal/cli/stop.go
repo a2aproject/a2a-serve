@@ -23,6 +23,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -37,7 +38,7 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := lifecycle.Stop(cmd.Context(), d, sf.controlClient(d), lifecycle.StopOptions{Wait: lifecycle.WaitStopped, Uninstall: uninstall})
+			res, err := lifecycle.Stop(cmd.Context(), d, sf.controlClient(d), lifecycle.StopOptions{Wait: lifecycle.WaitStopped, Uninstall: uninstall, Services: service.System{}})
 			if err != nil {
 				return err
 			}
@@ -52,8 +53,14 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			var sb strings.Builder
 			if res.Running {
 				fmt.Fprintf(&sb, "✓ stopped %s\n", name)
-				if res.Unresponsive {
+				switch {
+				case res.ByService:
+					sb.WriteString("  it didn't answer, so it was stopped through its user service\n")
+				case res.Unresponsive:
 					sb.WriteString("  it didn't answer, so it was stopped by its PID\n")
+				}
+				if res.NewPID != 0 {
+					fmt.Fprintf(&sb, "  a new server (pid %d) started meanwhile\n", res.NewPID)
 				}
 			} else {
 				fmt.Fprintf(&sb, "%s is not running\n", name)
