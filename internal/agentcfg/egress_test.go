@@ -19,9 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 func TestDecideEgress(t *testing.T) {
@@ -30,33 +30,33 @@ func TestDecideEgress(t *testing.T) {
 	ok := func() error { return nil }
 	noLauncher := func() (string, error) { return "", errors.New("no launcher") }
 	launcher := func() (string, error) { return "/usr/bin/a2a-serve", nil }
-	linux := sandbox.EgressEnv{GOOS: "linux", Launcher: launcher, TUN: ok}
-	with := func(f func(*sandbox.EgressEnv)) sandbox.EgressEnv { e := linux; f(&e); return e }
+	linux := sandboxrt.EgressEnv{GOOS: "linux", Launcher: launcher, TUN: ok}
+	with := func(f func(*sandboxrt.EgressEnv)) sandboxrt.EgressEnv { e := linux; f(&e); return e }
 	tests := []struct {
 		name     string
 		cfg      agentdir.Config
-		env      sandbox.EgressEnv
+		env      sandboxrt.EgressEnv
 		boundary bool
 		warning  string
 	}{
 		{name: "docker", env: linux, boundary: true},
-		{name: "docker without a launcher", env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher }), warning: "egress control is off: no launcher. The agent reaches every network"},
-		{name: "docker without a TUN device", env: with(func(e *sandbox.EgressEnv) { e.TUN = fail }), warning: "egress control is off: no tun"},
-		{name: "image for another architecture", env: with(func(e *sandbox.EgressEnv) { e.ImageArch = "s390x" }), warning: "the agent's image is for s390x"},
-		{name: "docker desktop", env: with(func(e *sandbox.EgressEnv) { e.GOOS = "darwin"; e.Launcher = noLauncher; e.TUN = fail }), boundary: true},
-		{name: "forced relay", env: with(func(e *sandbox.EgressEnv) { e.ForceRelay = true; e.Launcher = noLauncher }), boundary: true},
-		{name: "relay image to pull", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandbox.EgressEnv) {
+		{name: "docker without a launcher", env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher }), warning: "egress control is off: no launcher. The agent reaches every network"},
+		{name: "docker without a TUN device", env: with(func(e *sandboxrt.EgressEnv) { e.TUN = fail }), warning: "egress control is off: no tun"},
+		{name: "image for another architecture", env: with(func(e *sandboxrt.EgressEnv) { e.ImageArch = "s390x" }), warning: "the agent's image is for s390x"},
+		{name: "docker desktop", env: with(func(e *sandboxrt.EgressEnv) { e.GOOS = "darwin"; e.Launcher = noLauncher; e.TUN = fail }), boundary: true},
+		{name: "forced relay", env: with(func(e *sandboxrt.EgressEnv) { e.ForceRelay = true; e.Launcher = noLauncher }), boundary: true},
+		{name: "relay image to pull", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandboxrt.EgressEnv) {
 			e.ForceRelay = true
-			e.RelayImage = func() error { return &sandbox.MissingRelayImage{Image: "img", Pull: true} }
+			e.RelayImage = func() error { return &sandboxrt.MissingRelayImage{Image: "img", Pull: true} }
 		}), boundary: true, warning: "the egress container's image img isn't on this machine"},
-		{name: "relay image unknown", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandbox.EgressEnv) {
+		{name: "relay image unknown", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandboxrt.EgressEnv) {
 			e.ForceRelay = true
 			e.RelayImage = func() error { return errors.New("no commit") }
 		}), warning: "--egress allowlist can't apply: no commit"},
-		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher }), warning: "--egress allowlist can't apply: no launcher"},
+		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher }), warning: "--egress allowlist can't apply: no launcher"},
 		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
-		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
-		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher })},
+		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
+		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher })},
 		{name: "local", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal}, env: linux},
 		{name: "local with rules", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress-allow has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with `a2a-serve config unset egress-allow`"},
 		{name: "local with a mode", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, warning: "--egress has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the setting with `a2a-serve config unset egress`"},
@@ -121,9 +121,9 @@ func TestDecideEgressProbesOnlyForTheBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			probed := false
-			DecideEgress(&tc.cfg, func() sandbox.Capabilities {
+			DecideEgress(&tc.cfg, func() sandboxrt.Capabilities {
 				probed = true
-				return sandbox.Capabilities{}
+				return sandboxrt.Capabilities{}
 			})
 			if probed != tc.wantProbe {
 				t.Fatalf("DecideEgress() probed the machine = %v, want %v", probed, tc.wantProbe)

@@ -24,9 +24,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // emptyConfig is an agent configuration file that changes nothing.
@@ -69,8 +69,8 @@ type configMasks struct {
 	// masks lay the empty configuration file over the agent's own, and
 	// mounts keep the folders that hold them and the skills of masked
 	// folders in place.
-	masks  []sandbox.Mask
-	mounts []sandbox.Mount
+	masks  []sandboxrt.Mask
+	mounts []sandboxrt.Mount
 	// scratch are the container paths of the configuration folders, which
 	// appear empty.
 	scratch []string
@@ -155,7 +155,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 	}
 	for _, file := range files {
 		for _, m := range exposures(mounts, file) {
-			cm.masks = append(cm.masks, sandbox.Mask{Src: spec.ConfigMask, Dst: m.Dst})
+			cm.masks = append(cm.masks, sandboxrt.Mask{Src: spec.ConfigMask, Dst: m.Dst})
 		}
 	}
 	var parents []string
@@ -175,7 +175,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 			}
 			cm.scratch = append(cm.scratch, m.Dst)
 			if keep {
-				cm.mounts = append(cm.mounts, sandbox.Mount{Src: skills, Dst: filepath.Join(m.Dst, "skills"), ReadOnly: m.ReadOnly})
+				cm.mounts = append(cm.mounts, sandboxrt.Mount{Src: skills, Dst: filepath.Join(m.Dst, "skills"), ReadOnly: m.ReadOnly})
 			}
 		}
 	}
@@ -290,8 +290,8 @@ func hasSettings(path string, isDir bool) bool {
 }
 
 // exposures returns the mounts of the host path wherever mounts expose it.
-func exposures(mounts []Mount, path string) []sandbox.Mount {
-	var out []sandbox.Mount
+func exposures(mounts []Mount, path string) []sandboxrt.Mount {
+	var out []sandboxrt.Mount
 	for _, m := range mounts {
 		src := fsutil.ResolvePath(m.Src)
 		if !within(src, path) {
@@ -302,8 +302,8 @@ func exposures(mounts []Mount, path string) []sandbox.Mount {
 			continue
 		}
 		dst := filepath.Join(m.Dst, rel)
-		if !slices.ContainsFunc(out, func(o sandbox.Mount) bool { return o.Dst == dst }) {
-			out = append(out, sandbox.Mount{Src: path, Dst: dst, ReadOnly: m.ReadOnly})
+		if !slices.ContainsFunc(out, func(o sandboxrt.Mount) bool { return o.Dst == dst }) {
+			out = append(out, sandboxrt.Mount{Src: path, Dst: dst, ReadOnly: m.ReadOnly})
 		}
 	}
 	return out

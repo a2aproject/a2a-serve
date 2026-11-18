@@ -25,8 +25,8 @@ import (
 
 	"github.com/google/shlex"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
 	"github.com/a2aproject/a2a-serve/internal/speech"
@@ -230,14 +230,14 @@ func trimSpace(_ Dir, v string) (string, error) { return strings.TrimSpace(v), n
 // injectProviderValues are the completions of --inject-model-key.
 func injectProviderValues() []string {
 	var out []string
-	for _, p := range egress.ProviderNames() {
+	for _, p := range egressrules.ProviderNames() {
 		out = append(out, p+"=")
 	}
 	return out
 }
 
 func parseEgressRule(_ Dir, v string) (string, error) {
-	r, err := egress.ParseRule(v)
+	r, err := egressrules.ParseRule(v)
 	if err != nil {
 		return "", err
 	}
@@ -646,8 +646,8 @@ var fields = []field{
 		access: str(func(c *Config) *string { return &c.Egress.Mode }, func(s *Settings) *string { return &s.Egress }),
 		flag:   "egress", path: "egress.mode", scope: scopeOwner, section: SectionSandbox,
 		usage:  "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet)",
-		values: egress.Modes,
-		def:    egress.ModeInternet,
+		values: egressrules.Modes,
+		def:    egressrules.ModeInternet,
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Egress.Allow }, func(s *Settings) *[]string { return &s.EgressAllow }),
@@ -665,7 +665,7 @@ var fields = []field{
 		access: injectRules(true),
 		flag:   InjectModelKeySetting, path: "inject", scope: scopeOwner, section: SectionSandbox,
 		key: injectKey(true), merge: mergeInject(true),
-		usage:  "API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of " + strings.Join(egress.ProviderNames(), ", ") + " and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider",
+		usage:  "API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of " + strings.Join(egressrules.ProviderNames(), ", ") + " and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider",
 		values: injectProviderValues(),
 	},
 	{

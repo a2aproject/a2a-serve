@@ -35,10 +35,10 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
@@ -109,7 +109,7 @@ type Spec struct {
 	Env []string
 	// Sandbox is agentprofile.SandboxDocker or agentprofile.SandboxLocal.
 	Sandbox string
-	Limits  sandbox.Limits
+	Limits  sandboxrt.Limits
 	// Mounts are the directories the agent works on; the first is the
 	// workspace.
 	Mounts      []agentprofile.Mount
@@ -336,7 +336,7 @@ type Runner struct {
 	cfg Config
 
 	keys      *keys
-	docker    *sandbox.Docker
+	docker    *sandboxrt.Docker
 	egress    *egressSockets
 	listeners *listeners
 	main      *endpoint
@@ -379,7 +379,7 @@ func New(cfg Config) (*Runner, error) {
 		r.pools[p.Name] = &procs{max: p.MaxAgents}
 	}
 	r.egress = newEgressSockets(cfg.Dirs.Sockets, func() agentprofile.Egress { return r.spec().egress() })
-	r.docker = sandbox.NewDocker(cfg.Dirs.EnvFiles, r.egress.boundaries.Launcher)
+	r.docker = sandboxrt.NewDocker(cfg.Dirs.EnvFiles, r.egress.boundaries.Launcher)
 	r.decider = &toolDecider{rules: func() toolrules.Rules { return r.spec().Tools }, servers: r.mcpServerNames, decide: cfg.Hooks.Decide, denied: cfg.Hooks.Denied}
 	l, err := r.listen(cfg.Main == nil)
 	if err != nil {

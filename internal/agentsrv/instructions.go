@@ -24,10 +24,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -89,9 +89,9 @@ const cardNote = `What an agent "says of itself" and its skills come from its ow
 // egress mode.
 func egressNote(mode string) string {
 	switch mode {
-	case egress.ModeUnrestricted:
+	case egressrules.ModeUnrestricted:
 		return ""
-	case egress.ModeAllowlist:
+	case egressrules.ModeAllowlist:
 		return "The sandbox reaches only the hosts its owner allows. When a connection is refused, tell the user that the sandbox may have blocked it, and that `a2a-serve status` lists the blocked hosts."
 	}
 	return "The sandbox blocks private hosts, such as the LAN, the tailnet and the machine it runs on. When a connection to one is refused, tell the user that the sandbox may have blocked it, and that `a2a-serve status` lists the blocked hosts."

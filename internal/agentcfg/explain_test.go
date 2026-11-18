@@ -21,10 +21,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/runner"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 func TestExplain(t *testing.T) {
@@ -43,12 +43,12 @@ func TestExplain(t *testing.T) {
 		{name: "appeared", err: &agentprofile.AppearedError{Path: "/w/opencode.json"}, want: "/w/opencode.json appeared after this agent started, and its sandbox doesn't hide it yet; restart this agent with `a2a-serve restart`"},
 		{name: "inject without a sandbox", err: &agentprofile.EgressError{Egress: agentprofile.Egress{Inject: inject}, Local: true}, want: "--inject-model-key can't apply: the agent runs with --sandbox local. The agent doesn't start, so that it can't read OPENROUTER_API_KEY. Fix that, or put the keys in the agent's environment: remove the rules with `a2a-serve config unset inject-model-key`, then store the keys again with `a2a-serve config set --secret OPENROUTER_API_KEY=-`"},
 		{name: "allowlist without the boundary", err: &agentprofile.EgressError{Egress: agentprofile.Egress{Mode: "allowlist"}, Reason: "no tun"}, want: "--egress allowlist can't apply: no tun; run the server on Linux with a release build, or use --egress internet"},
-		{name: "docker not installed", err: &sandbox.DockerError{Problem: "is not installed", Fix: "install Docker", Err: exec.ErrNotFound}, want: "docker is not installed; install Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: executable file not found in $PATH"},
-		{name: "docker host unreachable", err: &sandbox.DockerError{Problem: "is not reachable at unix:///x from DOCKER_HOST", Fix: "fix or unset DOCKER_HOST", Err: errors.New("exit status 1")}, want: "docker is not reachable at unix:///x from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor: exit status 1"},
+		{name: "docker not installed", err: &sandboxrt.DockerError{Problem: "is not installed", Fix: "install Docker", Err: exec.ErrNotFound}, want: "docker is not installed; install Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: executable file not found in $PATH"},
+		{name: "docker host unreachable", err: &sandboxrt.DockerError{Problem: "is not reachable at unix:///x from DOCKER_HOST", Fix: "fix or unset DOCKER_HOST", Err: errors.New("exit status 1")}, want: "docker is not reachable at unix:///x from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor: exit status 1"},
 		{name: "process restarts", err: fmt.Errorf("refused: %w", runner.ErrGrantChanged), want: "refused: the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then"},
 		{name: "process narrowed", err: runner.ErrGrantNarrowed, want: "the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again"},
 		{name: "inject rule", err: &runner.InjectRuleError{Rule: agentprofile.InjectRule{Host: "api.github.com", Header: "Authorization: Bearer $GH"}, Err: errors.New("the value of GH has a character that a header can't carry")}, want: "--inject-header api.github.com=Authorization: Bearer $GH: the value of GH has a character that a header can't carry"},
-		{name: "inject rule of an unknown provider", err: &runner.InjectRuleError{Rule: agentprofile.InjectRule{Model: "acme", Key: "K"}, Err: egress.UnknownProvider("acme")}, want: "--inject-model-key acme=K: unknown model provider \"acme\": want " + strings.Join(egress.ProviderNames(), ", ") + "; use --inject-header for another host"},
+		{name: "inject rule of an unknown provider", err: &runner.InjectRuleError{Rule: agentprofile.InjectRule{Model: "acme", Key: "K"}, Err: egressrules.UnknownProvider("acme")}, want: "--inject-model-key acme=K: unknown model provider \"acme\": want " + strings.Join(egressrules.ProviderNames(), ", ") + "; use --inject-header for another host"},
 		{name: "missing secret of a caller's process", err: &runner.MissingSecretError{Name: "K"}, want: "the owner of the agent hasn't stored the secret K that this conversation's agent gets; ask them to store it"},
 		{name: "missing secret of the main process", err: &runner.MissingSecretError{Name: "K", Main: true}, want: "secret K is not set; pass --secret K again with the variable set"},
 		{name: "wrapped", err: fmt.Errorf("starting opencode: %w", &agentprofile.NoImageError{Agent: "x"}), want: "starting opencode: agent \"x\" has no container image; pass --image or --sandbox local"},

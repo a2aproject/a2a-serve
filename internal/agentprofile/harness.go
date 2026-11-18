@@ -30,8 +30,8 @@ import (
 
 	"github.com/tailscale/hujson"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // Workspace is what a harness works on.
@@ -45,7 +45,7 @@ type Workspace struct {
 }
 
 // Command describes a harness process to start.
-type Command = sandbox.Command
+type Command = sandboxrt.Command
 
 // Profile describes how to start one harness as an ACP agent.
 type Profile interface {

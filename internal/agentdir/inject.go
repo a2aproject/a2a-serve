@@ -22,9 +22,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 // InjectRule is a header the server adds to the Docker sandbox's HTTPS
@@ -42,7 +42,7 @@ const (
 // UnknownProviderText says that the model provider name is unknown, and how
 // to inject a header for another host.
 func UnknownProviderText(name string) string {
-	return egress.UnknownProvider(name).Error() + "; use --inject-header for another host"
+	return egressrules.UnknownProvider(name).Error() + "; use --inject-header for another host"
 }
 
 // InjectSetting names the flag that sets r.
@@ -66,11 +66,11 @@ func injectKey(model bool) func(string) string {
 		if model {
 			return strings.TrimSpace(k)
 		}
-		host, port, err := egress.ParseInjectTarget(k)
+		host, port, err := egressrules.ParseInjectTarget(k)
 		if err != nil {
 			return k
 		}
-		return egress.HeaderRule{Host: host, Port: port}.Target()
+		return egressrules.HeaderRule{Host: host, Port: port}.Target()
 	}
 }
 
@@ -160,7 +160,7 @@ func mergeInject(model bool) func(s *Settings, cfg *Config, d Dir, secrets Secre
 // --inject-header, into its rule in normal form.
 func parseInjectEntry(model bool, e string) (InjectRule, error) {
 	if !model {
-		h, err := egress.ParseHeaderRule(e)
+		h, err := egressrules.ParseHeaderRule(e)
 		if err != nil {
 			return InjectRule{}, err
 		}
@@ -171,7 +171,7 @@ func parseInjectEntry(model bool, e string) (InjectRule, error) {
 	if !ok || !secretName.MatchString(key) {
 		return InjectRule{}, fmt.Errorf("invalid model key for %q: want provider=NAME, such as openrouter=OPENROUTER_API_KEY, with the name of an environment variable after =", provider)
 	}
-	if _, ok := egress.LookupProvider(provider); !ok {
+	if _, ok := egressrules.LookupProvider(provider); !ok {
 		return InjectRule{}, errors.New(UnknownProviderText(provider))
 	}
 	return InjectRule{Model: provider, Key: key}, nil
@@ -221,7 +221,7 @@ func (c *Config) validateInject() []error {
 	switch {
 	case c.Sandbox == SandboxLocal:
 		errs = append(errs, fmt.Errorf("--%s needs the Docker sandbox: with --sandbox local, the agent can read the secrets in .a2a/state/secrets; use --sandbox docker, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
-	case c.Egress.Mode == egress.ModeUnrestricted:
+	case c.Egress.Mode == egressrules.ModeUnrestricted:
 		errs = append(errs, fmt.Errorf("--%s needs the server to see the sandbox's connections, which --egress unrestricted turns off; use --egress internet, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
 	}
 	return errs

@@ -27,11 +27,11 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // listeners give each agent process its own way to reach the caller,
@@ -119,7 +119,7 @@ func (hl *listeners) openKey(agentKey string) *endpoint {
 }
 
 func (hl *listeners) openSocket(agentKey string) (*endpoint, error) {
-	dir := filepath.Join(hl.dir, cryptoutil.RandomString(sandbox.SocketIDLen, idAlphabet))
+	dir := filepath.Join(hl.dir, cryptoutil.RandomString(sandboxrt.SocketIDLen, idAlphabet))
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return nil, err
 	}

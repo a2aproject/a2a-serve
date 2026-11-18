@@ -24,9 +24,9 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 // InjectRuleError is the error of an inject rule that can't apply.
@@ -71,7 +71,7 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 		}
 		secrets := r.Secrets()
 		for _, n := range secrets {
-			placeholders[n] = cmp.Or(placeholders[n], egress.Placeholder)
+			placeholders[n] = cmp.Or(placeholders[n], egressrules.Placeholder)
 		}
 		if slices.ContainsFunc(secrets, func(n string) bool { _, ok := values[n]; return !ok }) {
 			continue
@@ -81,7 +81,7 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 			return nil, nil, nil, &InjectRuleError{Rule: r, Err: fmt.Errorf("the value of %s has a character that a header can't carry", strings.Join(secrets, " or "))}
 		}
 		if r.IsModel() {
-			p, _ := egress.LookupProvider(r.Model)
+			p, _ := egressrules.LookupProvider(r.Model)
 			inj.Model, inj.QueryKey, inj.Endpoints = true, p.QueryKey, p.Endpoints
 			placeholders[r.Key] = p.Placeholder(r.Key)
 		}
@@ -96,7 +96,7 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 		case placeholders[s.Name] != "":
 			env = append(env, s.Name+"="+placeholders[s.Name])
 		case slices.Contains(injected, s.From):
-			env = append(env, s.Name+"="+egress.Placeholder)
+			env = append(env, s.Name+"="+egressrules.Placeholder)
 		default:
 			env = append(env, s.Name+"="+values[s.Name])
 		}

@@ -29,12 +29,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // Name is the name of the directory which marks an agent.
@@ -497,7 +497,7 @@ func (d Dir) controlRecord() (controlRecord, bool) {
 
 // HarnessSocketIDLen is the length of the names of the directories in
 // [Dir.HarnessSocketDir].
-const HarnessSocketIDLen = sandbox.SocketIDLen
+const HarnessSocketIDLen = sandboxrt.SocketIDLen
 
 // HarnessSocketDir returns the directory that holds a directory per agent
 // process, of [HarnessSocketIDLen] characters, with the a2a.sock through

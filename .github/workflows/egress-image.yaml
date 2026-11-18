@@ -20,7 +20,7 @@ on:
         required: true
   pull_request:
     paths:
-      - 'core/sandbox/boundary/Dockerfile'
+      - 'internal/boundary/Dockerfile'
       - '.github/workflows/egress-image.yaml'
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Build
-      run: docker build -t egress -f core/sandbox/boundary/Dockerfile .
+      run: docker build -t egress -f internal/boundary/Dockerfile .
 
     - name: Check the image runs the relay
       run: |
@@ -66,4 +66,4 @@ jobs:
         docker buildx build --push --platform linux/amd64,linux/arm64 \
           --build-arg "VERSION=${TAG#v}" \
           -t "$IMAGE:$TAG" \
-          -f core/sandbox/boundary/Dockerfile .
+          -f internal/boundary/Dockerfile .

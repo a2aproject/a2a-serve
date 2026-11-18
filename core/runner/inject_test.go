@@ -19,9 +19,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 func TestSecretEnv(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSecretEnv(t *testing.T) {
 		{Host: "api.github.com", Header: "Authorization: Bearer $GH"},
 	}
 	stored := map[string]string{"OPENROUTER_API_KEY": "sk-or-real", "GH": "ghp_real", "OTHER": "o", "GUEST_KEY": "sk-or-guest"}
-	openrouter, _ := egress.LookupProvider("openrouter")
+	openrouter, _ := egressrules.LookupProvider("openrouter")
 	placeholder := openrouter.Placeholder("OPENROUTER_API_KEY")
 	modelKey := func(key string) boundary.Injection {
 		return boundary.Injection{
@@ -50,7 +50,7 @@ func TestSecretEnv(t *testing.T) {
 		{
 			name:    "every secret granted",
 			grants:  []SecretGrant{grant("OPENROUTER_API_KEY", "OPENROUTER_API_KEY"), grant("GH", "GH"), grant("OTHER", "OTHER")},
-			wantEnv: []string{"OPENROUTER_API_KEY=" + placeholder, "GH=" + egress.Placeholder, "OTHER=o"},
+			wantEnv: []string{"OPENROUTER_API_KEY=" + placeholder, "GH=" + egressrules.Placeholder, "OTHER=o"},
 			wantInject: []boundary.Injection{
 				modelKey("sk-or-real"),
 				{Host: "api.github.com", Port: 443, Header: "Authorization", Value: "Bearer ghp_real", Secrets: []string{"GH"}},
@@ -65,7 +65,7 @@ func TestSecretEnv(t *testing.T) {
 		{
 			name:    "an added secret under a name no rule adds",
 			grants:  []SecretGrant{grant("TOKEN", "GH")},
-			wantEnv: []string{"TOKEN=" + egress.Placeholder},
+			wantEnv: []string{"TOKEN=" + egressrules.Placeholder},
 		},
 		{
 			name:        "no secret granted, one missing",

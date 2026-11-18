@@ -35,7 +35,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -43,6 +42,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -285,7 +285,7 @@ func (cc *ContactClients) onPrivateNetwork(ctx context.Context, u string) bool {
 // streams to the contact last as long as its task; callers bound requests
 // with their context.
 func (cc *ContactClients) HTTPClient(c store.Contact) *http.Client {
-	base := &http.Client{Transport: egress.Transport(c.URL), CheckRedirect: egress.CheckRedirect}
+	base := &http.Client{Transport: egressrules.Transport(c.URL), CheckRedirect: egressrules.CheckRedirect}
 	if c.Via == ViaPrivate && cc.private != nil {
 		base = cc.private.HTTPClient()
 	}
@@ -293,7 +293,7 @@ func (cc *ContactClients) HTTPClient(c store.Contact) *http.Client {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	limited := &http.Client{Transport: egress.LimitResponses(rt, maxContactResponse), CheckRedirect: base.CheckRedirect}
+	limited := &http.Client{Transport: egressrules.LimitResponses(rt, maxContactResponse), CheckRedirect: base.CheckRedirect}
 	return contacts.TokenClient(limited, c)
 }
 

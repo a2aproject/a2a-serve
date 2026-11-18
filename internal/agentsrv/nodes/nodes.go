@@ -34,13 +34,13 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -886,9 +886,9 @@ const wakeTimeout = 20 * time.Second
 func wakeClient(node store.Node) *http.Client {
 	return &http.Client{
 		Timeout:   wakeTimeout,
-		Transport: egress.Transport(node.Webhook),
+		Transport: egressrules.Transport(node.Webhook),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if err := egress.CheckRedirect(req, via); err != nil {
+			if err := egressrules.CheckRedirect(req, via); err != nil {
 				return err
 			}
 			if req.URL.Host == via[0].URL.Host {

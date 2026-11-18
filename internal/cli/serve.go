@@ -30,7 +30,6 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -38,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
@@ -207,7 +207,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, m runMode) error {
 	if err != nil {
 		return err
 	}
-	_, dockerErr := sandbox.CheckDocker(cmd.Context())
+	_, dockerErr := sandboxrt.CheckDocker(cmd.Context())
 	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
 		DefaultName: d.DefaultName(),
 		Harnesses:   agentprofile.ProfileNames(),

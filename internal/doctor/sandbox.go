@@ -21,11 +21,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // useLocalSandbox is the fix of a missing Docker in an agent, and
@@ -171,7 +171,7 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 		}
 	}
 	switch {
-	case cfg.Egress.Mode == egress.ModeUnrestricted:
+	case cfg.Egress.Mode == egressrules.ModeUnrestricted:
 		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+agentcfg.UnrestrictedEffect
 		r.Fix = "a2a-serve config unset egress --restart"
 	case d.Problem != "" && agentcfg.StrictEgress(cfg):
@@ -181,7 +181,7 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	case d.Boundary && env.CheckInternetRoute() != nil:
 		r.Status, r.Message = StatusWarn, env.CheckInternetRoute().Error()
 	default:
-		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egress.ModeInternet) + ")"
+		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egressrules.ModeInternet) + ")"
 	}
 	return r
 }
@@ -189,8 +189,8 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 // egressEnv is how [agentcfg.DecideEgress] probes the machine of env:
 // its a2a-serve, its TUN device, and the architecture of the agent's
 // image when docker has it.
-func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandbox.EgressEnv {
-	return sandbox.EgressEnv{
+func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandboxrt.EgressEnv {
+	return sandboxrt.EgressEnv{
 		GOOS: runtime.GOOS,
 		Launcher: func() (string, error) {
 			exe, err := env.Executable()
@@ -201,8 +201,8 @@ func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandbox.Egres
 		},
 		TUN:        env.CheckTUN,
 		ImageArch:  imageArch(ctx, env, cfg),
-		ForceRelay: lookupEnv(env, sandbox.EnvForceRelay) == "1",
-		RelayImage: func() error { return sandbox.CheckRelayImage(ctx, env.Run, true) },
+		ForceRelay: lookupEnv(env, sandboxrt.EnvForceRelay) == "1",
+		RelayImage: func() error { return sandboxrt.CheckRelayImage(ctx, env.Run, true) },
 	}
 }
 

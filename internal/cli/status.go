@@ -27,13 +27,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
@@ -242,16 +242,16 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 		return
 	}
 	allowed := strings.Join(e.Allow, ", ")
-	if e.Mode == egress.ModeAllowlist {
+	if e.Mode == egressrules.ModeAllowlist {
 		allowed = strings.Join(append(slices.Clone(e.Allow), injectHosts...), ", ")
 	}
 	var line string
 	switch e.Mode {
-	case egress.ModeAllowlist:
+	case egressrules.ModeAllowlist:
 		line = "only " + cmp.Or(allowed, "the --egress-allow hosts, none yet")
-	case egress.ModeUnrestricted:
+	case egressrules.ModeUnrestricted:
 		line = "unrestricted, the LAN and the tailnet included"
-	case egress.ModeInternet:
+	case egressrules.ModeInternet:
 		if allowed == "" {
 			line = "the internet; private networks blocked"
 		} else {

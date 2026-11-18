@@ -31,15 +31,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/messenger/configured"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -104,9 +104,9 @@ type Env struct {
 	// directory. Optional: without it no directory counts as writable.
 	DirWritable func(dir string) bool
 	// CheckLauncher checks that Docker can run the a2a-serve binary at a
-	// path as the launcher of containers, as [sandbox.CheckLauncher] does.
+	// path as the launcher of containers, as [sandboxrt.CheckLauncher] does.
 	CheckLauncher func(exe string) (string, error)
-	// CheckTUN checks the host's TUN device, as [sandbox.CheckTUN] does.
+	// CheckTUN checks the host's TUN device, as [sandboxrt.CheckTUN] does.
 	CheckTUN func() error
 	// CheckInternetRoute checks that this host routes to the internet, as
 	// [boundary.CheckInternetRoute] does.
@@ -145,8 +145,8 @@ func System() (Env, error) {
 		LookPath:           exec.LookPath,
 		Executable:         os.Executable,
 		DirWritable:        dirWritable,
-		CheckLauncher:      sandbox.CheckLauncher,
-		CheckTUN:           sandbox.CheckTUN,
+		CheckLauncher:      sandboxrt.CheckLauncher,
+		CheckTUN:           sandboxrt.CheckTUN,
 		CheckInternetRoute: boundary.CheckInternetRoute,
 		Run:                runCommand,
 		HTTP:               &http.Client{Timeout: 5 * time.Second},

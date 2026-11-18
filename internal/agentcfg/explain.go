@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/runner"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // Explain returns err with the errors of the core that it wraps worded with
@@ -66,7 +66,7 @@ func typedErrors(err error) []error {
 	add(asType[*agentprofile.NestedAgentsError](err))
 	add(asType[*agentprofile.AppearedError](err))
 	add(asType[*agentprofile.EgressError](err))
-	add(asType[*sandbox.DockerError](err))
+	add(asType[*sandboxrt.DockerError](err))
 	add(asType[*runner.MissingSecretError](err))
 	add(asType[*runner.CopyError](err))
 	add(asType[*runner.InjectRuleError](err))
@@ -129,7 +129,7 @@ func Warning(err error) string {
 			texts[i] = Warning(w)
 		}
 		return strings.Join(texts, "; ")
-	case *sandbox.DockerError:
+	case *sandboxrt.DockerError:
 		sep := " or "
 		if strings.Contains(e.Fix, " or ") {
 			sep = ", or "
@@ -148,7 +148,7 @@ func Warning(err error) string {
 	}
 	if e, ok := err.(*runner.InjectRuleError); ok {
 		why := e.Err.Error()
-		if p, ok := errors.AsType[*egress.UnknownProviderError](e.Err); ok {
+		if p, ok := errors.AsType[*egressrules.UnknownProviderError](e.Err); ok {
 			why = agentdir.UnknownProviderText(p.Name)
 		}
 		return "--" + agentdir.InjectSetting(e.Rule) + " " + e.Rule.Entry() + ": " + why

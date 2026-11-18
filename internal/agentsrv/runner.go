@@ -32,7 +32,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
@@ -44,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
@@ -386,7 +386,7 @@ func (s *Server) egressBoundary(cfg *agentdir.Config) bool {
 		return agentcfg.HostEgress(cfg).Boundary
 	}
 	if st := s.runner.Egress(); st.Started {
-		return st.Problem == "" && cfg.Sandbox != agentprofile.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
+		return st.Problem == "" && cfg.Sandbox != agentprofile.SandboxLocal && cfg.Egress.Mode != egressrules.ModeUnrestricted
 	}
 	return agentcfg.HostEgress(cfg).Boundary
 }
@@ -399,7 +399,7 @@ func (s *Server) egressStatus(cfg *agentdir.Config) *controlapi.EgressStatus {
 		return nil
 	}
 	es := s.runner.Egress()
-	st := &controlapi.EgressStatus{Mode: cmp.Or(es.Mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Blocked: es.Blocked}
+	st := &controlapi.EgressStatus{Mode: cmp.Or(es.Mode, cfg.Egress.Mode, egressrules.ModeInternet), Allow: cfg.Egress.Allow, Blocked: es.Blocked}
 	if es.Problem != "" {
 		st.Problem = agentcfg.NoBoundary(es.Problem)
 	}
@@ -409,9 +409,9 @@ func (s *Server) egressStatus(cfg *agentdir.Config) *controlapi.EgressStatus {
 	if st.Problem == "" {
 		st.Problem = agentcfg.HostEgress(cfg).Warning
 	}
-	p, err := egress.NewPolicy(st.Mode, cfg.Egress.Allow)
+	p, err := egressrules.NewPolicy(st.Mode, cfg.Egress.Allow)
 	if err != nil {
-		p = egress.Policy{Mode: egress.ModeAllowlist}
+		p = egressrules.Policy{Mode: egressrules.ModeAllowlist}
 	}
 	for _, b := range es.Recent {
 		st.Recent = append(st.Recent, controlapi.EgressBlock{Destination: b.Destination, Allow: b.Allow, Unresolved: b.Unresolved, Allowed: !b.Unresolved && allowedByRule(p, b.Allow)})
@@ -420,12 +420,12 @@ func (s *Server) egressStatus(cfg *agentdir.Config) *controlapi.EgressStatus {
 }
 
 // allowedByRule reports whether a rule of p names the destination host:port.
-func allowedByRule(p egress.Policy, dest string) bool {
+func allowedByRule(p egressrules.Policy, dest string) bool {
 	host, port, err := net.SplitHostPort(dest)
 	if err != nil {
 		return false
 	}
-	n, err := egress.ParsePort(port)
+	n, err := egressrules.ParsePort(port)
 	if err != nil {
 		return false
 	}
@@ -446,7 +446,7 @@ const egressNoticeFile = "egress-notice"
 // blocks the LAN and the tailnet. A new agent only records it.
 func (s *Server) noticeEgress(boundary bool) {
 	cfg := s.rt.Config()
-	if !boundary || cfg.Egress.Mode == egress.ModeAllowlist {
+	if !boundary || cfg.Egress.Mode == egressrules.ModeAllowlist {
 		return
 	}
 	marker := filepath.Join(s.dir.StateDir(), egressNoticeFile)
