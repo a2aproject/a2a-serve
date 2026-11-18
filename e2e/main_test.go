@@ -26,9 +26,9 @@ import (
 	"strings"
 	"testing"
 
-	coreagent "github.com/a2aproject/a2a-serve/core/agent"
 	sbx "github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -183,11 +183,11 @@ func prepareHarness(dir string) error {
 	if err := goCmd(root, []string{"CGO_ENABLED=0"}, "build", "-o", filepath.Join(dir, "mcpecho"), "./e2e/testdata/mcpecho"); err != nil {
 		return err
 	}
-	profile, err := coreagent.Lookup(harnessName, nil)
+	profile, err := agentprofile.Lookup(harnessName, nil)
 	if err != nil {
 		return err
 	}
-	image, _, err := coreagent.EnsureImage(context.Background(), os.Getenv("E2E_HARNESS_IMAGE"), profile, os.Stderr)
+	image, _, err := agentprofile.EnsureImage(context.Background(), os.Getenv("E2E_HARNESS_IMAGE"), profile, os.Stderr)
 	if err != nil {
 		return err
 	}

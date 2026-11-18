@@ -20,7 +20,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -43,7 +43,7 @@ type policies struct {
 // agent asks before every shell command while the rules deny some, since
 // it would run read-only ones, and those that a skill allows, itself.
 func (p *policies) write(spec Spec, lockHome bool, mcpServers []string) (string, error) {
-	profile, err := agent.Lookup(spec.Agent, spec.Command)
+	profile, err := agentprofile.Lookup(spec.Agent, spec.Command)
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +58,7 @@ func (p *policies) write(spec Spec, lockHome bool, mcpServers []string) (string,
 	if lockHome {
 		dir = filepath.Join(p.dir, "callers")
 	}
-	err = agent.WritePolicy(profile, dir, agent.Policy{
+	err = agentprofile.WritePolicy(profile, dir, agentprofile.Policy{
 		LockHome:    lockHome,
 		AskCommands: toolrules.DeniesCommands(spec.Tools.Deny),
 		MCPServers:  slices.Clone(p.mcp),

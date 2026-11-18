@@ -25,8 +25,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
@@ -240,14 +240,14 @@ func (r *Runner) applyGrantChange(ctx context.Context, procs *procs, key string)
 // grantMounts returns the mounts of a container with storage: as they are
 // for shared, read-only for read-only and own, and only the workspace for
 // empty. Own and empty mount a private workspace in place of the workspace.
-func grantMounts(storage workspaces.Storage, mounts []agent.Mount) []agent.Mount {
+func grantMounts(storage workspaces.Storage, mounts []agentprofile.Mount) []agentprofile.Mount {
 	switch storage {
 	case workspaces.StorageShared:
 		return mounts
 	case workspaces.StorageEmpty:
 		ws := mounts[0]
 		ws.ReadOnly = false
-		return []agent.Mount{ws}
+		return []agentprofile.Mount{ws}
 	}
 	out := slices.Clone(mounts)
 	for i := range out {
@@ -259,7 +259,7 @@ func grantMounts(storage workspaces.Storage, mounts []agent.Mount) []agent.Mount
 // grantSandbox gives spec the storage and secrets of the grant of proc, the
 // process of key, and returns the headers its boundary adds. Without the
 // Docker sandbox, only the secrets apply.
-func (r *Runner) grantSandbox(ctx context.Context, spec *agent.Spec, cfg Spec, key string, proc Process) ([]boundary.Injection, error) {
+func (r *Runner) grantSandbox(ctx context.Context, spec *agentprofile.Spec, cfg Spec, key string, proc Process) ([]boundary.Injection, error) {
 	g := proc.Grant
 	values, inject, missing, err := secretEnv(cfg.Inject, g, r.cfg.Secrets())
 	if err != nil {
@@ -269,7 +269,7 @@ func (r *Runner) grantSandbox(ctx context.Context, spec *agent.Spec, cfg Spec, k
 		return nil, &MissingSecretError{Name: missing[0], Main: key == ""}
 	}
 	spec.Env = append(spec.Env, values...)
-	if spec.Sandbox == agent.SandboxLocal {
+	if spec.Sandbox == agentprofile.SandboxLocal {
 		return inject, nil
 	}
 	ws := spec.Mounts[0].Src

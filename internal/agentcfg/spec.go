@@ -15,10 +15,10 @@
 package agentcfg
 
 import (
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -45,7 +45,7 @@ func Spec(cfg *agentdir.Config, d agentdir.Dir, cli string) (runner.Spec, error)
 		Tools:       ToolRules(cfg),
 		DisabledMCP: cfg.MCP.Disabled,
 	}
-	if cfg.Sandbox == agent.SandboxLocal {
+	if cfg.Sandbox == agentprofile.SandboxLocal {
 		spec.CLI = cli
 	}
 	return spec, err

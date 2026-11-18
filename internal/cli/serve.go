@@ -30,11 +30,11 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
@@ -187,7 +187,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			e := clierr.NoAgent(errors.New("no agent here"))
-			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(agent.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
+			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(agentprofile.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
 			return e
 		}
 		return runWizard(cmd, cfg, m)
@@ -210,7 +210,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, m runMode) error {
 	_, dockerErr := sandbox.CheckDocker(cmd.Context())
 	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
 		DefaultName: d.DefaultName(),
-		Harnesses:   agent.ProfileNames(),
+		Harnesses:   agentprofile.ProfileNames(),
 		Getenv:      os.Getenv,
 		DockerErr:   agentcfg.Explain(dockerErr),
 		ReadSecret:  cfg.secretReader(cfg.Out).Read,

@@ -37,7 +37,7 @@ jobs:
       uses: ./.github/actions/setup
 
     - name: Build the opencode image
-      run: docker build -t a2a-harness-opencode:e2e core/agent/images/opencode
+      run: docker build -t a2a-harness-opencode:e2e internal/agentprofile/images/opencode
 
     - name: Harness E2E
       env:

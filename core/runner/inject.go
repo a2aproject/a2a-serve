@@ -24,14 +24,14 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // InjectRuleError is the error of an inject rule that can't apply.
 type InjectRuleError struct {
-	Rule agent.InjectRule
+	Rule agentprofile.InjectRule
 	Err  error
 }
 
@@ -53,7 +53,7 @@ func (e *InjectRuleError) Unwrap() error { return e.Err }
 // a placeholder too, whatever rules are pending, so that the value never
 // enters the container. A rule adds nothing to a container that isn't
 // granted all of its secrets.
-func secretEnv(rules []agent.InjectRule, g Grant, stored map[string]string) (env []string, inject []boundary.Injection, missing []string, err error) {
+func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]string) (env []string, inject []boundary.Injection, missing []string, err error) {
 	values := map[string]string{}
 	for _, s := range g.Secrets {
 		v, ok := stored[s.From]
@@ -87,7 +87,7 @@ func secretEnv(rules []agent.InjectRule, g Grant, stored map[string]string) (env
 		}
 		inject = append(inject, inj)
 	}
-	injected := agent.InjectedSecrets(rules)
+	injected := agentprofile.InjectedSecrets(rules)
 	for _, s := range g.Secrets {
 		if _, ok := stored[s.From]; !ok {
 			continue
@@ -106,7 +106,7 @@ func secretEnv(rules []agent.InjectRule, g Grant, stored map[string]string) (env
 
 // injectHosts returns the hosts of the inject rules, which the egress CA
 // covers.
-func injectHosts(rules []agent.InjectRule) []string {
+func injectHosts(rules []agentprofile.InjectRule) []string {
 	var out []string
 	for _, r := range rules {
 		h, err := r.HeaderRule()

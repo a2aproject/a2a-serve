@@ -32,9 +32,9 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
@@ -761,7 +761,7 @@ func TestConfigSetWithoutAgentHintsAtAgentFlag(t *testing.T) {
 	if got.Exit != 7 {
 		t.Fatalf("a2a-serve config set without --agent in a new directory exit = %d, want 7", got.Exit)
 	}
-	want := "add --agent <agent> (" + strings.Join(agent.ProfileNames(), ", ") + ") to create one here"
+	want := "add --agent <agent> (" + strings.Join(agentprofile.ProfileNames(), ", ") + ") to create one here"
 	if got.Hint != want {
 		t.Fatalf("a2a-serve config set without --agent in a new directory hint = %q, want %q", got.Hint, want)
 	}

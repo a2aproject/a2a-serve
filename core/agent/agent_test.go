@@ -1,0 +1,165 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agent_test
+
+import (
+	"errors"
+	"slices"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+)
+
+func TestProfile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		profile   agent.Profile
+		wantName  string
+		wantImage string
+		wantArgv  []string
+	}{
+		{name: "opencode", profile: agent.Opencode(), wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
+		{name: "claude", profile: agent.Claude(), wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
+		{name: "command", profile: agent.Command("/usr/bin/gemini", "--experimental-acp"), wantName: "gemini", wantArgv: []string{"/usr/bin/gemini", "--experimental-acp"}},
+		{name: "command named like a profile has no image", profile: agent.Command("opencode", "acp"), wantName: "opencode", wantArgv: []string{"opencode", "acp"}},
+		{name: "command without argv", profile: agent.Command()},
+		{name: "zero value", profile: agent.Profile{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.profile.Name(); got != tc.wantName {
+				t.Errorf("Profile.Name() = %q, want %q", got, tc.wantName)
+			}
+			if got := tc.profile.Image(); got != tc.wantImage {
+				t.Errorf("Profile.Image() = %q, want %q", got, tc.wantImage)
+			}
+			if diff := cmp.Diff(tc.wantArgv, tc.profile.Argv("some-model")); diff != "" {
+				t.Errorf("Profile.Argv() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestLookup(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		agent     string
+		argv      []string
+		wantName  string
+		wantImage string
+		wantArgv  []string
+		wantErr   bool
+	}{
+		{name: "opencode", agent: "opencode", wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
+		{name: "claude", agent: "claude", wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
+		{name: "argv replaces the command and keeps the image", agent: "opencode", argv: []string{"opencode", "acp", "--print-logs"}, wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp", "--print-logs"}},
+		{name: "unknown name with argv", agent: "gemini", argv: []string{"gemini", "--experimental-acp"}, wantName: "gemini", wantArgv: []string{"gemini", "--experimental-acp"}},
+		{name: "unknown name", agent: "gemini", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := agent.Lookup(tc.agent, tc.argv)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("agent.Lookup() error = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if got := p.Name(); got != tc.wantName {
+				t.Errorf("Profile.Name() = %q, want %q", got, tc.wantName)
+			}
+			if got := p.Image(); got != tc.wantImage {
+				t.Errorf("Profile.Image() = %q, want %q", got, tc.wantImage)
+			}
+			if diff := cmp.Diff(tc.wantArgv, p.Argv("")); diff != "" {
+				t.Errorf("Profile.Argv() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestLookupUnknownAgentError(t *testing.T) {
+	t.Parallel()
+	_, err := agent.Lookup("gemini", nil)
+	var unknown *agentprofile.UnknownAgentError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("agent.Lookup() error = %v, want an *UnknownAgentError", err)
+	}
+	if diff := cmp.Diff(&agentprofile.UnknownAgentError{Name: "gemini", Known: agent.Names()}, unknown); diff != "" {
+		t.Errorf("agent.Lookup() error wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestLookupArgvIsCopied(t *testing.T) {
+	t.Parallel()
+	argv := []string{"gemini", "--experimental-acp"}
+	p, err := agent.Lookup("gemini", argv)
+	if err != nil {
+		t.Fatalf("agent.Lookup() error = %v", err)
+	}
+	argv[1] = "changed"
+	if diff := cmp.Diff([]string{"gemini", "--experimental-acp"}, p.Argv("")); diff != "" {
+		t.Errorf("Profile.Argv() after changing argv wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestNames(t *testing.T) {
+	t.Parallel()
+	got := agent.Names()
+	if diff := cmp.Diff([]string{"claude", "opencode"}, got); diff != "" {
+		t.Errorf("agent.Names() wrong result (-want +got) diff = %s", diff)
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("agent.Names() = %v, want sorted", got)
+	}
+}
+
+func TestOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		profile  any
+		wantName string
+		wantErr  bool
+	}{
+		{name: "opencode", profile: agent.Opencode(), wantName: "opencode"},
+		{name: "command", profile: agent.Command("gemini", "--acp"), wantName: "gemini"},
+		{name: "internal profile", profile: agentprofile.Claude(), wantName: "claude"},
+		{name: "zero value", profile: agent.Profile{}, wantErr: true},
+		{name: "other type", profile: "opencode", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := agentprofile.Of(tc.profile)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("agentprofile.Of() error = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if got := p.Name(); got != tc.wantName {
+				t.Errorf("agentprofile.Of().Name() = %q, want %q", got, tc.wantName)
+			}
+		})
+	}
+}

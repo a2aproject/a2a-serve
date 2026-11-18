@@ -21,9 +21,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
@@ -96,7 +96,7 @@ alters who may call the agent, it prints who may call afterwards.
 // creates the agent.
 func withCreateHint(err error) error {
 	ce := clierr.NoAgent(err)
-	ce.Hint = "add --agent <agent> (" + strings.Join(agent.ProfileNames(), ", ") + ") to create one here"
+	ce.Hint = "add --agent <agent> (" + strings.Join(agentprofile.ProfileNames(), ", ") + ") to create one here"
 	return ce
 }
 

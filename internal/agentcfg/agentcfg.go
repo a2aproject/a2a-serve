@@ -18,17 +18,17 @@
 package agentcfg
 
 import (
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // Profile returns the profile of the agent of cfg.
-func Profile(cfg *agentdir.Config) (agent.Profile, error) {
-	p, err := agent.Lookup(cfg.Harness, cfg.Command)
+func Profile(cfg *agentdir.Config) (agentprofile.Profile, error) {
+	p, err := agentprofile.Lookup(cfg.Harness, cfg.Command)
 	return p, Explain(err)
 }
 
 // Egress returns the settings of cfg that decide its egress.
-func Egress(cfg *agentdir.Config) agent.Egress {
-	return agent.Egress{Sandbox: cfg.Sandbox, Mode: cfg.Egress.Mode, Allow: cfg.Egress.Allow, Inject: cfg.Inject}
+func Egress(cfg *agentdir.Config) agentprofile.Egress {
+	return agentprofile.Egress{Sandbox: cfg.Sandbox, Mode: cfg.Egress.Mode, Allow: cfg.Egress.Allow, Inject: cfg.Inject}
 }

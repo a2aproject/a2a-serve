@@ -35,9 +35,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
@@ -91,7 +91,7 @@ type Dirs struct {
 	// Hidden are host paths every sandbox hides.
 	Hidden []string
 	// Pins are the directories containers are checked against.
-	Pins *agent.Pins
+	Pins *agentprofile.Pins
 }
 
 // Spec is the live configuration of the agent.
@@ -107,15 +107,15 @@ type Spec struct {
 	Model   string
 	// Env holds NAME=value pairs for the agent.
 	Env []string
-	// Sandbox is agent.SandboxDocker or agent.SandboxLocal.
+	// Sandbox is agentprofile.SandboxDocker or agentprofile.SandboxLocal.
 	Sandbox string
 	Limits  sandbox.Limits
 	// Mounts are the directories the agent works on; the first is the
 	// workspace.
-	Mounts      []agent.Mount
+	Mounts      []agentprofile.Mount
 	EgressMode  string
 	EgressAllow []string
-	Inject      []agent.InjectRule
+	Inject      []agentprofile.InjectRule
 	Tools       toolrules.Rules
 	DisabledMCP []string
 	// CLI is the a2a binary of an agent without a sandbox, or "".
@@ -123,8 +123,8 @@ type Spec struct {
 }
 
 // egress returns the settings of s that decide its egress.
-func (s Spec) egress() agent.Egress {
-	return agent.Egress{Sandbox: s.Sandbox, Mode: s.EgressMode, Allow: s.EgressAllow, Inject: s.Inject}
+func (s Spec) egress() agentprofile.Egress {
+	return agentprofile.Egress{Sandbox: s.Sandbox, Mode: s.EgressMode, Allow: s.EgressAllow, Inject: s.Inject}
 }
 
 // Processes tells the runner about keys, which it treats as opaque.
@@ -268,7 +268,7 @@ type Prepared struct {
 	// Summary describes the sandbox, Mounts are the directories it mounts,
 	// and Warnings the problems that don't stop the agent.
 	Summary  string
-	Mounts   []agent.Mount
+	Mounts   []agentprofile.Mount
 	Warnings []error
 	// Egress is set when the container's connections go through the
 	// runner, and NoBoundary is why they don't although the settings ask
@@ -378,7 +378,7 @@ func New(cfg Config) (*Runner, error) {
 	for _, p := range cfg.Pools {
 		r.pools[p.Name] = &procs{max: p.MaxAgents}
 	}
-	r.egress = newEgressSockets(cfg.Dirs.Sockets, func() agent.Egress { return r.spec().egress() })
+	r.egress = newEgressSockets(cfg.Dirs.Sockets, func() agentprofile.Egress { return r.spec().egress() })
 	r.docker = sandbox.NewDocker(cfg.Dirs.EnvFiles, r.egress.boundaries.Launcher)
 	r.decider = &toolDecider{rules: func() toolrules.Rules { return r.spec().Tools }, servers: r.mcpServerNames, decide: cfg.Hooks.Decide, denied: cfg.Hooks.Denied}
 	l, err := r.listen(cfg.Main == nil)
@@ -506,7 +506,7 @@ func (r *Runner) Copies() *workspaces.Copies { return r.copies }
 // in open sessions too.
 func (r *Runner) WritePolicies() error {
 	spec := r.spec()
-	if spec.Sandbox == agent.SandboxLocal {
+	if spec.Sandbox == agentprofile.SandboxLocal {
 		return nil
 	}
 	for _, lockHome := range []bool{false, true} {

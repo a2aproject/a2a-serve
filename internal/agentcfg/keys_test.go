@@ -18,8 +18,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 func TestWarnings(t *testing.T) {
@@ -81,9 +81,9 @@ func TestMissingKey(t *testing.T) {
 
 func TestProfileNamesAreNotReserved(t *testing.T) {
 	t.Parallel()
-	for _, name := range agent.ProfileNames() {
+	for _, name := range agentprofile.ProfileNames() {
 		if slices.Contains(agentdir.ReservedHarnesses, name) {
-			t.Fatalf("agent.ProfileNames() = %v, want none of the reserved %v", agent.ProfileNames(), agentdir.ReservedHarnesses)
+			t.Fatalf("agent.ProfileNames() = %v, want none of the reserved %v", agentprofile.ProfileNames(), agentdir.ReservedHarnesses)
 		}
 	}
 }

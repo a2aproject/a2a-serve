@@ -24,9 +24,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
@@ -168,7 +168,7 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 // sandbox checks is skipped, since the agent may have redirected it.
 func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
 	cfg := s.rt.Config()
-	if cfg.Sandbox == agent.SandboxLocal {
+	if cfg.Sandbox == agentprofile.SandboxLocal {
 		return nil
 	}
 	mounts, err := s.dir.Mounts(cfg)
@@ -230,7 +230,7 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 // home. Like [Server.writeInstructionsIn], it skips a file the server can't
 // read, which the agent may have put there.
 func (s *Server) writeStorageNote(cfg *agentdir.Config, home string) {
-	if cfg.Sandbox == agent.SandboxLocal {
+	if cfg.Sandbox == agentprofile.SandboxLocal {
 		return
 	}
 	s.instructionsMu.Lock()
@@ -295,5 +295,5 @@ func withSection(text, body string) string {
 // checks of cfg pass. Every write of the server into an agent home comes
 // after it.
 func (s *Server) checkHome(cfg *agentdir.Config, mounts []agentdir.Mount, home string) error {
-	return agent.PrepareHome(agent.Spec{Sandbox: cfg.Sandbox, Mounts: mounts, Hidden: []string{s.dir.Path()}, Home: home, Pins: s.pins})
+	return agentprofile.PrepareHome(agentprofile.Spec{Sandbox: cfg.Sandbox, Mounts: mounts, Hidden: []string{s.dir.Path()}, Home: home, Pins: s.pins})
 }

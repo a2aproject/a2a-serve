@@ -27,8 +27,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
@@ -251,5 +251,5 @@ func writeCredentialHelper(home, host, key string) (env string, err error) {
 	if err := fsutil.WriteAtomicIn(root, p, []byte(script), 0o700); err != nil {
 		return "", err
 	}
-	return agent.EnvCredentialHelper + "=" + host + "=" + path.Join(agent.ContainerHome, credentialHelperPath), nil
+	return agentprofile.EnvCredentialHelper + "=" + host + "=" + path.Join(agentprofile.ContainerHome, credentialHelperPath), nil
 }

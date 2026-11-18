@@ -7,11 +7,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'core/agent/images/**'
+      - 'internal/agentprofile/images/**'
       - '.github/workflows/harness-images.yaml'
   pull_request:
     paths:
-      - 'core/agent/images/**'
+      - 'internal/agentprofile/images/**'
       - '.github/workflows/harness-images.yaml'
   schedule:
     # Weekly, to pick up new harness and a2a CLI releases installed at build time.
@@ -33,7 +33,7 @@ jobs:
 
     - name: Build
       if: github.event_name == 'pull_request'
-      run: docker build -t harness core/agent/images/${{ matrix.harness }}
+      run: docker build -t harness internal/agentprofile/images/${{ matrix.harness }}
 
     - name: Check git reads reftable repositories
       if: github.event_name == 'pull_request'
@@ -47,7 +47,7 @@ jobs:
       if: github.event_name != 'pull_request'
       env:
         IMAGE: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.harness }}
-        CONTEXT: core/agent/images/${{ matrix.harness }}
+        CONTEXT: internal/agentprofile/images/${{ matrix.harness }}
         TOKEN: ${{ github.token }}
       run: |
         set -eu

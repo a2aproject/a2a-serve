@@ -25,7 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
@@ -94,9 +94,9 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 			if err := os.MkdirAll(home, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			pins, err := agent.NewPins(root, agentDir, state, home)
+			pins, err := agentprofile.NewPins(root, agentDir, state, home)
 			if err != nil {
-				t.Fatalf("agent.NewPins() error = %v", err)
+				t.Fatalf("agentprofile.NewPins() error = %v", err)
 			}
 			if err := os.Rename(root, root+".old"); err != nil {
 				t.Fatal(err)
@@ -118,7 +118,7 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 					Pins:       pins,
 				},
 				Spec: func() (Spec, error) {
-					return Spec{Name: "a2a-coder", Agent: "fake", Command: []string{"fake-acp"}, Sandbox: agent.SandboxDocker, Mounts: []agent.Mount{{Src: root, Dst: root}}}, nil
+					return Spec{Name: "a2a-coder", Agent: "fake", Command: []string{"fake-acp"}, Sandbox: agentprofile.SandboxDocker, Mounts: []agentprofile.Mount{{Src: root, Dst: root}}}, nil
 				},
 				Processes: fakeProcesses{tc.key: {Pool: tc.pool, Name: tc.name, CopyName: tc.name, Home: procHome, LockHome: tc.key != "", AgentAPI: true}},
 			})

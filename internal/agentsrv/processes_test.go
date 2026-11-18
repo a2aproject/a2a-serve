@@ -23,9 +23,9 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
@@ -130,10 +130,10 @@ func TestLocalSandboxWarning(t *testing.T) {
 		access   access.Description
 		wantWarn bool
 	}{
-		{name: "docker with others", sandbox: agent.SandboxDocker, access: access.Description{Pairings: 1}},
-		{name: "local for you only", sandbox: agent.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
-		{name: "local with a paired user", sandbox: agent.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
-		{name: "local open to others", sandbox: agent.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
+		{name: "docker with others", sandbox: agentprofile.SandboxDocker, access: access.Description{Pairings: 1}},
+		{name: "local for you only", sandbox: agentprofile.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
+		{name: "local with a paired user", sandbox: agentprofile.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
+		{name: "local open to others", sandbox: agentprofile.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

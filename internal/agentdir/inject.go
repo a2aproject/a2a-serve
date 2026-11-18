@@ -22,8 +22,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
@@ -31,7 +31,7 @@ import (
 // requests to a host. The secrets it carries are the agent's secrets, which
 // the sandbox rules grant as they grant the environment; the agent's
 // environment doesn't get them.
-type InjectRule = agent.InjectRule
+type InjectRule = agentprofile.InjectRule
 
 // Settings of the inject rules.
 const (
@@ -55,7 +55,7 @@ func InjectSetting(r InjectRule) string {
 
 // InjectedSecrets returns the names of the secrets the inject rules of c
 // add, in the order of the rules.
-func (c *Config) InjectedSecrets() []string { return agent.InjectedSecrets(c.Inject) }
+func (c *Config) InjectedSecrets() []string { return agentprofile.InjectedSecrets(c.Inject) }
 
 // injectKey is the key of an entry of --inject-header or --inject-model-key,
 // or of an argument that names one: the target of a header rule and the

@@ -28,8 +28,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
@@ -84,7 +84,7 @@ func (r *Runner) logf(format string, args ...any) {
 // time. It fails only when docker doesn't answer, which would stall the
 // start.
 func (r *Runner) pruneContainers(ctx context.Context) error {
-	if sb := r.spec().Sandbox; sb != "" && sb != agent.SandboxDocker || len(r.cfg.PruneLabels) == 0 {
+	if sb := r.spec().Sandbox; sb != "" && sb != agentprofile.SandboxDocker || len(r.cfg.PruneLabels) == 0 {
 		return nil
 	}
 	n, err := sandbox.PruneContainers(ctx, r.cfg.PruneLabels)
@@ -219,9 +219,9 @@ func (r *Runner) startPoolAgent(ctx context.Context, procs *procs, key string) (
 
 // prepared is an agent ready to start as an ACP agent.
 type prepared struct {
-	profile  agent.Profile
-	mounts   []agent.Mount
-	prepared *agent.Prepared
+	profile  agentprofile.Profile
+	mounts   []agentprofile.Mount
+	prepared *agentprofile.Prepared
 	// stop cleans up after the agent exited.
 	stop func(context.Context) error
 	// maxMessage bounds a message from the agent.
@@ -260,7 +260,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	if err != nil {
 		return nil, err
 	}
-	profile, err := agent.Lookup(cfg.Agent, cfg.Command)
+	profile, err := agentprofile.Lookup(cfg.Agent, cfg.Command)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	if proc.Name != "" {
 		name += "-" + proc.Name
 	}
-	spec := agent.Spec{
+	spec := agentprofile.Spec{
 		Profile: profile,
 		Sandbox: cfg.Sandbox,
 		Backend: r.backend(cfg.Sandbox),
@@ -298,10 +298,10 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		Env:        append([]string{}, cfg.Env...),
 		Model:      cfg.Model,
 	}
-	if err := agent.PrepareHome(agent.Spec{Sandbox: cfg.Sandbox, Mounts: cfg.Mounts, Hidden: r.cfg.Dirs.Hidden, Home: proc.Home, Pins: r.cfg.Dirs.Pins}); err != nil {
+	if err := agentprofile.PrepareHome(agentprofile.Spec{Sandbox: cfg.Sandbox, Mounts: cfg.Mounts, Hidden: r.cfg.Dirs.Hidden, Home: proc.Home, Pins: r.cfg.Dirs.Pins}); err != nil {
 		return nil, err
 	}
-	if cfg.Sandbox != agent.SandboxLocal {
+	if cfg.Sandbox != agentprofile.SandboxLocal {
 		spec.LockHome = proc.LockHome
 		if spec.PolicyDir, err = r.policies.write(cfg, spec.LockHome, r.mcpServerNames()); err != nil {
 			return nil, err
@@ -332,14 +332,14 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		if err := r.connect(&spec, ep); err != nil {
 			return nil, errors.Join(err, closeEndpoint())
 		}
-		if cfg.Sandbox == agent.SandboxLocal {
+		if cfg.Sandbox == agentprofile.SandboxLocal {
 			spec.CLI = cfg.CLI
 		}
 	}
 	if err := r.egressSandbox(&spec, cfg, inject); err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
-	p, err := agent.Prepare(ctx, spec)
+	p, err := agentprofile.Prepare(ctx, spec)
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
@@ -359,7 +359,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 
 // backend returns the backend of the sandbox kind.
 func (r *Runner) backend(kind string) sandbox.Backend {
-	if kind == agent.SandboxLocal {
+	if kind == agentprofile.SandboxLocal {
 		return sandbox.Local{}
 	}
 	return r.docker
@@ -368,7 +368,7 @@ func (r *Runner) backend(kind string) sandbox.Backend {
 // connect gives spec the endpoint through which its agent process reaches
 // the caller: the socket, or the key for the TCP listener in a credential
 // helper in its home.
-func (r *Runner) connect(spec *agent.Spec, ep *endpoint) error {
+func (r *Runner) connect(spec *agentprofile.Spec, ep *endpoint) error {
 	if ep.key == "" {
 		spec.Server.Path = ep.socket
 		return nil
@@ -424,7 +424,7 @@ func (r *Runner) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[
 	if err != nil {
 		return nil, err
 	}
-	profile, err := agent.Lookup(cfg.Agent, cfg.Command)
+	profile, err := agentprofile.Lookup(cfg.Agent, cfg.Command)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func (r *Runner) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[
 // caller: Unix sockets, which are mounted into containers, or TCP with a
 // key for Docker Desktop, which can't mount them.
 func (r *Runner) listen(sandboxed bool) (*listeners, error) {
-	bind, dial, tcp := agent.TCPBridge(r.spec().Sandbox)
+	bind, dial, tcp := agentprofile.TCPBridge(r.spec().Sandbox)
 	if !sandboxed || !tcp {
 		return listenSockets(r.cfg.Dirs.Sockets)
 	}
