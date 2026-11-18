@@ -478,7 +478,7 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 	}
 	cfg := &a2aacp.Config{
 		AutoAnswer:   r.decider,
-		SessionStore: r.sessions(),
+		SessionStore: r.cfg.Sessions,
 		Session:      r.sessionParams,
 		Settings:     r.sessionSettings,
 		Turn:         r.stalls.turn(turn),

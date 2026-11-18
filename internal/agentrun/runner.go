@@ -335,9 +335,12 @@ func New(cfg Config) (*Runner, error) {
 		}
 		r.tempState = true
 	}
+	if r.cfg.Sessions == nil {
+		r.cfg.Sessions = &memorySessions{m: map[string]a2aacp.Session{}}
+	}
 	all := cfg.Options.AllSessions
 	if all == nil {
-		all = r.sessions()
+		all = r.cfg.Sessions
 	}
 	r.keys = newKeys(all, r.newKey)
 	r.policies = &policies{dir: filepath.Join(r.stateDir, "policy")}
@@ -358,14 +361,6 @@ func New(cfg Config) (*Runner, error) {
 		return nil, errors.Join(err, l.close(), r.boundaries.Close(context.Background()), r.removeState())
 	}
 	return r, nil
-}
-
-// sessions returns the session store of the conversations.
-func (r *Runner) sessions() a2aacp.SessionStore {
-	if r.cfg.Sessions == nil {
-		r.cfg.Sessions = &memorySessions{m: map[string]a2aacp.Session{}}
-	}
-	return r.cfg.Sessions
 }
 
 // newKey returns the key of a new conversation.
