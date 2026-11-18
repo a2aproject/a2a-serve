@@ -23,7 +23,6 @@ import (
 	"fmt"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/question"
 )
@@ -39,12 +38,12 @@ const (
 // IDs of the options of a permission.
 const (
 	// OptionOnce allows the tool call this time.
-	OptionOnce = a2aacp.OptionOnce
+	OptionOnce = "once"
 	// OptionAlways allows the tool call, and calls like it, for the rest of
 	// the conversation.
-	OptionAlways = a2aacp.OptionAlways
+	OptionAlways = "always"
 	// OptionReject denies the tool call.
-	OptionReject = a2aacp.OptionReject
+	OptionReject = "reject"
 )
 
 // Request is what a task asks in an input-required status.

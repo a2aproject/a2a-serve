@@ -19,6 +19,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -257,5 +258,14 @@ func TestAnswerErrors(t *testing.T) {
 				t.Fatalf("approval.Answer() = %v, want an error", got)
 			}
 		})
+	}
+}
+
+func TestOptionsMatchTheExecutor(t *testing.T) {
+	t.Parallel()
+	want := []string{a2aacp.OptionOnce, a2aacp.OptionAlways, a2aacp.OptionReject}
+	got := []string{approval.OptionOnce, approval.OptionAlways, approval.OptionReject}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("approval options wrong result (-want +got) diff = %s", diff)
 	}
 }
