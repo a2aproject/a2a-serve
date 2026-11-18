@@ -57,7 +57,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 			errs = append(errs, fmt.Errorf("looking up who started task %s: %w", t.ID, err))
 			continue
 		}
-		dec, ok, err := s.decideWithRules(ctx, t.ContextID, user, s.runner.Call(q.Kind, q.ToolTitle, q.ToolInput))
+		dec, ok, err := s.decideWithRules(ctx, t.ContextID, user, s.call(q.Kind, q.ToolTitle, q.ToolInput))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("deciding the approval of task %s: %w", t.ID, err))
 			continue
@@ -80,7 +80,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		by, who := rulesPrincipal, rulesPrincipal.ID
 		switch {
 		case dec.By != agentrun.ByRule:
-			by, who = allowedPrincipal, question.AlwaysLabel(dec.Entry)
+			by, who = allowedPrincipal, question.AlwaysLabel(dec.Rule)
 		case !dec.Allow:
 			by, who = denyPrincipal, denyPrincipal.ID
 		}

@@ -44,7 +44,7 @@ func startUsers(t *testing.T, u *procs, n int) []io.Closer {
 			t.Fatalf("procs.reserve(%d) error = %v", i, err)
 		}
 		closers[i] = &nopCloser{}
-		u.started(a, closers[i], Grant{})
+		u.started(a, closers[i], nil)
 		release()
 	}
 	return closers
@@ -121,6 +121,12 @@ func TestProcsTurnEndFreesProcess(t *testing.T) {
 	}
 }
 
+// changedFrom reports whether a process started with another state than
+// want.
+func changedFrom(want string) func(any) bool {
+	return func(state any) bool { return state != want }
+}
+
 type countingCloser struct{ closed int }
 
 func (c *countingCloser) Close() error {
@@ -130,18 +136,18 @@ func (c *countingCloser) Close() error {
 
 func TestProcsAdmit(t *testing.T) {
 	t.Parallel()
-	old, next := Grant{Storage: "shared"}, Grant{Storage: "read-only"}
+	old, next := "shared", "read-only"
 	tests := []struct {
 		name       string
 		busy       bool
 		answer     bool
-		want       Grant
+		want       string
 		wantErr    error
 		wantClosed int
 	}{
 		{name: "same sandbox", want: old},
 		{name: "idle with another sandbox stops first", want: next, wantClosed: 1},
-		{name: "busy with another sandbox refuses a turn", busy: true, want: next, wantErr: ErrGrantChanged},
+		{name: "busy with another sandbox refuses a turn", busy: true, want: next, wantErr: ErrStale},
 		{name: "busy with another sandbox takes an answer", busy: true, answer: true, want: next},
 	}
 	for _, tt := range tests {
@@ -155,7 +161,7 @@ func TestProcsAdmit(t *testing.T) {
 				defer u.turn(key)()
 			}
 
-			release, err := u.admit(key, tt.want, tt.answer)
+			release, err := u.admit(key, changedFrom(tt.want), tt.answer)
 
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("procs.admit() error = %v, want %v", err, tt.wantErr)
@@ -166,7 +172,7 @@ func TestProcsAdmit(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if stopped, err := u.closeStale(key, Grant{Storage: "empty"}); stopped || err != nil {
+			if stopped, err := u.closeStale(key, changedFrom("empty")); stopped || err != nil {
 				t.Fatalf("procs.closeStale() during an admitted turn = %v, %v, want false, nil", stopped, err)
 			}
 			release()
@@ -178,11 +184,11 @@ func TestStopStopsTheProcessesUnderTheKey(t *testing.T) {
 	t.Parallel()
 	const parent, child, other = "user:a", "user:a#c", "user:b"
 	r := &Runner{
-		cfg: Config{Processes: fakeProcesses{
+		cfg: Config{Callers: fakeCallers{envs: map[string]Environment{
 			parent: {Pool: "users"},
-			child:  {Pool: "users", Parent: parent},
+			child:  {Pool: "users", Process: &ProcessOptions{Parent: parent}},
 			other:  {Pool: "users"},
-		}},
+		}}},
 		pools: map[string]*procs{"users": {}},
 	}
 	p := r.pools["users"]
@@ -191,7 +197,7 @@ func TestStopStopsTheProcessesUnderTheKey(t *testing.T) {
 		a := p.get(key)
 		p.setParent(a, map[string]string{child: parent}[key])
 		closers[key] = &countingCloser{}
-		p.started(a, closers[key], Grant{})
+		p.started(a, closers[key], nil)
 	}
 
 	release, err := r.Stop(context.Background(), parent)
@@ -215,19 +221,19 @@ func TestStopStopsTheProcessesUnderTheKey(t *testing.T) {
 
 func TestLookupsOfUnknownKeysFail(t *testing.T) {
 	t.Parallel()
-	r := &Runner{cfg: Config{Processes: fakeProcesses{}}, pools: map[string]*procs{"users": {}}}
+	r := &Runner{cfg: Config{Callers: fakeCallers{}}, pools: map[string]*procs{"users": {}}}
 	ctx := context.Background()
 
 	if _, err := r.Stop(ctx, "user:gone"); err == nil {
-		t.Fatalf("Runner.Stop() of a key Processes can't describe error = nil, want an error")
+		t.Fatalf("Runner.Stop() of a key Callers can't describe error = nil, want an error")
 	}
 	if _, err := r.HasRoom(ctx, "user:gone"); err == nil {
-		t.Fatalf("Runner.HasRoom() of a key Processes can't describe error = nil, want an error")
+		t.Fatalf("Runner.HasRoom() of a key Callers can't describe error = nil, want an error")
 	}
 	if _, _, err := r.HoldIdle(ctx, "user:gone"); err == nil {
-		t.Fatalf("Runner.HoldIdle() of a key Processes can't describe error = nil, want an error")
+		t.Fatalf("Runner.HoldIdle() of a key Callers can't describe error = nil, want an error")
 	}
-	if _, ok := r.Started("user:gone"); ok {
-		t.Fatalf("Runner.Started() of a key no pool knows = true, want false")
+	if _, ok := r.StartedWith("user:gone"); ok {
+		t.Fatalf("Runner.StartedWith() of a key no pool knows = true, want false")
 	}
 }

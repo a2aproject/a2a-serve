@@ -171,17 +171,22 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 	}
 }
 
-// admit lets the turn of execCtx run in the process of key: the caller's
-// Admit hook first, then the runner's own check of the process's grant.
+// admit lets the turn of execCtx run in the process of key: Callers.Admit
+// first, then the runner counts the turn in the process, unless
+// Callers.Admit counted it with [Runner.AdmitTurn].
 func (e *splitExecutor) admit(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
 	release := func() {}
-	if admit := e.r.cfg.Hooks.Admit; admit != nil {
+	a := &admission{}
+	if callers := e.r.cfg.Callers; callers != nil {
 		var err error
-		if release, err = admit(ctx, key, execCtx); err != nil {
+		if release, err = callers.Admit(context.WithValue(ctx, admissionKey{}, a), key, execCtx); err != nil {
 			return nil, err
 		}
 	}
-	counted, err := e.r.admitTurn(ctx, key, execCtx)
+	if a.counted {
+		return release, nil
+	}
+	counted, err := e.r.admitTurn(ctx, key, nil, nil, AnswersWaiting(execCtx))
 	if err != nil {
 		release()
 		return nil, err
@@ -190,6 +195,12 @@ func (e *splitExecutor) admit(ctx context.Context, key string, execCtx *a2asrv.E
 		counted()
 		release()
 	}, nil
+}
+
+// AnswersWaiting reports whether execCtx answers a task that waits for
+// input, which continues in the process that asked.
+func AnswersWaiting(execCtx *a2asrv.ExecutorContext) bool {
+	return execCtx != nil && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired
 }
 
 // cancelRefused ends the turn of a waiting task in the agent once an answer
@@ -260,14 +271,14 @@ func (e *splitExecutor) pick(ctx context.Context, contextID string, remember boo
 	if key == "" || e.start == nil {
 		return e.main, key, nil
 	}
-	proc, err := e.r.cfg.Processes.Process(ctx, key)
+	env, err := e.r.environment(ctx, key)
 	if err != nil {
 		return nil, "", err
 	}
 	if remember {
 		e.r.keys.remember(contextID, key)
 	}
-	exec, err := e.pool(proc.Pool)
+	exec, err := e.pool(env.Pool)
 	return exec, key, err
 }
 

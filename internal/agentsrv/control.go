@@ -191,7 +191,7 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	}
 	// Claude Code reloads its policy in open sessions too, so the agent asks
 	// about shell commands as soon as the rules deny some.
-	if err := s.runner.WritePolicies(); err != nil {
+	if err := s.engine.WritePolicies(); err != nil {
 		return err
 	}
 	return s.answerWaiting(ctx, nil)

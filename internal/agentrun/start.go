@@ -20,17 +20,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
+	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
-	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // agentSocketName is the name of the Unix socket an agent process reaches
@@ -54,28 +58,30 @@ func (r *Runner) startMain(ctx context.Context) (exec a2asrv.AgentExecutor, clos
 		return nil, nil, err
 	}
 	r.pruneEnvFiles()
-	h, err := r.prepare(ctx, r.cfg.ImageProgress, r.cfg.AgentLog, "")
+	h, err := r.prepare(ctx, r.rt.imageProgress(r.cfg.Stderr), r.cfg.Stderr, "", r.cfg.Main)
 	if err != nil {
 		return nil, nil, err
 	}
-	if hook := r.cfg.Hooks.MainPrepared; hook != nil {
-		hook(Prepared{Summary: h.prepared.Summary, Mounts: h.mounts, Warnings: h.prepared.Warnings, Egress: h.prepared.Egress, NoBoundary: h.prepared.NoBoundary()})
+	if hook := r.cfg.Options.MainPrepared; hook != nil {
+		hook(Prepared{Summary: h.prepared.Summary, Warnings: h.prepared.Warnings, Egress: h.prepared.Egress, NoBoundary: h.prepared.NoBoundary()})
 	}
 	acp, err := a2aacp.NewExecutor(ctx, h.process(), r.acpConfig(nil))
 	if err != nil {
-		err = fmt.Errorf("starting %s: %w", h.profile.Name(), err)
+		err = fmt.Errorf("starting %s: %w", r.cfg.Profile.Name(), err)
 		if errors.Is(err, context.DeadlineExceeded) {
 			err = &startTimeoutError{err: err}
 		}
 		return nil, nil, errors.Join(err, h.stop(ctx))
 	}
-	r.logf("✓ %s is running (ACP)", h.profile.Name())
+	r.logf("✓ %s is running (ACP)", r.cfg.Profile.Name())
+	since := time.Now()
+	r.mainSince.Store(&since)
 	return r.stalls.guard(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 func (r *Runner) logf(format string, args ...any) {
-	if _, err := fmt.Fprintf(r.cfg.Out, format+"\n", args...); err != nil {
-		slog.Debug("writing progress", "error", err)
+	if _, err := fmt.Fprintf(r.cfg.Options.Out, format+"\n", args...); err != nil {
+		r.log().Debug("writing progress", "error", err)
 	}
 }
 
@@ -84,47 +90,51 @@ func (r *Runner) logf(format string, args ...any) {
 // time. It fails only when docker doesn't answer, which would stall the
 // start.
 func (r *Runner) pruneContainers(ctx context.Context) error {
-	if sb := r.spec().Sandbox; sb != "" && sb != agentprofile.SandboxDocker || len(r.cfg.PruneLabels) == 0 {
+	if r.rt.kind != agentprofile.SandboxDocker || len(r.cfg.Options.PruneLabels) == 0 {
 		return nil
 	}
-	n, err := sandboxrt.PruneContainers(ctx, r.cfg.PruneLabels)
+	n, err := sandboxrt.PruneContainers(ctx, r.cfg.Options.PruneLabels)
 	if errors.Is(err, sandboxrt.ErrDockerNoAnswer) {
 		return err
 	}
 	if err != nil {
-		slog.Warn("removing containers left by an earlier run", "error", err)
+		r.log().Warn("removing containers left by an earlier run", "error", err)
 		return nil
 	}
 	if n > 0 {
-		slog.Info("removed containers left by an earlier run", "count", n)
+		r.log().Info("removed containers left by an earlier run", "count", n)
 	}
 	return nil
 }
 
+// envFilesDir holds the env files of containers.
+func (r *Runner) envFilesDir() string { return filepath.Join(r.stateDir, "run", "env") }
+
 // pruneEnvFiles removes the env files of containers that an earlier run
 // left behind, before any container starts.
 func (r *Runner) pruneEnvFiles() {
-	n, err := sandboxrt.PruneEnvFiles(r.cfg.Dirs.EnvFiles)
+	n, err := sandboxrt.PruneEnvFiles(r.envFilesDir())
 	if err != nil {
-		slog.Warn("removing env files left by an earlier run", "error", err)
+		r.log().Warn("removing env files left by an earlier run", "error", err)
 	}
 	if n > 0 {
-		slog.Info("removed env files left by an earlier run", "count", n)
+		r.log().Info("removed env files left by an earlier run", "count", n)
 	}
 }
 
 // startPool starts the executor of the pool name, whose agent processes
 // start on their first turn and stop when idle.
 func (r *Runner) startPool(ctx context.Context, name string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-	procs, pool, err := r.pool(name)
-	if err != nil {
-		return nil, nil, err
+	pool, ok := r.cfg.Pools[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("no pool %q", name)
 	}
+	procs := r.pools[name]
 	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
 		return r.startPoolAgent(ctx, procs, key)
 	})
 	cfg := r.acpConfig(procs)
-	cfg.Pool = &a2aacp.PoolConfig{Key: r.keys.of, MaxAgents: pool.MaxAgents}
+	cfg.Pool = &a2aacp.PoolConfig{Key: r.keys.of, MaxAgents: pool.MaxProcesses}
 	cfg.QuestionTimeout = pool.QuestionTimeout
 	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
@@ -133,24 +143,13 @@ func (r *Runner) startPool(ctx context.Context, name string) (a2asrv.AgentExecut
 	return r.stalls.guard(acp), func(context.Context) error { return acp.Close() }, nil
 }
 
-// pool returns the processes and the configuration of the pool name.
-func (r *Runner) pool(name string) (*procs, Pool, error) {
-	for _, p := range r.cfg.Pools {
-		if p.Name == name {
-			return r.pools[name], p, nil
-		}
-	}
-	return nil, Pool{}, fmt.Errorf("no pool %q", name)
-}
-
 // countedTurn counts each turn in the agent process of its conversation
 // among procs, so that new tasks are refused while all processes are busy.
-// A process whose grant changed stops once its last turn ends.
 func (r *Runner) countedTurn(procs *procs) func(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
 	return func(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
 		key, err := r.keys.of(ctx, execCtx.ContextID)
 		if err != nil {
-			slog.Warn("looking up the session of a conversation", "context", execCtx.ContextID, "error", err)
+			r.log().Warn("looking up the session of a conversation", "context", execCtx.ContextID, "error", err)
 		}
 		endTurn := procs.turn(key)
 		endHook := r.hookTurn(ctx, execCtx)
@@ -166,7 +165,7 @@ func (r *Runner) countedTurn(procs *procs) func(ctx context.Context, execCtx *a2
 // hookTurn runs Hooks.Turn, if any.
 func (r *Runner) hookTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) func() {
 	if r.cfg.Hooks.Turn == nil {
-		return nil
+		return func() {}
 	}
 	return r.cfg.Hooks.Turn(ctx, execCtx)
 }
@@ -174,21 +173,22 @@ func (r *Runner) hookTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 // startPoolAgent starts the agent process of key among procs, unless
 // Hooks.CanStart refuses it.
 func (r *Runner) startPoolAgent(ctx context.Context, procs *procs, key string) (io.ReadWriteCloser, error) {
-	proc, err := r.cfg.Processes.Process(ctx, key)
+	env, err := r.environment(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	if proc.Parent != "" && proc.Parent != key {
+	parent := env.process().Parent
+	if parent != "" && parent != key {
 		// Stopping the parent waits for the processes under it to start,
 		// and holds new ones until it ends.
-		base := procs.get(proc.Parent)
+		base := procs.get(parent)
 		base.childrenMu.RLock()
 		defer base.childrenMu.RUnlock()
 	}
 	ua := procs.get(key)
 	ua.startMu.Lock()
 	defer ua.startMu.Unlock()
-	procs.setParent(ua, proc.Parent)
+	procs.setParent(ua, parent)
 	if canStart := r.cfg.Hooks.CanStart; canStart != nil {
 		if err := canStart(ctx, key); err != nil {
 			return nil, err
@@ -199,7 +199,10 @@ func (r *Runner) startPoolAgent(ctx context.Context, procs *procs, key string) (
 		return nil, err
 	}
 	defer release()
-	h, err := r.prepare(ctx, r.cfg.AgentLog, r.cfg.AgentLog, key)
+	if env, err = r.environment(ctx, key); err != nil {
+		return nil, err
+	}
+	h, err := r.prepare(ctx, r.cfg.Stderr, r.cfg.Stderr, key, env)
 	if err != nil {
 		return nil, err
 	}
@@ -207,27 +210,23 @@ func (r *Runner) startPoolAgent(ctx context.Context, procs *procs, key string) (
 	if err != nil {
 		return nil, errors.Join(err, h.stop(context.WithoutCancel(ctx)))
 	}
-	slog.Info("started an agent process", "key", key, "sandbox", h.prepared.Summary, "storage", h.grant.Storage)
+	r.log().Info("started an agent process", "key", key, "sandbox", h.prepared.Summary, "storage", env.process().Storage)
 	var started io.ReadWriteCloser
 	started = a2aacp.WithCleanup(rwc, func() error {
 		procs.exited(ua, started)
 		return h.stop(context.Background())
 	})
-	procs.started(ua, started, h.grant)
+	procs.started(ua, started, env.process().State)
 	return started, nil
 }
 
 // prepared is an agent ready to start as an ACP agent.
 type prepared struct {
-	profile  agentprofile.Profile
-	mounts   []agentprofile.Mount
 	prepared *agentprofile.Prepared
 	// stop cleans up after the agent exited.
 	stop func(context.Context) error
 	// maxMessage bounds a message from the agent.
 	maxMessage int
-	// grant is what its container gets.
-	grant Grant
 }
 
 func (h *prepared) process() agentProcess {
@@ -253,95 +252,115 @@ func (p agentProcess) Start(ctx context.Context, _ string) (io.ReadWriteCloser, 
 	return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
 }
 
-// prepare prepares the agent process of key. The process writes its
-// stderr to stderr.
-func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, key string) (*prepared, error) {
-	cfg, err := r.cfg.Spec()
-	if err != nil {
-		return nil, err
-	}
-	profile, err := agentprofile.Lookup(cfg.Agent, cfg.Command)
-	if err != nil {
-		return nil, err
-	}
-	proc, err := r.cfg.Processes.Process(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	labels := maps.Clone(cfg.Labels)
+// prepare prepares the agent process of key with env. The process writes
+// its stderr to stderr.
+func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, key string, env Environment) (h *prepared, err error) {
+	proc := env.process()
+	labels := maps.Clone(env.Labels)
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	maps.Copy(labels, proc.Labels)
-	name := cfg.Name
-	if proc.Name != "" {
-		name += "-" + proc.Name
-	}
 	spec := agentprofile.Spec{
-		Profile: profile,
-		Sandbox: cfg.Sandbox,
-		Backend: r.backend(cfg.Sandbox),
+		Profile: r.cfg.Profile,
+		Sandbox: r.rt.kind,
+		Backend: r.rt.backend,
 		Base: sandboxrt.Spec{
-			Name:     name,
-			Image:    cfg.Image,
-			Limits:   cfg.Limits,
+			Name:     env.Name,
+			Image:    env.Image,
+			Limits:   sandboxrt.Limits(env.Limits),
 			Labels:   labels,
 			Progress: imageProgress,
 			Stderr:   stderr,
 		},
-		Mounts:     cfg.Mounts,
-		Home:       proc.Home,
-		Hidden:     r.cfg.Dirs.Hidden,
-		Pins:       r.cfg.Dirs.Pins,
-		MCPMask:    r.cfg.Dirs.MCPMask,
-		ConfigMask: r.cfg.Dirs.ConfigMask,
-		Env:        append([]string{}, cfg.Env...),
-		Model:      cfg.Model,
+		Home:       env.Home,
+		Hidden:     env.Hide,
+		Pins:       r.cfg.Options.Pins,
+		MCPMask:    filepath.Join(r.stateDir, "mcp-mask.json"),
+		ConfigMask: filepath.Join(r.stateDir, "config-mask.json"),
+		Env:        slices.Clone(env.Env),
+		Model:      r.cfg.Model,
 	}
-	if err := agentprofile.PrepareHome(agentprofile.Spec{Sandbox: cfg.Sandbox, Mounts: cfg.Mounts, Hidden: r.cfg.Dirs.Hidden, Home: proc.Home, Pins: r.cfg.Dirs.Pins}); err != nil {
+	if err := agentprofile.PrepareHome(agentprofile.Spec{Sandbox: r.rt.kind, Mounts: r.homeMounts(env), Hidden: env.Hide, Home: env.Home, Pins: spec.Pins}); err != nil {
 		return nil, err
 	}
-	if cfg.Sandbox != agentprofile.SandboxLocal {
+	if r.rt.kind == agentprofile.SandboxDocker {
 		spec.LockHome = proc.LockHome
-		if spec.PolicyDir, err = r.policies.write(cfg, spec.LockHome, r.mcpServerNames()); err != nil {
+		if spec.PolicyDir, err = r.policies.write(r.cfg.Profile, r.askCommands(), spec.LockHome, r.mcpServerNames()); err != nil {
 			return nil, err
 		}
 	}
-	inject, err := r.grantSandbox(ctx, &spec, cfg, key, proc)
+	if proc.StartError != nil {
+		return nil, proc.StartError
+	}
+	if env.Workspace == nil {
+		return nil, errors.New("no workspace to mount")
+	}
+	att, err := env.Workspace.Attach(ctx, key)
 	if err != nil {
 		return nil, err
 	}
+	var cleanups []func() error
+	if att.Release != nil {
+		cleanups = append(cleanups, att.Release)
+	}
+	cleanup := func() error {
+		var errs []error
+		for _, c := range slices.Backward(cleanups) {
+			errs = append(errs, c())
+		}
+		return errors.Join(errs...)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if cerr := cleanup(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
+	}()
+	var mounts []sandbox.Mount
+	spec.Mounts, spec.WorkspaceSrc, mounts = workspaceMounts(att, env.Mounts)
 	if key == "" {
-		g := proc.Grant
-		r.mainGrant.Store(&g)
+		state := proc.State
+		r.mainState.Store(&state)
 	}
 	if hook := r.cfg.Hooks.PrepareHome; hook != nil {
-		if err := hook(ctx, key, proc.Home, proc.Grant); err != nil {
+		if err := hook(ctx, key, env); err != nil {
 			return nil, err
 		}
 	}
-	closeEndpoint := func() error { return nil }
-	if proc.AgentAPI {
+	var custom sandbox.Spec
+	if !proc.NoAgentAPI && r.cfg.AgentAPI != nil {
 		ep := r.main
 		if key != "" {
 			if ep, err = r.listeners.open(key); err != nil {
 				return nil, err
 			}
-			closeEndpoint = ep.close
+			cleanups = append(cleanups, ep.close)
 		}
 		if err := r.connect(&spec, ep); err != nil {
-			return nil, errors.Join(err, closeEndpoint())
+			return nil, err
 		}
-		if cfg.Sandbox == agentprofile.SandboxLocal {
-			spec.CLI = cfg.CLI
+		if ep.ln != nil {
+			custom.Sockets = []sandbox.Socket{{Listener: ep.ln, Env: agentprofile.EnvUnixSocket}}
+		}
+		if r.rt.kind == agentprofile.SandboxLocal {
+			spec.CLI = r.cfg.Options.CLI
 		}
 	}
-	if err := r.egressSandbox(&spec, cfg, inject); err != nil {
-		return nil, errors.Join(err, closeEndpoint())
-	}
-	p, err := agentprofile.Prepare(ctx, spec)
+	closeEgress, err := r.egressSandbox(&spec, &custom, env)
 	if err != nil {
-		return nil, errors.Join(err, closeEndpoint())
+		return nil, err
+	}
+	cleanups = append(cleanups, closeEgress)
+	var p *agentprofile.Prepared
+	if r.rt.custom != nil {
+		p, err = r.rt.prepareCustom(ctx, spec, mounts, custom)
+	} else {
+		p, err = agentprofile.Prepare(ctx, spec)
+	}
+	if err != nil {
+		return nil, err
 	}
 	problem := p.NoBoundary()
 	r.egress.started(spec.EgressMode, problem)
@@ -350,19 +369,87 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		// A container can still fall back to Docker's network at a later start.
 		forget = r.egress.watch(p.NoBoundary)
 	}
+	seen := spec.Mounts[0].Src
+	r.workspaces.Store(key, seen)
 	stop := func(ctx context.Context) error {
 		forget()
-		return errors.Join(p.Close(ctx), closeEndpoint())
+		r.workspaces.CompareAndDelete(key, seen)
+		return errors.Join(p.Close(ctx), cleanup())
 	}
-	return &prepared{profile: profile, mounts: cfg.Mounts, prepared: p, stop: stop, maxMessage: r.cfg.MaxAgentMessage, grant: proc.Grant}, nil
+	return &prepared{prepared: p, stop: stop, maxMessage: r.cfg.Options.MaxAgentMessage}, nil
 }
 
-// backend returns the backend of the sandbox kind.
-func (r *Runner) backend(kind string) sandboxrt.Backend {
-	if kind == agentprofile.SandboxLocal {
-		return sandboxrt.Local{}
+// homeMounts returns the mounts that the home of env is checked against
+// before anything is written into it: those of the agent's settings, or
+// those of env.
+func (r *Runner) homeMounts(env Environment) []agentprofile.Mount {
+	if r.cfg.Options.Mounts != nil {
+		return r.cfg.Options.Mounts
 	}
-	return r.docker
+	out := make([]agentprofile.Mount, len(env.Mounts))
+	for i, m := range env.Mounts {
+		out[i] = agentprofile.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly}
+	}
+	return out
+}
+
+// workspaceMounts returns the mounts of a process whose workspace is att,
+// the workspace first at the path the process sees it, the directory a
+// container mounts there in its place, if another, and the mounts for a
+// custom runtime.
+func workspaceMounts(att workspace.Attachment, extra []sandbox.Mount) ([]agentprofile.Mount, string, []sandbox.Mount) {
+	seen := cmp.Or(att.Path, att.Dir)
+	out := []agentprofile.Mount{{Src: seen, Dst: seen, ReadOnly: att.ReadOnly}}
+	custom := []sandbox.Mount{{Host: att.Dir, Path: seen, ReadOnly: att.ReadOnly}}
+	for _, m := range extra {
+		out = append(out, agentprofile.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly})
+		custom = append(custom, m)
+	}
+	src := ""
+	if att.Dir != seen {
+		src = att.Dir
+	}
+	return out, src, custom
+}
+
+// egressSandbox gives spec the egress settings and an endpoint of the
+// boundary, with the credentials of env, and returns the function that
+// closes the endpoint.
+func (r *Runner) egressSandbox(spec *agentprofile.Spec, custom *sandbox.Spec, env Environment) (func() error, error) {
+	eg := r.egressSettings()
+	spec.EgressMode, spec.EgressAllow, spec.Inject = eg.Mode, eg.Allow, eg.Inject
+	if r.cfg.Egress == nil {
+		return func() error { return nil }, nil
+	}
+	ep, err := r.cfg.Egress.Open(env.Name, env.Credentials...)
+	if err != nil {
+		return nil, err
+	}
+	be, err := boundary.EndpointOf(ep)
+	if err != nil {
+		return nil, errors.Join(err, ep.Close())
+	}
+	if r.cfg.Options.Egress == nil {
+		// Credentials need the boundary, as the inject rules of the
+		// frontend do.
+		spec.EgressMode = be.Mode()
+		for range env.Credentials {
+			spec.Inject = append(spec.Inject, agentprofile.InjectRule{})
+		}
+	}
+	spec.EgressCA = be.CA
+	spec.OpenEgress = r.boundaries.OpenerOf(be.Open)
+	spec.Env = append(spec.Env, ep.Env()...)
+	custom.Egress = ep
+	return ep.Close, nil
+}
+
+// egressSettings returns the egress settings of the frontend, or none.
+func (r *Runner) egressSettings() agentprofile.Egress {
+	if r.cfg.Options.Egress == nil {
+		return agentprofile.Egress{Sandbox: r.rt.kind}
+	}
+	return r.cfg.Options.Egress()
 }
 
 // connect gives spec the endpoint through which its agent process reaches
@@ -391,13 +478,13 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 	}
 	cfg := &a2aacp.Config{
 		AutoAnswer:   r.decider,
-		SessionStore: r.cfg.Sessions,
+		SessionStore: r.sessions(),
 		Session:      r.sessionParams,
 		Settings:     r.sessionSettings,
 		Turn:         r.stalls.turn(turn),
 		Converter:    r.stalls,
 		Abandoned:    r.abandoned,
-		Failure:      r.cfg.Hooks.Failure,
+		Failure:      r.cfg.Hooks.Explain,
 	}
 	if r.cfg.Hooks.Prompt != nil {
 		cfg.Prompt = r.cfg.Hooks.Prompt
@@ -409,48 +496,41 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 // waited for an answer, since the executor can't emit it. The agent exits
 // when the runner stops, and the caller fails the open tasks then.
 func (r *Runner) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
-	if r.split == nil || r.split.stopped() || r.cfg.Tasks == nil {
+	if r.split == nil || r.split.stopped() || r.cfg.Hooks.Abandoned == nil {
 		return
 	}
-	if err := r.cfg.Tasks.Abandon(ctx, ev); err != nil {
-		slog.Warn("failing a task the agent stopped working on", "task", ev.TaskID, "error", err)
+	if err := r.cfg.Hooks.Abandoned(ctx, ev); err != nil {
+		r.log().Warn("failing a task the agent stopped working on", "task", ev.TaskID, "error", err)
 	}
 }
 
-// sessionSettings selects the model of the spec in every session, so that
-// a model the agent doesn't know fails the turn.
+// sessionSettings selects the model in every session, so that a model the
+// agent doesn't know fails the turn.
 func (r *Runner) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[string]any, error) {
-	cfg, err := r.cfg.Spec()
-	if err != nil {
-		return nil, err
-	}
-	profile, err := agentprofile.Lookup(cfg.Agent, cfg.Command)
-	if err != nil {
-		return nil, err
-	}
-	return profile.SessionSettings(cfg.Model), nil
+	return r.cfg.Profile.SessionSettings(r.cfg.Model), nil
 }
 
 // listen opens the listeners through which agent processes reach the
 // caller: Unix sockets, which are mounted into containers, or TCP with a
 // key for Docker Desktop, which can't mount them.
 func (r *Runner) listen(sandboxed bool) (*listeners, error) {
-	bind, dial, tcp := agentprofile.TCPBridge(r.spec().Sandbox)
+	if r.rt.kind != agentprofile.SandboxDocker {
+		return listenSockets(r.socketDir())
+	}
+	bind, dial, tcp := agentprofile.TCPBridge(r.rt.kind)
 	if !sandboxed || !tcp {
-		return listenSockets(r.cfg.Dirs.Sockets)
+		return listenSockets(r.socketDir())
 	}
 	return listenTCP(bind, dial)
 }
 
-// workspaceOf returns the working directory of the agent's sessions.
-func workspaceOf(spec Spec) (string, error) {
-	if len(spec.Mounts) == 0 {
-		return "", errors.New("no workspace to mount")
+// workspaceOf returns where the process of key sees its workspace.
+func (r *Runner) workspaceOf(key string) (string, error) {
+	if ws, ok := r.workspaces.Load(key); ok {
+		return ws.(string), nil
 	}
-	return spec.Mounts[0].Src, nil
-}
-
-// copyDir returns the private workspace of storage of the process p.
-func (r *Runner) copyDir(p Process, storage workspaces.Storage) string {
-	return r.copies.Dir(p.CopyName, storage)
+	if len(r.cfg.Options.Mounts) > 0 {
+		return r.cfg.Options.Mounts[0].Src, nil
+	}
+	return "", errors.New("no workspace to mount")
 }

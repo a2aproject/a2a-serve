@@ -20,26 +20,51 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
-// Sandbox is what the agent container of a caller gets: the grant of the
-// runner, with how the frontend describes and resolves it.
-type Sandbox agentrun.Grant
+// Sandbox is what the agent container of a caller gets.
+type Sandbox struct {
+	// Storage is how the container sees the workspace and the mounts.
+	Storage string
+	// Secrets are the variables the agent gets, in the order of the
+	// agent's secrets.
+	Secrets []SecretGrant
+}
 
 // SecretGrant passes the stored secret From to the agent as Name.
-type SecretGrant = agentrun.SecretGrant
+type SecretGrant struct {
+	Name, From string
+}
 
 // Equal reports whether s and o give the same storage and secrets.
-func (s Sandbox) Equal(o Sandbox) bool { return agentrun.Grant(s).Equal(agentrun.Grant(o)) }
+func (s Sandbox) Equal(o Sandbox) bool {
+	return s.Storage == o.Storage && slices.Equal(s.Secrets, o.Secrets)
+}
 
 // Covers reports whether s gives at least what o gives: storage with as much
 // access, and every secret of o.
-func (s Sandbox) Covers(o Sandbox) bool { return agentrun.Grant(s).Covers(agentrun.Grant(o)) }
+func (s Sandbox) Covers(o Sandbox) bool {
+	if storageRank(s.Storage) > storageRank(o.Storage) {
+		return false
+	}
+	for _, g := range o.Secrets {
+		if !slices.Contains(s.Secrets, g) {
+			return false
+		}
+	}
+	return true
+}
 
-func storageRank(storage string) int { return agentrun.StorageRank(storage) }
+// storageRank orders the storage modes from the most access to the least.
+func storageRank(storage string) int {
+	if i := slices.Index(workspaces.StorageModes, storage); i >= 0 {
+		return i
+	}
+	return len(workspaces.StorageModes)
+}
 
 // Describe says what s gives, such as "read-only workspace, no secrets".
 func (s Sandbox) Describe() string { return s.describe(false) }

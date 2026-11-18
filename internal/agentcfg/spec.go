@@ -15,43 +15,53 @@
 package agentcfg
 
 import (
+	"errors"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
-	"github.com/a2aproject/a2a-serve/internal/agentrun"
-	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
-
-// Spec returns what the runner runs for the agent of cfg in d. cli is the
-// a2a binary of an agent without a sandbox. It is the one place that maps
-// a setting to the core.
-// On error, the spec still holds the other settings.
-func Spec(cfg *agentdir.Config, d agentdir.Dir, cli string) (agentrun.Spec, error) {
-	mounts, err := d.Mounts(cfg)
-	spec := agentrun.Spec{
-		Name:        "a2a-" + cfg.Name + "-" + d.ID(),
-		Labels:      map[string]string{"a2a.agent": cfg.Name, "a2a.dir": d.Root},
-		Agent:       cfg.Harness,
-		Command:     cfg.Command,
-		Image:       cfg.Image,
-		Model:       cfg.Model,
-		Env:         cfg.Env,
-		Sandbox:     cfg.Sandbox,
-		Limits:      sandboxrt.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
-		Mounts:      mounts,
-		EgressMode:  cfg.Egress.Mode,
-		EgressAllow: cfg.Egress.Allow,
-		Inject:      cfg.Inject,
-		Tools:       ToolRules(cfg),
-		DisabledMCP: cfg.MCP.Disabled,
-	}
-	if cfg.Sandbox == agentprofile.SandboxLocal {
-		spec.CLI = cli
-	}
-	return spec, err
-}
 
 // ToolRules returns the tool rules of cfg.
 func ToolRules(cfg *agentdir.Config) toolrules.Rules {
 	return toolrules.Rules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
 }
+
+// Refusals of turns in processes whose sandbox rules changed.
+var (
+	// ErrGrantChanged refuses a turn in a busy process whose grant changed,
+	// which restarts once its turns end.
+	ErrGrantChanged = errors.New("the grant of this conversation's process changed, and the process restarts with it once its current tasks end; send the message again then")
+	// ErrGrantNarrowed refuses an answer to a waiting task of a process
+	// whose grant now gives less, which ends its waiting tasks.
+	ErrGrantNarrowed = errors.New("the grant of this conversation's process changed and gives less, so its waiting tasks ended; send the message again")
+)
+
+// MissingSecretError is returned when a process gets a secret that has no
+// stored value. Main is set for the main process.
+type MissingSecretError struct {
+	Name string
+	Main bool
+}
+
+func (e *MissingSecretError) Error() string { return "secret " + e.Name + " is not set" }
+
+// CopyError is returned when the private copy of the workspace can't be
+// made, such as for a workspace over the limits of a copy.
+type CopyError struct{ Err error }
+
+func (e *CopyError) Error() string { return e.Err.Error() }
+
+func (e *CopyError) Unwrap() error { return e.Err }
+
+// InjectRuleError is the error of an inject rule that can't apply.
+type InjectRuleError struct {
+	Rule agentprofile.InjectRule
+	Err  error
+}
+
+func (e *InjectRuleError) Error() string {
+	return "inject rule " + e.Rule.Entry() + ": " + e.Err.Error()
+}
+
+func (e *InjectRuleError) Unwrap() error { return e.Err }

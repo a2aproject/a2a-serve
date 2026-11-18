@@ -22,20 +22,21 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 func TestPoliciesKeepServersOfEarlierSessions(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	spec := Spec{Agent: "claude", Tools: toolrules.Rules{Deny: []string{"command:git push *"}}}
+	askCommands := toolrules.DeniesCommands([]string{"command:git push *"})
 	p := &policies{dir: dir}
 
 	for _, w := range []struct {
 		lockHome bool
 		servers  []string
 	}{{false, []string{"github"}}, {true, []string{"grafana"}}, {false, nil}} {
-		if _, err := p.write(spec, w.lockHome, w.servers); err != nil {
+		if _, err := p.write(agentprofile.Claude(), askCommands, w.lockHome, w.servers); err != nil {
 			t.Fatalf("policies.write() error = %v", err)
 		}
 	}

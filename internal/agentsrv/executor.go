@@ -56,7 +56,7 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 	cfg := s.rt.Config()
 	granted := cfg.Secrets
 	key := ""
-	if k, err := s.runner.KeyOf(ctx, execCtx.ContextID); err == nil {
+	if k, err := s.engine.KeyOf(ctx, execCtx.ContextID); err == nil {
 		key = k
 		if sb, err := s.sandboxes.of(ctx, k); err == nil {
 			granted = nil
@@ -65,7 +65,7 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 			}
 		}
 	}
-	if missing, ok := errors.AsType[*agentrun.MissingSecretError](err); ok && !missing.Main {
+	if missing, ok := errors.AsType[*agentcfg.MissingSecretError](err); ok && !missing.Main {
 		slog.Warn("an agent process of a caller can't start: "+agentcfg.MissingSecretHint(missing.Name), "key", key)
 	}
 	text := explainFailure(cfg, granted, agentcfg.Explain(err).Error())
@@ -531,7 +531,8 @@ type callerInterceptor struct {
 	tasks     *store.TaskStore
 	waiting   waitingTasks
 	budget    *guestBudget
-	runner    *agentrun.Runner
+	// engine returns the engine of the agent.
+	engine func() *agentrun.Runner
 	// dir holds the agent homes of members.
 	dir agentdir.Dir
 	// removeHome forgets what the server keeps about an agent home that
@@ -718,12 +719,12 @@ func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principa
 // that member's agent process can't run, so that the caller gets
 // an error to retry on and no failed task is stored.
 func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID string) error {
-	key, err := i.runner.KeyOf(ctx, contextID)
+	key, err := i.engine().KeyOf(ctx, contextID)
 	if err != nil {
 		return fmt.Errorf("looking up the session of conversation %s: %w", contextID, err)
 	}
 	if _, ok := agentkey.UserOf(key); ok {
-		room, err := i.runner.HasRoom(ctx, key)
+		room, err := i.engine().HasRoom(ctx, key)
 		if err != nil {
 			return fmt.Errorf("looking up the agent process of conversation %s: %w", contextID, err)
 		}

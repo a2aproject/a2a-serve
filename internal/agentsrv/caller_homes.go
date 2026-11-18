@@ -79,7 +79,7 @@ func (i *callerInterceptor) evictCallerHome(id string, homes []string) error {
 	for _, home := range homes {
 		caller := strings.TrimPrefix(filepath.Base(home), prefix)
 		key := agentkey.CallerKey(id, caller)
-		release, ok, err := i.runner.HoldIdle(context.Background(), key)
+		release, ok, err := i.engine().HoldIdle(context.Background(), key)
 		if err != nil {
 			return err
 		}
@@ -88,7 +88,7 @@ func (i *callerInterceptor) evictCallerHome(id string, homes []string) error {
 		}
 		i.removeHome(home)
 		err = i.dir.RemoveCallerHome(id, caller)
-		i.runner.Forget(key)
+		i.engine().Forget(key)
 		release()
 		return err
 	}

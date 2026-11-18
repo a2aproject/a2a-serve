@@ -32,10 +32,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
+	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -65,6 +65,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/turncount"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // Options configure [Run].
@@ -140,8 +141,22 @@ type Server struct {
 	public         network.Provider
 	resolveNetwork func(ctx context.Context, spec string) (netinstall.Provider, error)
 	newNetwork     func(network.ExternalConfig) (network.Provider, error)
-	// runner runs the agent processes, the owner's and those of callers.
-	runner *agentrun.Runner
+	// agent runs the agent processes, the owner's and those of callers, and
+	// engine is its engine, for what only the server needs. boundary is the
+	// egress boundary of the agent's containers.
+	agent    *a2aserve.Agent
+	engine   *agentrun.Runner
+	boundary *egress.Boundary
+	// copies are the private workspaces of the agent processes.
+	copies *workspaces.Copies
+	// agentRoutes serve the agents URLs to the agent processes, once
+	// agentRoutesReady is closed.
+	agentRoutes      http.Handler
+	agentRoutesReady chan struct{}
+	// fatal gets the errors that stop the server.
+	fatal chan error
+	// callers checks the requests of callers, once the handler is built.
+	callers *callerInterceptor
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
 	pins *agentprofile.Pins
@@ -287,6 +302,8 @@ func Run(ctx context.Context, opts Options) error {
 
 		peerCards:          newPeerCards(),
 		cardRefreshChanged: make(chan struct{}, 1),
+		agentRoutesReady:   make(chan struct{}),
+		fatal:              make(chan error, 1),
 	}
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {
 		s.existed = true
@@ -336,9 +353,8 @@ func startupError(ctx context.Context, err error) error {
 	return nil
 }
 
-// open locks the agent directory and opens its database, the network
-// providers and the runner with the listeners agent processes reach the
-// server through.
+// open locks the agent directory and opens its database and the network
+// providers.
 func (s *Server) open(ctx context.Context, closers *stack, opts Options) error {
 	if err := s.dir.Init(); err != nil {
 		return err
@@ -390,12 +406,7 @@ func (s *Server) open(ctx context.Context, closers *stack, opts Options) error {
 		return err
 	}
 	s.sessions = s.store.Sessions().In(s.workspace)
-	r, err := s.newRunner(opts)
-	if err != nil {
-		return err
-	}
-	closers.push(r.Release)
-	s.runner = r
+	s.copies = workspaces.NewCopies(s.dir.WorkspacesDir())
 	return nil
 }
 
@@ -456,9 +467,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.decider = &toolDecider{store: s.store, taskUser: records.TaskUser}
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
-		Bridge:   s.runner.Bridge,
+		Bridge:   func() agentrun.Bridge { return s.engine.Bridge() },
 		Chain:    s.chain,
-		AgentKey: s.runner.KeyOf,
+		AgentKey: func(ctx context.Context, contextID string) (string, error) { return s.engine.KeyOf(ctx, contextID) },
 		Sessions: s.sessions,
 		Peers:    s.callablePeers,
 	})
@@ -504,7 +515,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Mailbox:   s.nodes.Mailbox,
 			Forget:    s.nodes.Forget,
 			Changed:   s.refreshInstructions,
-			Users:     stopUsers{tasks: s.tasks, sender: sender, runner: s.runner, posted: posted, sandboxes: s.sandboxes},
+			Users:     stopUsers{tasks: s.tasks, sender: sender, agent: s.agent, posted: posted, sandboxes: s.sandboxes},
 			Homes:     userHomes{s},
 			Limiter:   pairings.NewLimiter(opts.Now),
 		})
@@ -535,14 +546,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.runner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, call: s.runner.Call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued},
-			a2asrv.WithTaskStore(s.tasks.CutLists()),
-			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, runner: s.runner, dir: s.dir, removeHome: s.forgetHome}),
-			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
-			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
-			a2asrv.WithLogger(slog.Default()),
-		))), a2alimit.Default())
+		s.callers = &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, engine: func() *agentrun.Runner { return s.engine }, dir: s.dir, removeHome: s.forgetHome}
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(s.agent.Handler())), a2alimit.Default())
 	})
 	s.schedules = schedules.New(ctx, schedules.Deps{
 		Store:      s.store,
@@ -567,6 +572,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		},
 	})
 	s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
+	s.agentRoutes = s.proxy.Routes(processOf)
+	close(s.agentRoutesReady)
 	s.inspector = inspector.New(inspector.Deps{
 		Store:        s.store,
 		Tasks:        s.tasks,
@@ -581,33 +588,57 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 
 // buildExecutor starts the owner's agent process. The processes of guests
 // and members start on their first turn.
-func (s *Server) buildExecutor(ctx context.Context, closers *stack, _ Options) error {
+func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options) error {
 	s.budget = newGuestBudget()
-	if err := s.runner.Start(ctx); err != nil {
+	if err := s.newAgent(ctx, opts); err != nil {
 		return startError(err)
 	}
-	closers.push(s.runner.Close)
+	closers.push(func(ctx context.Context) error { return errors.Join(s.agent.Close(ctx), s.boundary.Close()) })
 	// The stopped turns end with a final event, which a2a-go stores after
 	// the turn returns; the task store must stay open until it did.
 	closers.push(func(ctx context.Context) error {
 		s.turns.Wait(ctx)
 		return nil
 	})
-	closers.push(s.runner.Shutdown)
+	closers.push(s.engine.Shutdown)
+	s.background.Go(func() { s.sandboxLoop(ctx) })
 	return nil
+}
+
+// interceptors check the requests to the agent's handler.
+func (s *Server) interceptors() []a2asrv.CallInterceptor {
+	return []a2asrv.CallInterceptor{a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), boundCallers{s}}
+}
+
+// observe wraps the executor of the agent with what the server does around
+// each execution.
+func (s *Server) observe(ctx context.Context, inner a2asrv.AgentExecutor) a2asrv.AgentExecutor {
+	return &observedExecutor{inner: inner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, call: s.call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued}
+}
+
+// boundCallers checks the requests of callers with the interceptor that
+// the server builds with the handler.
+type boundCallers struct{ s *Server }
+
+func (b boundCallers) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
+	return b.s.callers.Before(ctx, callCtx, req)
+}
+
+func (b boundCallers) After(ctx context.Context, callCtx *a2asrv.CallContext, resp *a2asrv.Response) error {
+	return b.s.callers.After(ctx, callCtx, resp)
 }
 
 // serve starts the chat turns, serves every listener and the control socket,
 // starts the messengers and resumes watches. Errors of listeners after the
 // start arrive on the returned messenger.
 func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Messenger) (<-chan error, error) {
-	errc := make(chan error, 1)
+	errc := s.fatal
 	s.chatTurns.Start(ctx)
 	// The messengers stop after the chat turns, which show in their chats
 	// how the stop ended them.
 	closers.push(s.supervisor.StopAll)
 	closers.push(s.chatTurns.Wait)
-	closers.push(s.runner.Serve(ctx, func(err error) { reportFatal(errc, err) }))
+	closers.push(s.engine.StopServe)
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}

@@ -197,7 +197,7 @@ func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 					t.Fatalf("Chtimes() error = %v", err)
 				}
 				if tc.running {
-					release, ok, err := coder.srv.runner.HoldIdle(context.Background(), agentkey.CallerKey(id, caller))
+					release, ok, err := coder.srv.engine.HoldIdle(context.Background(), agentkey.CallerKey(id, caller))
 					if err != nil || !ok {
 						t.Fatalf("Runner.HoldIdle() = %v, %v, want the process held as if it ran", ok, err)
 					}
@@ -735,7 +735,7 @@ func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Princip
 // harnessClient returns a client which reaches ts the way the owner's
 // agent process does.
 func harnessClient(ts *testServer) *http.Client {
-	return socketClient(ts.srv.runner.Bridge().Socket)
+	return socketClient(ts.srv.engine.Bridge().Socket)
 }
 
 // socketClient returns a client which sends every request through the Unix

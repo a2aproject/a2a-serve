@@ -18,28 +18,43 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
-// fakeProcesses describes the processes of fixed keys.
-type fakeProcesses map[string]Process
+// fakeCallers describes the processes of fixed keys, and admits every
+// turn, as admit does if set.
+type fakeCallers struct {
+	envs  map[string]Environment
+	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error)
+}
 
-func (p fakeProcesses) Key(context.Context, string) (string, error) { return "", nil }
+func (c fakeCallers) Key(context.Context, string) (string, error) { return "", nil }
 
-func (p fakeProcesses) Process(_ context.Context, key string) (Process, error) {
-	proc, ok := p[key]
+func (c fakeCallers) Environment(_ context.Context, key string) (Environment, error) {
+	env, ok := c.envs[key]
 	if !ok {
-		return Process{}, errors.New("unknown key " + key)
+		return Environment{}, errors.New("unknown key " + key)
 	}
-	return proc, nil
+	return env, nil
+}
+
+func (c fakeCallers) Admit(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
+	if c.admit != nil {
+		return c.admit(ctx, key, execCtx)
+	}
+	return func() {}, nil
 }
 
 // privateDir returns a temporary directory only its user may enter, as the
@@ -55,19 +70,25 @@ func privateDir(t *testing.T) string {
 
 func newTestRunner(t *testing.T, cfg Config) *Runner {
 	t.Helper()
-	if cfg.Dirs.Sockets == "" {
-		cfg.Dirs.Sockets = filepath.Join(privateDir(t), "s")
+	if cfg.Options.SocketDir == "" {
+		cfg.Options.SocketDir = filepath.Join(privateDir(t), "s")
 	}
-	if cfg.Secrets == nil {
-		cfg.Secrets = func() map[string]string { return nil }
+	if cfg.Profile == nil {
+		cfg.Profile = agentprofile.Custom("fake", []string{"fake-acp"})
+	}
+	if cfg.Runtime == nil {
+		cfg.Runtime = sandbox.Docker(sandbox.DockerOptions{})
+	}
+	if cfg.StateDir == "" {
+		cfg.StateDir = t.TempDir()
 	}
 	r, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := r.Release(context.Background()); err != nil {
-			t.Errorf("Runner.Release() error = %v", err)
+		if err := r.Close(context.Background()); err != nil {
+			t.Errorf("Runner.Close() error = %v", err)
 		}
 	})
 	return r
@@ -108,22 +129,23 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 			if tc.key != "" {
 				procHome = filepath.Join(state, "users", tc.name)
 			}
+			env := Environment{
+				Workspace: workspace.Dir(root),
+				Name:      "a2a-coder-" + tc.name,
+				Home:      procHome,
+				Hide:      []string{agentDir},
+				Pool:      tc.pool,
+				Process:   &ProcessOptions{LockHome: tc.key != ""},
+			}
 			r := newTestRunner(t, Config{
-				Dirs: Dirs{
-					Policies:   filepath.Join(state, "policy"),
-					Workspaces: filepath.Join(state, "workspaces"),
-					MCPMask:    filepath.Join(state, "mcp-mask.json"),
-					ConfigMask: filepath.Join(state, "config-mask.json"),
-					Hidden:     []string{agentDir},
-					Pins:       pins,
-				},
-				Spec: func() (Spec, error) {
-					return Spec{Name: "a2a-coder", Agent: "fake", Command: []string{"fake-acp"}, Sandbox: agentprofile.SandboxDocker, Mounts: []agentprofile.Mount{{Src: root, Dst: root}}}, nil
-				},
-				Processes: fakeProcesses{tc.key: {Pool: tc.pool, Name: tc.name, CopyName: tc.name, Home: procHome, LockHome: tc.key != "", AgentAPI: true}},
+				StateDir: state,
+				Callers:  fakeCallers{envs: map[string]Environment{tc.key: env}},
+				Pools:    map[string]Pool{"guests": {}, "users": {}},
+				AgentAPI: http.NotFoundHandler(),
+				Options:  Options{Pins: pins, Mounts: []agentprofile.Mount{{Src: root, Dst: root}}},
 			})
 
-			_, err = r.prepare(context.Background(), io.Discard, io.Discard, tc.key)
+			_, err = r.prepare(context.Background(), io.Discard, io.Discard, tc.key, env)
 
 			if err == nil || !strings.Contains(err.Error(), "was replaced") {
 				t.Fatalf("Runner.prepare() error = %v, want the agent directory replaced", err)
@@ -149,12 +171,16 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 
 func TestPruneEnvFilesRemovesLeftoversOfEarlierRun(t *testing.T) {
 	t.Parallel()
-	envFiles := t.TempDir()
+	state := t.TempDir()
+	envFiles := filepath.Join(state, "run", "env")
+	if err := os.MkdirAll(envFiles, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	leftover := filepath.Join(envFiles, "a2a-env-123")
 	if err := os.WriteFile(leftover, []byte("KEY=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := newTestRunner(t, Config{Dirs: Dirs{EnvFiles: envFiles}, Spec: func() (Spec, error) { return Spec{}, nil }, Processes: fakeProcesses{}})
+	r := newTestRunner(t, Config{StateDir: state})
 
 	r.pruneEnvFiles()
 

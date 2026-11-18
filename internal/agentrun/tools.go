@@ -15,6 +15,7 @@
 package agentrun
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"slices"
@@ -23,51 +24,69 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/core/tools"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // ByRule is the By of a decision of the tool rules.
 const ByRule = "rule"
 
-// toolDecider answers tool permissions with the tool rules of the current
-// spec, so that changing them doesn't need a restart, and then with
-// Hooks.Decide. It logs each answer by what decided it.
+// ToolCall is what a decider of the frontend sees of the decision of a tool
+// call in the ctx of Decide, and records about it.
+type ToolCall struct {
+	// ExecCtx is the turn of the call, or nil.
+	ExecCtx *a2asrv.ExecutorContext
+	// By is what decided, such as a preference, ByRule if unset, and User
+	// whose.
+	By, User string
+}
+
+type toolCallKey struct{}
+
+// ToolCallOf returns the decision of a tool call that ctx is for, or nil.
+func ToolCallOf(ctx context.Context) *ToolCall {
+	tc, _ := ctx.Value(toolCallKey{}).(*ToolCall)
+	return tc
+}
+
+// NewCall returns the call of a permission, whose MCP tools are those of
+// servers.
+func NewCall(kind, title string, input any, servers []string) tools.Call {
+	c := toolrules.NewCall(kind, title, input, servers)
+	return tools.Call{Kind: c.Kind, Tool: c.Tool, MCP: c.MCP, Command: c.Command}
+}
+
+// toolDecider answers tool permissions with the decider of the runner,
+// whose rules can change without a restart. It logs each answer by what
+// decided it.
 type toolDecider struct {
-	rules func() toolrules.Rules
+	tools tools.Decider
 	// servers returns the names of the MCP servers of the project, which
 	// name the MCP tools of calls.
 	servers func() []string
-	decide  func(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (Decision, bool, error)
 	denied  func(execCtx *a2asrv.ExecutorContext, title string)
+	log     func() *slog.Logger
 }
 
-// call describes a tool call of a permission request.
-func (d *toolDecider) call(kind, title string, input any) toolrules.Call {
+func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
+	if q.Tool == nil || d.tools == nil {
+		return a2aacp.Answer{}, false
+	}
 	var servers []string
 	if d.servers != nil {
 		servers = d.servers()
 	}
-	return toolrules.NewCall(kind, title, input, servers)
-}
-
-func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
-	if q.Tool == nil {
-		return a2aacp.Answer{}, false
-	}
+	call := NewCall(q.Tool.Kind, q.Tool.Title, q.Tool.Input, servers)
 	var taskID a2a.TaskID
 	if execCtx != nil {
 		taskID = execCtx.TaskID
+		call.ContextID, call.TaskID = execCtx.ContextID, string(execCtx.TaskID)
 	}
-	call := d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input)
-	dec, ok := Decision{}, false
-	if rule, decided := d.rules().Decide(call); decided {
-		dec, ok = Decision{Decision: rule, By: ByRule}, true
-	} else if d.decide != nil && execCtx != nil {
-		var err error
-		if dec, ok, err = d.decide(ctx, execCtx, call); err != nil {
-			slog.Warn("reading what a person allowed, asking", "task", taskID, "error", err)
-			return a2aacp.Answer{}, false
-		}
+	tc := &ToolCall{ExecCtx: execCtx}
+	dec, ok, err := d.tools.Decide(context.WithValue(ctx, toolCallKey{}, tc), call)
+	if err != nil {
+		d.logger().Warn("reading what a person allowed, asking", "task", taskID, "error", err)
+		return a2aacp.Answer{}, false
 	}
 	if !ok {
 		return a2aacp.Answer{}, false
@@ -79,8 +98,26 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	if !dec.Allow && d.denied != nil {
 		d.denied(execCtx, q.Title)
 	}
-	slog.Info("approval answered by a "+dec.By, dec.LogAttrs(execCtx.TaskID, q.Tool.Kind, ans.Option)...)
+	by := cmp.Or(tc.By, ByRule)
+	full := Decision{Allow: dec.Allow, Rule: dec.Rule, By: by, User: tc.User}
+	d.logger().Info("approval answered by a "+by, full.LogAttrs(execCtx.TaskID, q.Tool.Kind, ans.Option)...)
 	return ans, true
+}
+
+func (d *toolDecider) logger() *slog.Logger {
+	if d.log == nil {
+		return slog.Default()
+	}
+	return d.log()
+}
+
+// Decision is how a tool call is answered without asking, and who decided.
+type Decision struct {
+	Allow bool
+	// Rule is the entry that decided.
+	Rule string
+	// By is what decided, such as a preference, and User whose.
+	By, User string
 }
 
 // LogAttrs are the attributes of the log line of the approval of task that
@@ -88,7 +125,7 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 // from an answer to a command, which can hold secrets, so it names only the
 // program.
 func (dec Decision) LogAttrs(task a2a.TaskID, kind, option string) []any {
-	entry := dec.Entry
+	entry := dec.Rule
 	if dec.By != ByRule {
 		entry = toolrules.Redact(entry)
 	}

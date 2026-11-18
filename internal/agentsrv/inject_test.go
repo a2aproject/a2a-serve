@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentrun
+package agentsrv
 
 import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
@@ -39,17 +40,17 @@ func TestSecretEnv(t *testing.T) {
 			Model: true, Endpoints: openrouter.Endpoints,
 		}
 	}
-	grant := func(name, from string) SecretGrant { return SecretGrant{Name: name, From: from} }
+	grant := func(name, from string) access.SecretGrant { return access.SecretGrant{Name: name, From: from} }
 	tests := []struct {
 		name        string
-		grants      []SecretGrant
+		grants      []access.SecretGrant
 		wantEnv     []string
 		wantInject  []boundary.Injection
 		wantMissing []string
 	}{
 		{
 			name:    "every secret granted",
-			grants:  []SecretGrant{grant("OPENROUTER_API_KEY", "OPENROUTER_API_KEY"), grant("GH", "GH"), grant("OTHER", "OTHER")},
+			grants:  []access.SecretGrant{grant("OPENROUTER_API_KEY", "OPENROUTER_API_KEY"), grant("GH", "GH"), grant("OTHER", "OTHER")},
 			wantEnv: []string{"OPENROUTER_API_KEY=" + placeholder, "GH=" + egressrules.Placeholder, "OTHER=o"},
 			wantInject: []boundary.Injection{
 				modelKey("sk-or-real"),
@@ -58,18 +59,18 @@ func TestSecretEnv(t *testing.T) {
 		},
 		{
 			name:       "another secret under an added name",
-			grants:     []SecretGrant{grant("OPENROUTER_API_KEY", "GUEST_KEY")},
+			grants:     []access.SecretGrant{grant("OPENROUTER_API_KEY", "GUEST_KEY")},
 			wantEnv:    []string{"OPENROUTER_API_KEY=" + placeholder},
 			wantInject: []boundary.Injection{modelKey("sk-or-guest")},
 		},
 		{
 			name:    "an added secret under a name no rule adds",
-			grants:  []SecretGrant{grant("TOKEN", "GH")},
+			grants:  []access.SecretGrant{grant("TOKEN", "GH")},
 			wantEnv: []string{"TOKEN=" + egressrules.Placeholder},
 		},
 		{
 			name:        "no secret granted, one missing",
-			grants:      []SecretGrant{grant("OTHER", "OTHER"), grant("GONE", "GONE")},
+			grants:      []access.SecretGrant{grant("OTHER", "OTHER"), grant("GONE", "GONE")},
 			wantEnv:     []string{"OTHER=o"},
 			wantMissing: []string{"GONE"},
 		},
@@ -77,7 +78,7 @@ func TestSecretEnv(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			env, inject, missing, err := secretEnv(rules, Grant{Secrets: tc.grants}, stored)
+			env, inject, missing, err := secretEnv(rules, access.Sandbox{Secrets: tc.grants}, stored)
 			if err != nil {
 				t.Fatalf("secretEnv() error = %v, want nil", err)
 			}
@@ -97,7 +98,7 @@ func TestSecretEnv(t *testing.T) {
 func TestSecretEnvRefusesAValueAHeaderCantCarry(t *testing.T) {
 	t.Parallel()
 	rules := []agentprofile.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}
-	g := Grant{Secrets: []SecretGrant{{Name: "GH", From: "GH"}}}
+	g := access.Sandbox{Secrets: []access.SecretGrant{{Name: "GH", From: "GH"}}}
 	if _, _, _, err := secretEnv(rules, g, map[string]string{"GH": "a\x00b"}); err == nil {
 		t.Fatalf("secretEnv() error = nil, want an error")
 	}
