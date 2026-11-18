@@ -3,7 +3,7 @@ module github.com/a2aproject/a2a-serve
 go 1.26.6
 
 require (
-	github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261106135701-196d4bbfa1df
+	github.com/a2aproject/a2a-go/v2 v2.9.0
 	github.com/aojea/agents.net/sdk v0.0.0-20261105062951-f91a46085601
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
