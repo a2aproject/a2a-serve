@@ -3,7 +3,7 @@ module github.com/a2aproject/a2a-serve/providers/agentmesh
 go 1.26.6
 
 require (
-	github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261106135701-196d4bbfa1df
+	github.com/a2aproject/a2a-go/v2 v2.9.0
 	github.com/a2aproject/a2a-serve v0.0.0
 	github.com/google/agentmesh v0.2.0
 	github.com/google/go-cmp v0.7.0

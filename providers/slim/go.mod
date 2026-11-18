@@ -5,7 +5,7 @@ go 1.26.6
 replace github.com/a2aproject/a2a-serve => ../..
 
 require (
-	github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261106135701-196d4bbfa1df
+	github.com/a2aproject/a2a-go/v2 v2.9.0
 	github.com/a2aproject/a2a-serve v0.0.0-00010101000000-000000000000
 	github.com/agntcy/slim-a2a-go v0.5.2
 	github.com/agntcy/slim-bindings-go/v3 v3.3.9

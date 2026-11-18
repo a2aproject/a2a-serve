@@ -1,5 +1,5 @@
-github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261106135701-196d4bbfa1df h1:hvWONTz1a1NbyJQGAwcupBHtecQljvsizLsSIYslIBU=
-github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261106135701-196d4bbfa1df/go.mod h1:UrxIRm1qmHm1kDoEk5PXRHc+4WGw0OEnZFuavMOH+24=
+github.com/a2aproject/a2a-go/v2 v2.9.0 h1:BmpIVxF1UrB6mmWj1Mg3nFujvLDPWhs8rGEf9QqGbUk=
+github.com/a2aproject/a2a-go/v2 v2.9.0/go.mod h1:UrxIRm1qmHm1kDoEk5PXRHc+4WGw0OEnZFuavMOH+24=
 github.com/agntcy/slim-bindings-go/v3 v3.3.9 h1:j7ff04/OTazYU6mm6vg0bTreITNhKC5HXu1rROrSJGM=
 github.com/agntcy/slim-bindings-go/v3 v3.3.9/go.mod h1:qOrzl6NkLQlvsy4RD4t8v6/NskBRilGG1vDdCLbcF50=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
