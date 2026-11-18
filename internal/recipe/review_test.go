@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 func loadTestRecipe(t *testing.T, config string, extra map[string]string) *Recipe {
@@ -363,7 +363,7 @@ func TestFileItemsLinkLoops(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := fileItems(tc.files, workspace.AgentConfigFiles, "", true)
+			got := fileItems(tc.files, projectfiles.AgentConfigFiles, "", true)
 
 			if len(got) != 0 {
 				t.Fatalf("fileItems() = %v, want none", got)

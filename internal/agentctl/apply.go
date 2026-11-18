@@ -29,13 +29,13 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/core/toolrules"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Secret actions of a [SecretChange].
@@ -566,7 +566,7 @@ func mcpWarnings(d agentdir.Dir, old, next *agentdir.Config) []string {
 	if err != nil {
 		return nil
 	}
-	servers, err := workspace.LoadMCP(ws.Src)
+	servers, err := projectfiles.LoadMCP(ws.Src)
 	if err != nil {
 		return nil
 	}
@@ -605,13 +605,13 @@ func toolRuleWarnings(d agentdir.Dir, old, next *agentdir.Config) []string {
 	if err != nil {
 		return nil
 	}
-	servers, err := workspace.LoadMCP(ws.Src)
+	servers, err := projectfiles.LoadMCP(ws.Src)
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, e := range entries {
-		if slices.ContainsFunc(servers, func(s workspace.MCPServer) bool { return s.Name == e.server }) {
+		if slices.ContainsFunc(servers, func(s projectfiles.MCPServer) bool { return s.Name == e.server }) {
 			out = append(out, fmt.Sprintf("%s %s%s matches no tool of the MCP server %s; %s%s.* matches all its tools", e.flag, toolrules.PrefixTool, e.server, e.server, toolrules.PrefixTool, e.server))
 		}
 	}

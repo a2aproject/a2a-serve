@@ -30,7 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // agentSocketName is the name of the Unix socket an agent process reaches
@@ -451,6 +451,6 @@ func workspaceOf(spec Spec) (string, error) {
 }
 
 // copyDir returns the private workspace of storage of the process p.
-func (r *Runner) copyDir(p Process, storage workspace.Storage) string {
+func (r *Runner) copyDir(p Process, storage workspaces.Storage) string {
 	return r.copies.Dir(p.CopyName, storage)
 }

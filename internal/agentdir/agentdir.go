@@ -30,20 +30,20 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Name is the name of the directory which marks an agent.
-const Name = workspace.AgentDir
+const Name = projectfiles.AgentDir
 
 // RestorePrefix starts the names of the directories next to .a2a that
 // `backup restore` extracts a snapshot into. Until the restore renames one
 // to .a2a, it holds the agent's secrets.
-const RestorePrefix = workspace.RestorePrefix
+const RestorePrefix = projectfiles.RestorePrefix
 
 // ErrNotFound is returned by [Find] when no agent directory is found.
 var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a-serve start <agent>` or pass --dir"})

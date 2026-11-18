@@ -26,7 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // fakeProcesses describes the processes of fixed keys.
@@ -88,7 +88,7 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := filepath.Join(t.TempDir(), "proj")
-			agentDir := filepath.Join(root, workspace.AgentDir)
+			agentDir := filepath.Join(root, projectfiles.AgentDir)
 			state := filepath.Join(agentDir, "state")
 			home := filepath.Join(state, "home")
 			if err := os.MkdirAll(home, 0o700); err != nil {

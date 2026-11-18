@@ -32,12 +32,12 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 )
 
@@ -70,8 +70,8 @@ type Status struct {
 	// give in the inspector.
 	Approvals int `json:"approvals"`
 	// MCPServers and Skills are what the project brings for the harness.
-	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
-	Skills     []workspace.Skill `json:"skills,omitempty"`
+	MCPServers []MCPServerStatus    `json:"mcpServers,omitempty"`
+	Skills     []projectfiles.Skill `json:"skills,omitempty"`
 	// ProjectError is why the project's MCP servers or skills couldn't be read.
 	ProjectError string `json:"projectError,omitempty"`
 	// AllowTools and DenyTools are the rules that decide tool calls without

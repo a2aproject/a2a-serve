@@ -23,8 +23,8 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/core/toolrules"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Line is a line of the review of what a recipe makes the machine run.
@@ -81,9 +81,9 @@ func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, shownWorkspace stri
 	add("skills", skillItems(r.Skills)...)
 	add("instructions", fileItems(r.Files, instructionFiles, "", false)...)
 	if local {
-		add("agent config", fileItems(r.Files, workspace.AgentConfigFiles, "they can change what the agent runs and approves", true)...)
+		add("agent config", fileItems(r.Files, projectfiles.AgentConfigFiles, "they can change what the agent runs and approves", true)...)
 	} else {
-		add("agent config", fileItems(r.Files, workspace.AgentConfigFiles, "the sandbox hides them from the agent", false)...)
+		add("agent config", fileItems(r.Files, projectfiles.AgentConfigFiles, "the sandbox hides them from the agent", false)...)
 	}
 	add("approvals", approvalItems(cfg.Approvals)...)
 	add("limits", limitItems(cfg.Limits)...)
@@ -154,7 +154,7 @@ func mcpItems(r *Recipe, cfg *agentdir.Config) []Item {
 	return out
 }
 
-func skillItems(skills []workspace.Skill) []Item {
+func skillItems(skills []projectfiles.Skill) []Item {
 	if len(skills) == 0 {
 		return nil
 	}

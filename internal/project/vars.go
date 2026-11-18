@@ -21,8 +21,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Vars returns the values ${VAR} in a project's .mcp.json can take: the
@@ -55,7 +55,7 @@ type UnknownServer struct {
 }
 
 func (u UnknownServer) String() string {
-	msg := fmt.Sprintf("--disable-mcp %s names no server of %s", u.Name, workspace.MCPFile)
+	msg := fmt.Sprintf("--disable-mcp %s names no server of %s", u.Name, projectfiles.MCPFile)
 	switch {
 	case u.Suggestion != "":
 		return msg + ": did you mean " + u.Suggestion + "?"
@@ -66,7 +66,7 @@ func (u UnknownServer) String() string {
 }
 
 // UnknownDisabled returns the names of disabled that servers don't have.
-func UnknownDisabled(servers []workspace.MCPServer, disabled []string) []UnknownServer {
+func UnknownDisabled(servers []projectfiles.MCPServer, disabled []string) []UnknownServer {
 	known := make([]string, len(servers))
 	for i, s := range servers {
 		known[i] = s.Name

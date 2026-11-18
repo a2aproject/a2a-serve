@@ -23,20 +23,20 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 func TestGrantMounts(t *testing.T) {
 	t.Parallel()
 	mounts := []agent.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
 	tests := []struct {
-		storage workspace.Storage
+		storage workspaces.Storage
 		want    []agent.Mount
 	}{
-		{storage: workspace.StorageShared, want: mounts},
-		{storage: workspace.StorageReadOnly, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: workspace.StorageOwn, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: workspace.StorageEmpty, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}}},
+		{storage: workspaces.StorageShared, want: mounts},
+		{storage: workspaces.StorageReadOnly, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageOwn, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageEmpty, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.storage, func(t *testing.T) {
@@ -60,14 +60,14 @@ func (noTasks) Abandon(context.Context, *a2a.TaskStatusUpdateEvent) error { retu
 func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 	t.Parallel()
 	const key = "user:ann"
-	want := Grant{Storage: workspace.StorageShared, Secrets: []SecretGrant{{Name: "KEY", From: "KEY"}}}
+	want := Grant{Storage: workspaces.StorageShared, Secrets: []SecretGrant{{Name: "KEY", From: "KEY"}}}
 	r := &Runner{
 		cfg:   Config{Processes: fakeProcesses{key: {Pool: "users", Grant: want}}, Tasks: noTasks{}},
 		pools: map[string]*procs{"users": {}},
 	}
 	p := r.pools["users"]
 	proc := &countingCloser{}
-	p.started(p.get(key), proc, Grant{Storage: workspace.StorageShared})
+	p.started(p.get(key), proc, Grant{Storage: workspaces.StorageShared})
 	time.AfterFunc(50*time.Millisecond, p.turn(key))
 
 	release, err := r.admitTurn(context.Background(), key, nil)

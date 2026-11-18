@@ -24,8 +24,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Run modes.
@@ -252,11 +252,11 @@ func (p *Prompter) SecretValue(s *agentdir.Settings, getenv func(string) string,
 // MCPServers shows the MCP servers of a project, and asks for the
 // variables they need which s doesn't pass to the agent yet. A server with
 // a variable left without a value is turned off.
-func (p *Prompter) MCPServers(s *agentdir.Settings, getenv func(string) string, servers []workspace.MCPServer) error {
+func (p *Prompter) MCPServers(s *agentdir.Settings, getenv func(string) string, servers []projectfiles.MCPServer) error {
 	if len(servers) == 0 {
 		return nil
 	}
-	if _, err := fmt.Fprintf(p.out, "  The project's %s has MCP servers, which run in the sandbox:\n", workspace.MCPFile); err != nil {
+	if _, err := fmt.Fprintf(p.out, "  The project's %s has MCP servers, which run in the sandbox:\n", projectfiles.MCPFile); err != nil {
 		return err
 	}
 	passed := func(name string) (string, bool) {
@@ -374,12 +374,12 @@ func (p *Prompter) project(opts Options, s *agentdir.Settings) error {
 	if opts.Workspace == "" {
 		return nil
 	}
-	servers, err := workspace.LoadMCP(opts.Workspace)
+	servers, err := projectfiles.LoadMCP(opts.Workspace)
 	if err != nil {
 		_, err = fmt.Fprintf(p.out, "  ! %v; the agent gets none of its MCP servers until it is fixed\n", err)
 		return err
 	}
-	skills, err := workspace.Skills(opts.Workspace)
+	skills, err := projectfiles.Skills(opts.Workspace)
 	if err != nil {
 		return err
 	}

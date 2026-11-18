@@ -39,8 +39,8 @@ import (
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/core/toolrules"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // Config configures a [Runner].
@@ -175,7 +175,7 @@ type Pool struct {
 // Grant is what a process's container gets.
 type Grant struct {
 	// Storage is how the container sees the workspace and the mounts.
-	Storage workspace.Storage
+	Storage workspaces.Storage
 	// Secrets are the variables the agent gets, in the order of the
 	// agent's secrets.
 	Secrets []SecretGrant
@@ -206,11 +206,11 @@ func (g Grant) Covers(o Grant) bool {
 }
 
 // StorageRank orders the storage modes from the most access to the least.
-func StorageRank(storage workspace.Storage) int {
-	if i := slices.Index(workspace.StorageModes, storage); i >= 0 {
+func StorageRank(storage workspaces.Storage) int {
+	if i := slices.Index(workspaces.StorageModes, storage); i >= 0 {
 		return i
 	}
-	return len(workspace.StorageModes)
+	return len(workspaces.StorageModes)
 }
 
 // Hooks are the caller's decisions inside a turn. Each is optional.
@@ -341,7 +341,7 @@ type Runner struct {
 	listeners *listeners
 	main      *endpoint
 	policies  *policies
-	copies    *workspace.Copies
+	copies    *workspaces.Copies
 	stalls    *stallGuard
 	decider   *toolDecider
 	split     *splitExecutor
@@ -371,7 +371,7 @@ func New(cfg Config) (*Runner, error) {
 		cfg:      cfg,
 		keys:     newKeys(cfg.AllSessions, cfg.Processes.Key),
 		policies: &policies{dir: cfg.Dirs.Policies},
-		copies:   workspace.NewCopies(cfg.Dirs.Workspaces),
+		copies:   workspaces.NewCopies(cfg.Dirs.Workspaces),
 		stalls:   newStallGuard(cfg.Timings.TurnStall, cfg.Timings.ToolStall, cfg.Hooks.Stalled),
 		pools:    map[string]*procs{},
 	}
@@ -499,7 +499,7 @@ func (r *Runner) Call(kind, title string, input any) toolrules.Call {
 }
 
 // Copies are the private workspaces of the processes.
-func (r *Runner) Copies() *workspace.Copies { return r.copies }
+func (r *Runner) Copies() *workspaces.Copies { return r.copies }
 
 // WritePolicies writes the policies of the agent processes again, such as
 // after the tool rules changed. Agents that reload their policy apply them

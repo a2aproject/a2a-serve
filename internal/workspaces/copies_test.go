@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workspace
+package workspaces
 
 import (
 	"context"
@@ -25,6 +25,16 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 )
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+}
 
 func tree(t *testing.T, root string) []string {
 	t.Helper()

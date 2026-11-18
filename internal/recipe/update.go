@@ -24,7 +24,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // RecipeSuffix is added to the name of the recipe's version of a file that
@@ -255,7 +255,7 @@ func entryOf(root *os.Root, name string) (*File, error) {
 
 // riskyFiles decide what the agent runs and approves: the MCP servers and
 // the agent's own configuration.
-var riskyFiles = append([]string{workspace.MCPFile}, workspace.AgentConfigFiles...)
+var riskyFiles = append([]string{projectfiles.MCPFile}, projectfiles.AgentConfigFiles...)
 
 // IsRisky reports whether the file at p decides what the agent runs.
 func IsRisky(p string) bool {
@@ -286,6 +286,6 @@ func TouchesSkills(changes []FileChange) bool {
 		if c.Action != FileAdd && c.Action != FileUpdate && c.Action != FileRemove {
 			return false
 		}
-		return slices.ContainsFunc(workspace.SkillDirs, func(dir string) bool { return strings.HasPrefix(c.Path, dir+"/") })
+		return slices.ContainsFunc(projectfiles.SkillDirs, func(dir string) bool { return strings.HasPrefix(c.Path, dir+"/") })
 	})
 }

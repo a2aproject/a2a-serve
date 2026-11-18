@@ -25,7 +25,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -35,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -246,7 +246,7 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 	if err != nil {
 		return nil
 	}
-	servers, err := workspace.LoadMCP(ws.Src)
+	servers, err := projectfiles.LoadMCP(ws.Src)
 	if err != nil {
 		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the agent gets none of the project's MCP servers"}}
 	}
@@ -289,15 +289,15 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 		results = append(results, Result{
 			ID:      "mcp",
 			Status:  StatusWarn,
-			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", workspace.MCPFile),
-			Detail:  "the docker sandbox hides " + workspace.MCPFile + " from the agent",
+			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", projectfiles.MCPFile),
+			Detail:  "the docker sandbox hides " + projectfiles.MCPFile + " from the agent",
 			Fix:     "a2a-serve config unset sandbox",
 		})
 	}
 	if len(results) > 0 {
 		return results
 	}
-	msg := fmt.Sprintf("%d MCP servers in %s", len(servers), workspace.MCPFile)
+	msg := fmt.Sprintf("%d MCP servers in %s", len(servers), projectfiles.MCPFile)
 	if off > 0 {
 		msg += fmt.Sprintf(", %d off", off)
 	}
