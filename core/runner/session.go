@@ -23,7 +23,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
@@ -58,7 +58,7 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	// The agent reads its policy when the session starts, so the policy
 	// follows the rules and gets the MCP servers added since the agent
 	// process started.
-	if spec.Sandbox != agent.SandboxLocal {
+	if spec.Sandbox != agentprofile.SandboxLocal {
 		names := make([]string, len(found))
 		for i, srv := range found {
 			names[i] = srv.Name
@@ -77,7 +77,7 @@ func (r *Runner) sessionMCP(ctx context.Context, spec Spec, ws string, proc Proc
 	// The servers come from the workspace the container gets: none for an
 	// empty one, and those of its copy for its own.
 	src := ws
-	if spec.Sandbox != agent.SandboxLocal {
+	if spec.Sandbox != agentprofile.SandboxLocal {
 		switch proc.Grant.Storage {
 		case workspaces.StorageEmpty:
 			return a2aacp.SessionParams{Cwd: ws}, nil, nil

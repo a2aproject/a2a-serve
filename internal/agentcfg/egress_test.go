@@ -19,9 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 func TestDecideEgress(t *testing.T) {
@@ -57,10 +57,10 @@ func TestDecideEgress(t *testing.T) {
 		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
 		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
 		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *sandbox.EgressEnv) { e.Launcher = noLauncher })},
-		{name: "local", cfg: agentdir.Config{Sandbox: agent.SandboxLocal}, env: linux},
-		{name: "local with rules", cfg: agentdir.Config{Sandbox: agent.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress-allow has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with `a2a-serve config unset egress-allow`"},
-		{name: "local with a mode", cfg: agentdir.Config{Sandbox: agent.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, warning: "--egress has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the setting with `a2a-serve config unset egress`"},
-		{name: "local with a mode and rules", cfg: agentdir.Config{Sandbox: agent.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress and --egress-allow have no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the settings with `a2a-serve config unset egress` and `a2a-serve config unset egress-allow`"},
+		{name: "local", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal}, env: linux},
+		{name: "local with rules", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress-allow has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with `a2a-serve config unset egress-allow`"},
+		{name: "local with a mode", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, warning: "--egress has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the setting with `a2a-serve config unset egress`"},
+		{name: "local with a mode and rules", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress and --egress-allow have no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the settings with `a2a-serve config unset egress` and `a2a-serve config unset egress-allow`"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,14 +90,14 @@ func TestEgressProblemWarning(t *testing.T) {
 			want: "--inject-model-key can't apply: the agent's container can't set up its network: operation not permitted. The agent doesn't start, so that it can't read OPENROUTER_API_KEY. Fix that, or put the keys in the agent's environment: remove the rules with `a2a-serve config unset inject-model-key`, then store the keys again with `a2a-serve config set --secret OPENROUTER_API_KEY=-`",
 		},
 	}
-	two := egressProblem(agent.Egress{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "K"}, {Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, "x")
+	two := egressProblem(agentprofile.Egress{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "K"}, {Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, "x")
 	if want := "remove the rules with `a2a-serve config unset inject-model-key` and `a2a-serve config unset inject-header`, then store the keys again with `a2a-serve config set --secret K=-` and `a2a-serve config set --secret GH=-`"; !strings.Contains(two, want) {
 		t.Fatalf("egressProblem() = %q, want it to contain %q", two, want)
 	}
 	for _, tc := range tests {
-		got := Warning(&agent.EgressError{Egress: Egress(&tc.cfg), Reason: "the agent's container can't set up its network: operation not permitted"})
+		got := Warning(&agentprofile.EgressError{Egress: Egress(&tc.cfg), Reason: "the agent's container can't set up its network: operation not permitted"})
 		if tc.name == "internet" {
-			got = Warning(&agent.NoBoundaryWarning{Reason: "the agent's container can't set up its network: operation not permitted"})
+			got = Warning(&agentprofile.NoBoundaryWarning{Reason: "the agent's container can't set up its network: operation not permitted"})
 		}
 		if !strings.HasPrefix(got, tc.want) {
 			t.Fatalf("Warning(%s) = %q, want it to start with %q", tc.name, got, tc.want)
@@ -115,7 +115,7 @@ func TestDecideEgressProbesOnlyForTheBoundary(t *testing.T) {
 		{name: "docker", wantProbe: true},
 		{name: "allowlist", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, wantProbe: true},
 		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}},
-		{name: "local", cfg: agentdir.Config{Sandbox: agent.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}},
+		{name: "local", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

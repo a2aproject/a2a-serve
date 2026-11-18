@@ -31,6 +31,7 @@ const module = "github.com/a2aproject/a2a-serve/"
 // import nothing of the frontend.
 var sharedLeaves = []string{
 	module + "internal/a2atext",
+	module + "internal/agentprofile",
 	module + "internal/cryptoutil",
 	module + "internal/fsutil",
 	module + "internal/httpserver",

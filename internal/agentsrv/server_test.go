@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -54,7 +54,7 @@ func TestRunCanceledDuringStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: agent.SandboxLocal, Port: freePort(t)}
+	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: agentprofile.SandboxLocal, Port: freePort(t)}
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestRunPortInUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: agent.SandboxLocal, Port: ln.Addr().(*net.TCPAddr).Port}
+	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: agentprofile.SandboxLocal, Port: ln.Addr().(*net.TCPAddr).Port}
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}

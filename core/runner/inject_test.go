@@ -19,14 +19,14 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 func TestSecretEnv(t *testing.T) {
 	t.Parallel()
-	rules := []agent.InjectRule{
+	rules := []agentprofile.InjectRule{
 		{Model: "openrouter", Key: "OPENROUTER_API_KEY"},
 		{Host: "api.github.com", Header: "Authorization: Bearer $GH"},
 	}
@@ -96,7 +96,7 @@ func TestSecretEnv(t *testing.T) {
 
 func TestSecretEnvRefusesAValueAHeaderCantCarry(t *testing.T) {
 	t.Parallel()
-	rules := []agent.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}
+	rules := []agentprofile.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}
 	g := Grant{Secrets: []SecretGrant{{Name: "GH", From: "GH"}}}
 	if _, _, _, err := secretEnv(rules, g, map[string]string{"GH": "a\x00b"}); err == nil {
 		t.Fatalf("secretEnv() error = nil, want an error")

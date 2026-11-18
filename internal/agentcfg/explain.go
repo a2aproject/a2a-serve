@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // Explain returns err with the errors of the core that it wraps worded with
@@ -59,13 +59,13 @@ func typedErrors(err error) []error {
 			out = append(out, e)
 		}
 	}
-	add(asType[*agent.UnknownAgentError](err))
-	add(asType[*agent.NoImageError](err))
-	add(asType[*agent.NotInstalledError](err))
-	add(asType[*agent.WorkspacePathError](err))
-	add(asType[*agent.NestedAgentsError](err))
-	add(asType[*agent.AppearedError](err))
-	add(asType[*agent.EgressError](err))
+	add(asType[*agentprofile.UnknownAgentError](err))
+	add(asType[*agentprofile.NoImageError](err))
+	add(asType[*agentprofile.NotInstalledError](err))
+	add(asType[*agentprofile.WorkspacePathError](err))
+	add(asType[*agentprofile.NestedAgentsError](err))
+	add(asType[*agentprofile.AppearedError](err))
+	add(asType[*agentprofile.EgressError](err))
 	add(asType[*sandbox.DockerError](err))
 	add(asType[*runner.MissingSecretError](err))
 	add(asType[*runner.CopyError](err))
@@ -97,33 +97,33 @@ func MissingSecretHint(name string) string {
 // Warning words an error or warning of the core for the user.
 func Warning(err error) string {
 	switch e := err.(type) {
-	case *agent.UnknownAgentError:
+	case *agentprofile.UnknownAgentError:
 		return e.Error() + ", or pass --command for any ACP agent"
-	case *agent.NoImageError:
+	case *agentprofile.NoImageError:
 		return e.Error() + "; pass --image or --sandbox local"
-	case *agent.NotInstalledError:
+	case *agentprofile.NotInstalledError:
 		return e.Error() + "; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"
-	case *agent.WorkspacePathError:
+	case *agentprofile.WorkspacePathError:
 		return fmt.Sprintf("the first --mount is the workspace and must keep its path (%s), got %s", e.Src, e.Dst)
-	case *agent.NestedAgentsError:
+	case *agentprofile.NestedAgentsError:
 		return e.Error() + restartHint
-	case *agent.AppearedError:
+	case *agentprofile.AppearedError:
 		return e.Error() + restartHint
-	case *agent.NestedAgentsWarning:
+	case *agentprofile.NestedAgentsWarning:
 		if e.Exposed {
 			return fmt.Sprintf("found other agents in %s; --sandbox local doesn't hide their .a2a directories, so the agent can read their secrets", strings.Join(e.Roots, ", "))
 		}
 		return e.Error()
-	case *agent.EgressError:
+	case *agentprofile.EgressError:
 		if e.Local {
 			return noInject(e.Egress.Inject, "the agent runs with --sandbox local")
 		}
 		return egressProblem(e.Egress, e.Reason)
-	case *agent.NoBoundaryWarning:
+	case *agentprofile.NoBoundaryWarning:
 		return NoBoundary(e.Reason)
-	case *agent.EgressIgnoredWarning:
+	case *agentprofile.EgressIgnoredWarning:
 		return egressIgnored(e)
-	case agent.EgressWarnings:
+	case agentprofile.EgressWarnings:
 		texts := make([]string, len(e))
 		for i, w := range e {
 			texts[i] = Warning(w)
@@ -162,7 +162,7 @@ func Warning(err error) string {
 	case runner.ErrGrantNarrowed:
 		return "the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again"
 	}
-	if errors.Is(err, agent.ErrNoAllowRules) {
+	if errors.Is(err, agentprofile.ErrNoAllowRules) {
 		return noAllowlistRules
 	}
 	return err.Error()

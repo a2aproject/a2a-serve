@@ -30,8 +30,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	coreagent "github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -269,14 +270,14 @@ func (a *agent) addStubProvider(baseURL, apiKey string) {
 	t.Helper()
 	home := filepath.Join(a.dir, ".a2a", "state", "home")
 	path := filepath.Join(home, ".config", "opencode", "opencode.json")
-	profile, err := coreagent.Lookup("opencode", nil)
+	profile, err := agentprofile.Lookup("opencode", nil)
 	if err != nil {
-		t.Fatalf("coreagent.Lookup() error = %v", err)
+		t.Fatalf("agentprofile.Lookup() error = %v", err)
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("os.MkdirAll() error = %v", err)
 	}
-	if err := profile.Bootstrap(coreagent.Workspace{Dir: a.dir, Home: home}); err != nil {
+	if err := profile.Bootstrap(agentprofile.Workspace{Dir: a.dir, Home: home}); err != nil {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
 	data, err := os.ReadFile(path)

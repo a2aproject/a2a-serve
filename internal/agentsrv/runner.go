@@ -32,7 +32,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
@@ -41,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -134,7 +134,7 @@ func deniedNote(title string) string { return "Tool call denied by --deny-tools:
 func (s *Server) runnerSpec() (runner.Spec, error) {
 	cfg := s.rt.Config()
 	cli := ""
-	if cfg.Sandbox == agent.SandboxLocal {
+	if cfg.Sandbox == agentprofile.SandboxLocal {
 		cli = localCLI()
 	}
 	return agentcfg.Spec(cfg, s.dir, cli)
@@ -386,7 +386,7 @@ func (s *Server) egressBoundary(cfg *agentdir.Config) bool {
 		return agentcfg.HostEgress(cfg).Boundary
 	}
 	if st := s.runner.Egress(); st.Started {
-		return st.Problem == "" && cfg.Sandbox != agent.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
+		return st.Problem == "" && cfg.Sandbox != agentprofile.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
 	}
 	return agentcfg.HostEgress(cfg).Boundary
 }
@@ -395,7 +395,7 @@ func (s *Server) egressBoundary(cfg *agentdir.Config) bool {
 // the mode the containers run with, the current allow rules, and the
 // latest refused destinations.
 func (s *Server) egressStatus(cfg *agentdir.Config) *controlapi.EgressStatus {
-	if cfg.Sandbox == agent.SandboxLocal && cfg.Egress.Mode == "" && len(cfg.Egress.Allow) == 0 {
+	if cfg.Sandbox == agentprofile.SandboxLocal && cfg.Egress.Mode == "" && len(cfg.Egress.Allow) == 0 {
 		return nil
 	}
 	es := s.runner.Egress()

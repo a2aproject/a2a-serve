@@ -29,8 +29,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -1048,7 +1048,7 @@ func (c *Config) Clone() *Config {
 }
 
 // Mount is a parsed src[:dst][:ro] spec.
-type Mount = agent.Mount
+type Mount = agentprofile.Mount
 
 // ParseMount parses a src[:dst][:ro] spec. A missing dst mirrors src; a
 // relative src is relative to the current directory.

@@ -21,17 +21,17 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // egressSockets decides the connections of the agent's containers with
 // the agent's current settings, through the boundaries it opens for them,
 // and keeps what it knows about them.
 type egressSockets struct {
-	settings   func() agent.Egress
+	settings   func() agentprofile.Egress
 	blocks     *boundary.Blocks
 	boundaries *sandbox.Boundaries
 
@@ -77,7 +77,7 @@ func (e *egressSockets) fellBack() string {
 	return ""
 }
 
-func newEgressSockets(dir string, settings func() agent.Egress) *egressSockets {
+func newEgressSockets(dir string, settings func() agentprofile.Egress) *egressSockets {
 	blocks := &boundary.Blocks{}
 	return &egressSockets{settings: settings, blocks: blocks, boundaries: sandbox.NewBoundaries(dir, sandbox.SocketIDLen, idAlphabet, blocks), fallbacks: map[int]func() string{}}
 }
@@ -122,7 +122,7 @@ func (e *egressSockets) state() EgressState {
 
 // egressSandbox gives spec the egress socket of its container, whose
 // boundary adds the headers of inject.
-func (r *Runner) egressSandbox(spec *agent.Spec, cfg Spec, inject []boundary.Injection) error {
+func (r *Runner) egressSandbox(spec *agentprofile.Spec, cfg Spec, inject []boundary.Injection) error {
 	spec.EgressMode = cfg.EgressMode
 	spec.EgressAllow = cfg.EgressAllow
 	spec.Inject = cfg.Inject

@@ -27,11 +27,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
@@ -136,7 +136,7 @@ func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
 	}
 	start := "start it with `a2a-serve start --detach`"
 	if !d.Exists() {
-		start = "start it with `a2a-serve start <agent>` (" + strings.Join(agent.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"
+		start = "start it with `a2a-serve start <agent>` (" + strings.Join(agentprofile.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"
 	}
 	fmt.Fprintf(&sb, " in %s is not running; %s\n", d.Root, start)
 	writeConfigProblem(&sb, problem)

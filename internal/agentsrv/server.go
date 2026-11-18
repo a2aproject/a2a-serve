@@ -36,7 +36,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
@@ -44,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
@@ -144,7 +144,7 @@ type Server struct {
 	runner *runner.Runner
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
-	pins *agent.Pins
+	pins *agentprofile.Pins
 	// existed is set when the agent's database existed before this start,
 	// for an agent created by an earlier version.
 	existed bool
@@ -365,7 +365,7 @@ func (s *Server) open(ctx context.Context, closers *stack, opts Options) error {
 	if err := backup.RemoveLeftoverRestores(s.dir); err != nil {
 		s.logf("! removing what an interrupted restore left: %v", err)
 	}
-	if s.pins, err = agent.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
+	if s.pins, err = agentprofile.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
 		return err
 	}
 	st, err := store.Open(s.dir.DBPath())
@@ -872,7 +872,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 // by others than you: their conversations run in separate processes, but
 // on the host as you, so they can read each other's files and yours.
 func localSandboxWarning(kind string, a *access.Description) string {
-	if kind != agent.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
+	if kind != agentprofile.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
 		return ""
 	}
 	return "the agent runs without a sandbox, so everyone who may call it can read your files and the conversations of others; use --sandbox docker unless you trust them all"

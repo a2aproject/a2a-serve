@@ -19,10 +19,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // UnrestrictedEffect says what a sandbox without the egress boundary reaches.
@@ -45,8 +45,8 @@ type EgressDecision struct {
 // the agent's instructions.
 func DecideEgress(cfg *agentdir.Config, probe func() sandbox.Capabilities) EgressDecision {
 	e := Egress(cfg)
-	d := agent.DecideEgress(e, probe)
-	return EgressDecision{Boundary: d.Boundary, Relay: d.Relay, Problem: d.Problem, Warning: Warning(agent.EgressWarnings(d.Warnings(e)))}
+	d := agentprofile.DecideEgress(e, probe)
+	return EgressDecision{Boundary: d.Boundary, Relay: d.Relay, Problem: d.Problem, Warning: Warning(agentprofile.EgressWarnings(d.Warnings(e)))}
 }
 
 // HostEgress decides about the egress boundary of cfg on this machine.
@@ -66,7 +66,7 @@ func NoBoundary(why string) string {
 
 // egressIgnored says which egress settings have no effect with --sandbox
 // local, and how to remove them.
-func egressIgnored(w *agent.EgressIgnoredWarning) string {
+func egressIgnored(w *agentprofile.EgressIgnoredWarning) string {
 	effect := " with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove "
 	switch {
 	case w.Mode && w.Allow:
@@ -79,7 +79,7 @@ func egressIgnored(w *agent.EgressIgnoredWarning) string {
 
 // egressProblem says why the containers with the settings of e can't start
 // or reach the network as the settings ask, for why.
-func egressProblem(e agent.Egress, why string) string {
+func egressProblem(e agentprofile.Egress, why string) string {
 	switch {
 	case e.Mode == egress.ModeAllowlist:
 		return noAllowlist(why)
@@ -92,7 +92,7 @@ func egressProblem(e agent.Egress, why string) string {
 // noInject says why a container whose secrets the boundary adds can't
 // start, and the ways out: fix the cause, or move the keys back into the
 // agent's environment.
-func noInject(rules []agent.InjectRule, why string) string {
+func noInject(rules []agentprofile.InjectRule, why string) string {
 	var flags, unset []string
 	for _, r := range rules {
 		setting := agentdir.InjectSetting(r)
@@ -101,7 +101,7 @@ func noInject(rules []agent.InjectRule, why string) string {
 			unset = append(unset, "`a2a-serve config unset "+setting+"`")
 		}
 	}
-	secrets := agent.InjectedSecrets(rules)
+	secrets := agentprofile.InjectedSecrets(rules)
 	// One flag per command can read its secret from a prompt, so each key
 	// gets a command of its own.
 	store := make([]string, len(secrets))

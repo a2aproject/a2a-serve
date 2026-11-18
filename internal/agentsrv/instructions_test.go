@@ -28,9 +28,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
@@ -194,11 +194,11 @@ func TestWriteInstructionsSkipsHomeThatFailsTheSandboxCheck(t *testing.T) {
 			if err := dir.Init(); err != nil {
 				t.Fatal(err)
 			}
-			pins, err := agent.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			pins, err := agentprofile.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
 			if err != nil {
-				t.Fatalf("agent.NewPins() error = %v", err)
+				t.Fatalf("agentprofile.NewPins() error = %v", err)
 			}
-			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agent.SandboxDocker}
+			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agentprofile.SandboxDocker}
 			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{}), store: openTestStore(t)}
 			home := dir.HomeDir()
 			if tc.replace {
@@ -246,12 +246,12 @@ func TestWriteInstructionsMentionsPeers(t *testing.T) {
 			if err := dir.Init(); err != nil {
 				t.Fatal(err)
 			}
-			pins, err := agent.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			pins, err := agentprofile.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
 			if err != nil {
-				t.Fatalf("agent.NewPins() error = %v", err)
+				t.Fatalf("agentprofile.NewPins() error = %v", err)
 			}
 			cfg := &agentdir.Config{
-				Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agent.SandboxDocker,
+				Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agentprofile.SandboxDocker,
 				Policy: agentdir.PolicyConfig{PrivateAllowOutgoing: tc.outgoing},
 			}
 			st := openTestStore(t)
@@ -338,11 +338,11 @@ func TestWriteInstructionsSkipsFilesItCannotRead(t *testing.T) {
 			if err := dir.Init(); err != nil {
 				t.Fatal(err)
 			}
-			pins, err := agent.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			pins, err := agentprofile.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
 			if err != nil {
-				t.Fatalf("agent.NewPins() error = %v", err)
+				t.Fatalf("agentprofile.NewPins() error = %v", err)
 			}
-			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agent.SandboxDocker}
+			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: agentprofile.SandboxDocker}
 			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{}), store: openTestStore(t)}
 			skipped := filepath.Join(dir.HomeDir(), instructionFiles[1])
 			if err := os.MkdirAll(filepath.Dir(skipped), 0o700); err != nil {

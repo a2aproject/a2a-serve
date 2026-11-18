@@ -19,8 +19,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // Warnings returns the problems of cfg that leave the agent working, but not
@@ -65,7 +65,7 @@ func MissingKey(cfg *agentdir.Config) string {
 // the variables secrets hold one of its keys. It returns "" otherwise.
 func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key string) {
 	provider, _, ok := strings.Cut(cfg.Model, "/")
-	keys := agent.ProviderKeys(provider)
+	keys := agentprofile.ProviderKeys(provider)
 	if cfg.Harness != "opencode" || !ok || len(keys) == 0 || hasAny(cfg, secrets, keys) {
 		return "", ""
 	}
@@ -77,12 +77,12 @@ func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key s
 // secrets granted has none. It returns "" otherwise. It knows the keys of
 // opencode's providers and of claude.
 func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key string) {
-	keys := agent.ClaudeKeys()
+	keys := agentprofile.ClaudeKeys()
 	provider = "anthropic"
 	if cfg.Harness == "opencode" {
 		var ok bool
 		provider, _, ok = strings.Cut(cfg.Model, "/")
-		if keys = agent.ProviderKeys(provider); !ok || len(keys) == 0 {
+		if keys = agentprofile.ProviderKeys(provider); !ok || len(keys) == 0 {
 			return "", ""
 		}
 	} else if cfg.Harness != "claude" {

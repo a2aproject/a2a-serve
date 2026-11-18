@@ -22,21 +22,21 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 func TestGrantMounts(t *testing.T) {
 	t.Parallel()
-	mounts := []agent.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
+	mounts := []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
 	tests := []struct {
 		storage workspaces.Storage
-		want    []agent.Mount
+		want    []agentprofile.Mount
 	}{
 		{storage: workspaces.StorageShared, want: mounts},
-		{storage: workspaces.StorageReadOnly, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: workspaces.StorageOwn, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: workspaces.StorageEmpty, want: []agent.Mount{{Src: "/src/app", Dst: "/src/app"}}},
+		{storage: workspaces.StorageReadOnly, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageOwn, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageEmpty, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.storage, func(t *testing.T) {

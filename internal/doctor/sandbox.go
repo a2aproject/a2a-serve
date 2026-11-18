@@ -21,11 +21,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
 // useLocalSandbox is the fix of a missing Docker in an agent, and
@@ -113,10 +113,10 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		r.Status, r.Message = StatusOK, "image "+image+" present"
 		return r, true
 	}
-	_, buildable := agent.Dockerfile(profile.Name())
+	_, buildable := agentprofile.Dockerfile(profile.Name())
 	buildable = buildable && image == profile.Image()
 	if buildable {
-		if local := agent.LocalImage(profile.Name()); present(local) {
+		if local := agentprofile.LocalImage(profile.Name()); present(local) {
 			r.Status, r.Message = StatusOK, "image "+local+" present"
 			return r, true
 		}
@@ -142,7 +142,7 @@ func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Resul
 	if err != nil {
 		return Result{}, false
 	}
-	name := profile.Command(agent.Workspace{Dir: dir.Root, Home: dir.HomeDir()}).Path
+	name := profile.Command(agentprofile.Workspace{Dir: dir.Root, Home: dir.HomeDir()}).Path
 	path, err := env.LookPath(name)
 	if err != nil {
 		return Result{
@@ -221,7 +221,7 @@ func imageArch(ctx context.Context, env Env, cfg *agentdir.Config) string {
 	if err != nil {
 		return ""
 	}
-	for _, image := range []string{cfg.Image, profile.Image(), agent.LocalImage(profile.Name())} {
+	for _, image := range []string{cfg.Image, profile.Image(), agentprofile.LocalImage(profile.Name())} {
 		if image == "" {
 			continue
 		}
