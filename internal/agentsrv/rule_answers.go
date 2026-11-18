@@ -23,7 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/question"
@@ -69,7 +69,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		for i, o := range q.Options {
 			ids[i] = o.ID
 		}
-		ans, ok := runner.RuleAnswer(ids, dec.Allow)
+		ans, ok := agentrun.RuleAnswer(ids, dec.Allow)
 		if !ok {
 			continue
 		}
@@ -79,7 +79,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		}
 		by, who := rulesPrincipal, rulesPrincipal.ID
 		switch {
-		case dec.By != runner.ByRule:
+		case dec.By != agentrun.ByRule:
 			by, who = allowedPrincipal, question.AlwaysLabel(dec.Entry)
 		case !dec.Allow:
 			by, who = denyPrincipal, denyPrincipal.ID

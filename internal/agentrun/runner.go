@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package runner runs an ACP agent as an A2A executor, with one agent
+// Package agentrun runs an ACP agent as an A2A executor, with one agent
 // process per key. It knows agents, sandboxes, egress, tool rules, sessions
 // and processes. Keys are opaque to it: the caller decides which key a
 // conversation runs under, what the process of each key gets, and what
 // happens inside a turn, through [Processes] and [Hooks].
-package runner
+package agentrun
 
 import (
 	"context"

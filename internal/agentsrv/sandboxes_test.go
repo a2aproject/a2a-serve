@@ -28,11 +28,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
@@ -631,21 +631,21 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 }
 
 // newTestRunner returns a runner of the processes of s that starts none.
-func newTestRunner(t *testing.T, s *Server) *runner.Runner {
+func newTestRunner(t *testing.T, s *Server) *agentrun.Runner {
 	t.Helper()
 	sockets := t.TempDir()
 	if err := os.Chmod(sockets, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	r, err := runner.New(runner.Config{
-		Dirs:      runner.Dirs{Sockets: filepath.Join(sockets, "s"), Workspaces: filepath.Join(t.TempDir(), "w")},
-		Spec:      func() (runner.Spec, error) { return runner.Spec{}, nil },
+	r, err := agentrun.New(agentrun.Config{
+		Dirs:      agentrun.Dirs{Sockets: filepath.Join(sockets, "s"), Workspaces: filepath.Join(t.TempDir(), "w")},
+		Spec:      func() (agentrun.Spec, error) { return agentrun.Spec{}, nil },
 		Secrets:   func() map[string]string { return nil },
 		Processes: processes{s},
-		Pools:     []runner.Pool{{Name: guestPool}, {Name: usersPool, MaxAgents: maxUserAgents}},
+		Pools:     []agentrun.Pool{{Name: guestPool}, {Name: usersPool, MaxAgents: maxUserAgents}},
 	})
 	if err != nil {
-		t.Fatalf("runner.New() error = %v", err)
+		t.Fatalf("agentrun.New() error = %v", err)
 	}
 	t.Cleanup(func() {
 		if err := r.Release(context.Background()); err != nil {

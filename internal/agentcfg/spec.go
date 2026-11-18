@@ -15,9 +15,9 @@
 package agentcfg
 
 import (
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
@@ -26,9 +26,9 @@ import (
 // a2a binary of an agent without a sandbox. It is the one place that maps
 // a setting to the core.
 // On error, the spec still holds the other settings.
-func Spec(cfg *agentdir.Config, d agentdir.Dir, cli string) (runner.Spec, error) {
+func Spec(cfg *agentdir.Config, d agentdir.Dir, cli string) (agentrun.Spec, error) {
 	mounts, err := d.Mounts(cfg)
-	spec := runner.Spec{
+	spec := agentrun.Spec{
 		Name:        "a2a-" + cfg.Name + "-" + d.ID(),
 		Labels:      map[string]string{"a2a.agent": cfg.Name, "a2a.dir": d.Root},
 		Agent:       cfg.Harness,

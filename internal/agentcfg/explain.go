@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
@@ -67,10 +67,10 @@ func typedErrors(err error) []error {
 	add(asType[*agentprofile.AppearedError](err))
 	add(asType[*agentprofile.EgressError](err))
 	add(asType[*sandboxrt.DockerError](err))
-	add(asType[*runner.MissingSecretError](err))
-	add(asType[*runner.CopyError](err))
-	add(asType[*runner.InjectRuleError](err))
-	for _, sentinel := range []error{runner.ErrGrantChanged, runner.ErrGrantNarrowed} {
+	add(asType[*agentrun.MissingSecretError](err))
+	add(asType[*agentrun.CopyError](err))
+	add(asType[*agentrun.InjectRuleError](err))
+	for _, sentinel := range []error{agentrun.ErrGrantChanged, agentrun.ErrGrantNarrowed} {
 		add(sentinel, errors.Is(err, sentinel))
 	}
 	return out
@@ -140,26 +140,26 @@ func Warning(err error) string {
 		}
 		return s
 	}
-	if e, ok := err.(*runner.MissingSecretError); ok {
+	if e, ok := err.(*agentrun.MissingSecretError); ok {
 		if e.Main {
 			return MissingSecretHint(e.Name)
 		}
 		return fmt.Sprintf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", e.Name)
 	}
-	if e, ok := err.(*runner.InjectRuleError); ok {
+	if e, ok := err.(*agentrun.InjectRuleError); ok {
 		why := e.Err.Error()
 		if p, ok := errors.AsType[*egressrules.UnknownProviderError](e.Err); ok {
 			why = agentdir.UnknownProviderText(p.Name)
 		}
 		return "--" + agentdir.InjectSetting(e.Rule) + " " + e.Rule.Entry() + ": " + why
 	}
-	if e, ok := err.(*runner.CopyError); ok {
+	if e, ok := err.(*agentrun.CopyError); ok {
 		return e.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy"
 	}
 	switch err {
-	case runner.ErrGrantChanged:
+	case agentrun.ErrGrantChanged:
 		return "the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then"
-	case runner.ErrGrantNarrowed:
+	case agentrun.ErrGrantNarrowed:
 		return "the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again"
 	}
 	if errors.Is(err, agentprofile.ErrNoAllowRules) {

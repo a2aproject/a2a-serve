@@ -22,8 +22,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
@@ -60,11 +60,11 @@ const (
 
 // hook answers call for the person who started the task of execCtx. It
 // implements the Decide hook of the runner.
-func (d *toolDecider) hook(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (runner.Decision, bool, error) {
+func (d *toolDecider) hook(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (agentrun.Decision, bool, error) {
 	user, err := d.starter(ctx, execCtx)
 	if err != nil {
 		slog.Warn("looking up who started a task, asking only the rules", "task", execCtx.TaskID, "error", err)
-		return runner.Decision{}, false, nil
+		return agentrun.Decision{}, false, nil
 	}
 	return d.decide(ctx, execCtx.ContextID, user, call)
 }
@@ -72,32 +72,32 @@ func (d *toolDecider) hook(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 // decide answers call with the preferences of user, who started its task,
 // then the grants of the conversation for user. It returns false if none
 // decides.
-func (d *toolDecider) decide(ctx context.Context, contextID, user string, call toolrules.Call) (runner.Decision, bool, error) {
+func (d *toolDecider) decide(ctx context.Context, contextID, user string, call toolrules.Call) (agentrun.Decision, bool, error) {
 	if user == "" || d.store == nil {
-		return runner.Decision{}, false, nil
+		return agentrun.Decision{}, false, nil
 	}
 	prefs, err := d.store.ToolPreferences(ctx, user)
 	if err != nil {
-		return runner.Decision{}, false, err
+		return agentrun.Decision{}, false, err
 	}
 	if rule, ok := toolrules.Match(prefs, call); ok {
-		return runner.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byPreference, User: user}, true, nil
+		return agentrun.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byPreference, User: user}, true, nil
 	}
 	grants, err := d.store.ToolGrants(ctx, contextID, user)
 	if err != nil {
-		return runner.Decision{}, false, err
+		return agentrun.Decision{}, false, err
 	}
 	if rule, ok := toolrules.Match(grants, call); ok {
-		return runner.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byGrant, User: user}, true, nil
+		return agentrun.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byGrant, User: user}, true, nil
 	}
-	return runner.Decision{}, false, nil
+	return agentrun.Decision{}, false, nil
 }
 
 // decideWithRules answers call with the rules of the config, then as
 // decide does.
-func (s *Server) decideWithRules(ctx context.Context, contextID, user string, call toolrules.Call) (runner.Decision, bool, error) {
+func (s *Server) decideWithRules(ctx context.Context, contextID, user string, call toolrules.Call) (agentrun.Decision, bool, error) {
 	if dec, ok := agentcfg.ToolRules(s.rt.Config()).Decide(call); ok {
-		return runner.Decision{Decision: dec, By: runner.ByRule}, true, nil
+		return agentrun.Decision{Decision: dec, By: agentrun.ByRule}, true, nil
 	}
 	return s.decider.decide(ctx, contextID, user, call)
 }

@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -43,7 +43,7 @@ import (
 // what keeps one conversation's calls from acting for another's user.
 type CallClaims struct {
 	store    *store.Store
-	bridge   func() runner.Bridge
+	bridge   func() agentrun.Bridge
 	chain    *auth.Chain
 	agentKey func(ctx context.Context, contextID string) (string, error)
 	sessions a2aacp.SessionStore
@@ -69,7 +69,7 @@ type CallClaims struct {
 type CallClaimsDeps struct {
 	Store *store.Store
 	// Bridge is how the harness reaches the server, which agents URLs use.
-	Bridge func() runner.Bridge
+	Bridge func() agentrun.Bridge
 	// Chain resolves the user of an agent process.
 	Chain *auth.Chain
 	// AgentKey returns the agent key of the process a conversation runs in.

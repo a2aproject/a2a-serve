@@ -32,7 +32,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
@@ -40,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -51,13 +51,13 @@ import (
 
 // newRunner builds the runner of the agent's processes. The hooks it gets
 // read the components that build creates later, when they run.
-func (s *Server) newRunner(opts Options) (*runner.Runner, error) {
+func (s *Server) newRunner(opts Options) (*agentrun.Runner, error) {
 	progress := opts.ImageProgress
 	if progress == nil {
 		progress = opts.HarnessLog
 	}
-	return runner.New(runner.Config{
-		Dirs: runner.Dirs{
+	return agentrun.New(agentrun.Config{
+		Dirs: agentrun.Dirs{
 			Sockets:    s.dir.HarnessSocketDir(),
 			EnvFiles:   s.dir.EnvFilesDir(),
 			Policies:   s.dir.PoliciesDir(),
@@ -70,7 +70,7 @@ func (s *Server) newRunner(opts Options) (*runner.Runner, error) {
 		Spec:      s.runnerSpec,
 		Secrets:   func() map[string]string { return s.rt.Secrets() },
 		Processes: processes{s},
-		Pools: []runner.Pool{
+		Pools: []agentrun.Pool{
 			// Approvals reject questions after their timeout; this stops the
 			// turn if that answer doesn't arrive.
 			{Name: guestPool, Label: "the agent of guests", QuestionTimeout: s.timings.GuestQuestionTimeout + time.Minute},
@@ -79,7 +79,7 @@ func (s *Server) newRunner(opts Options) (*runner.Runner, error) {
 		Sessions:    s.sessions,
 		AllSessions: s.store.Sessions(),
 		Tasks:       runnerTasks{s},
-		Hooks: runner.Hooks{
+		Hooks: agentrun.Hooks{
 			Admit:        s.admitCaller,
 			Hold:         s.holdBudget,
 			CanStart:     s.canStart,
@@ -89,7 +89,7 @@ func (s *Server) newRunner(opts Options) (*runner.Runner, error) {
 			Prompt: func(ctx context.Context, execCtx *a2asrv.ExecutorContext) ([]*a2a.Part, error) {
 				return s.queued.prompt(ctx, execCtx)
 			},
-			Decide: func(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (runner.Decision, bool, error) {
+			Decide: func(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (agentrun.Decision, bool, error) {
 				return s.decider.hook(ctx, execCtx, call)
 			},
 			Denied:  func(execCtx *a2asrv.ExecutorContext, title string) { s.notes.Add(execCtx.TaskID, deniedNote(title)) },
@@ -102,7 +102,7 @@ func (s *Server) newRunner(opts Options) (*runner.Runner, error) {
 			AgentAPI: func(processOf func(*http.Request) (string, bool)) http.Handler { return s.proxy.Routes(processOf) },
 		},
 		PruneLabels: map[string]string{"a2a.dir": s.dir.Root},
-		Timings: runner.Timings{
+		Timings: agentrun.Timings{
 			TurnStall:           s.timings.TurnStallTimeout,
 			ToolStall:           s.timings.ToolStallTimeout,
 			SandboxCheck:        s.timings.SandboxCheckInterval,
@@ -131,7 +131,7 @@ func stalledTurn(d time.Duration, tool bool) []*a2a.Part {
 func deniedNote(title string) string { return "Tool call denied by --deny-tools: " + title + "." }
 
 // runnerSpec is what the runner runs for the agent's config now.
-func (s *Server) runnerSpec() (runner.Spec, error) {
+func (s *Server) runnerSpec() (agentrun.Spec, error) {
 	cfg := s.rt.Config()
 	cli := ""
 	if cfg.Sandbox == agentprofile.SandboxLocal {
@@ -164,18 +164,18 @@ func (p processes) Key(ctx context.Context, _ string) (string, error) {
 
 // Process describes the agent process of key under the sandbox rules in
 // force.
-func (p processes) Process(ctx context.Context, key string) (runner.Process, error) {
+func (p processes) Process(ctx context.Context, key string) (agentrun.Process, error) {
 	s := p.s
 	owner, sb, err := s.sandboxes.grant(ctx, key)
 	if err != nil {
-		return runner.Process{}, err
+		return agentrun.Process{}, err
 	}
-	proc := runner.Process{
+	proc := agentrun.Process{
 		Home:     s.dir.HomeDir(),
 		CopyName: workspaceName(key),
 		AgentAPI: true,
 		Owner:    owner.ID,
-		Grant:    runner.Grant(sb),
+		Grant:    agentrun.Grant(sb),
 	}
 	id, isUser := agentkey.UserOf(key)
 	switch {
@@ -194,7 +194,7 @@ func (p processes) Process(ctx context.Context, key string) (runner.Process, err
 			proc.Parent = agentkey.User(id)
 		}
 	default:
-		return runner.Process{}, fmt.Errorf("unknown agent key %q", key)
+		return agentrun.Process{}, fmt.Errorf("unknown agent key %q", key)
 	}
 	return proc, nil
 }
@@ -210,7 +210,7 @@ func (s *Server) canStart(ctx context.Context, key string) error {
 
 // prepareHome writes the storage note and the instructions into the agent
 // home of key, after it checks that the home is private.
-func (s *Server) prepareHome(ctx context.Context, key, home string, g runner.Grant) error {
+func (s *Server) prepareHome(ctx context.Context, key, home string, g agentrun.Grant) error {
 	s.setStorageNote(home, g.Storage)
 	_, isUser := agentkey.UserOf(key)
 	switch {
@@ -235,7 +235,7 @@ func (s *Server) prepareHome(ctx context.Context, key, home string, g runner.Gra
 }
 
 // mainPrepared prints the sandbox of the owner's agent process.
-func (s *Server) mainPrepared(p runner.Prepared) {
+func (s *Server) mainPrepared(p agentrun.Prepared) {
 	s.logf("✓ %s", p.Summary)
 	mountDesc := make([]string, len(p.Mounts))
 	for i, m := range p.Mounts {
@@ -253,7 +253,7 @@ func (s *Server) mainPrepared(p runner.Prepared) {
 
 // startError words the error of a runner that didn't start.
 func startError(err error) error {
-	if errors.Is(err, runner.ErrStartTimeout) {
+	if errors.Is(err, agentrun.ErrStartTimeout) {
 		err = agenterr.WithHint(err, agenterr.HintAgentStartTimeout, "")
 	}
 	return agentcfg.Explain(err)
@@ -297,7 +297,7 @@ func (t runnerTasks) Abandon(ctx context.Context, ev *a2a.TaskStatusUpdateEvent)
 type stopUsers struct {
 	tasks     *store.TaskStore
 	sender    *handlerSender
-	runner    *runner.Runner
+	runner    *agentrun.Runner
 	posted    *chat.PostedTurns
 	sandboxes *sandboxes
 }

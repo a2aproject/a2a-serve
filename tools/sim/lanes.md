@@ -10,7 +10,7 @@ should be split in two.
 
 The A2A to ACP bridge, with one user. Read `a2aacp` (`executor.go`,
 `turn.go`, `sessions.go`, `convert.go`, `process.go`, `questions.go`) and
-`core/runner/` and `internal/agentsrv/executor.go`, and list the edge cases the code might
+`internal/agentrun/` and `internal/agentsrv/executor.go`, and list the edge cases the code might
 mishandle before you run anything.
 
 - Multi-turn memory in one context, before and after `a2a-serve restart`.

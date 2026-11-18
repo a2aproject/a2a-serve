@@ -32,6 +32,7 @@ const module = "github.com/a2aproject/a2a-serve/"
 var sharedLeaves = []string{
 	module + "internal/a2atext",
 	module + "internal/agentprofile",
+	module + "internal/agentrun",
 	module + "internal/boundary",
 	module + "internal/cryptoutil",
 	module + "internal/egressrules",

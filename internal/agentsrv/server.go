@@ -36,7 +36,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -44,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
@@ -141,7 +141,7 @@ type Server struct {
 	resolveNetwork func(ctx context.Context, spec string) (netinstall.Provider, error)
 	newNetwork     func(network.ExternalConfig) (network.Provider, error)
 	// runner runs the agent processes, the owner's and those of callers.
-	runner *runner.Runner
+	runner *agentrun.Runner
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
 	pins *agentprofile.Pins
@@ -184,7 +184,7 @@ type Server struct {
 	// budget limits the tasks of guests.
 	budget *guestBudget
 	// notes are the notes on tool calls for the results of tasks.
-	notes *runner.Notes
+	notes *agentrun.Notes
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
@@ -447,7 +447,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config, CallerKey: callerKey})
 	closers.push(s.clients.Close)
 	s.contacts = contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions}
-	s.notes = runner.NewNotes()
+	s.notes = agentrun.NewNotes()
 	s.allowed = newAllowedAnswers()
 	s.prefs = approvals.NewPreferences(s.store, func(ctx context.Context) { s.answerAllowed(ctx, "") })
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
