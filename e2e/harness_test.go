@@ -31,8 +31,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	coreagent "github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 

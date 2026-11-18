@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/question"
 )
 
 func TestOwnerServesAndCallsAgent(t *testing.T) {

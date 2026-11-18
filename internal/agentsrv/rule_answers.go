@@ -23,10 +23,10 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/question"
 )
 
 // Principals that answer the approvals that waited when a rule,

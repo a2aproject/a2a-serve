@@ -35,7 +35,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
@@ -44,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
+	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 	"github.com/a2aproject/a2a-serve/internal/turncount"

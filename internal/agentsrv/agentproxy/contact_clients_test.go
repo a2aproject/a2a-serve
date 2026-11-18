@@ -36,12 +36,12 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 

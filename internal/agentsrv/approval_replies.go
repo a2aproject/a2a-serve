@@ -24,8 +24,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/question"
 )
 
 // refusedReplyKey is the part metadata which marks the note of a status

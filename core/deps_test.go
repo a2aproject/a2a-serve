@@ -36,6 +36,7 @@ var sharedLeaves = []string{
 	module + "internal/httpserver",
 	module + "internal/jsonhttp",
 	module + "internal/projectfiles",
+	module + "internal/question",
 	module + "internal/testutil",
 	module + "internal/toolrules",
 	module + "internal/turncount",
