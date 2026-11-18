@@ -26,6 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -417,13 +418,13 @@ func (c *ChatTurns) prepare(ctx context.Context, ch messenger.Messenger, in *mes
 // pending task, and a guest's message doesn't answer an
 // approval. approval is the permission question the task waits on, which
 // only an answer continues.
-func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) (approval *approvals.Question, ok bool) {
+func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) (approval *question.Question, ok bool) {
 	stored, err := c.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err != nil {
 		slog.Warn("loading the pending task of a conversation", "task", taskID, "error", err)
 		return nil, p.IsOwner()
 	}
-	if q := approvals.FromStatus(stored.Task.Status); q != nil && q.Type == approvals.TypePermission {
+	if q := question.FromStatus(stored.Task.Status); q != nil && q.Type == question.TypePermission {
 		approval = q
 	}
 	if !p.IsOwner() && stored.User != p.ID {

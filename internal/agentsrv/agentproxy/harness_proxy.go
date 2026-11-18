@@ -29,7 +29,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -560,7 +561,7 @@ func (g *guardedHandler) checkAnswer(ctx context.Context, req *a2a.SendMessageRe
 	if task.Status.State != a2a.TaskStateInputRequired {
 		return nil
 	}
-	if q := approvals.FromStatus(task.Status); q != nil && q.Type == approvals.TypePermission {
+	if q := question.FromStatus(task.Status); q != nil && q.Type == question.TypePermission {
 		g.after(ctx, task)
 		return fmt.Errorf("%w: this is an approval for the user, and the server asks them for it; don't answer it. End your turn: the result comes back into this conversation", a2a.ErrUnauthorized)
 	}
@@ -574,10 +575,10 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 	if state.Terminal() || state == a2a.TaskStateAuthRequired {
 		return
 	}
-	var q *approvals.Question
+	var q *question.Question
 	if state == a2a.TaskStateInputRequired {
-		q = approvals.FromStatus(task.Status)
-		if q == nil || q.Type != approvals.TypePermission {
+		q = question.FromStatus(task.Status)
+		if q == nil || q.Type != question.TypePermission {
 			return
 		}
 	}

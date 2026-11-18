@@ -62,6 +62,14 @@ A few checks run on every pull request. Follow these tips to pass them:
 
   This runs the linter version of `.github/workflows/go.yaml` with the Go version of `go.mod`, as CI does. A linter built with an older Go refuses the module, and one run with a newer Go can't read its standard library.
 
+### Code layout
+
+The code has two sides. The core in [`core/`](core/) runs an ACP agent as an A2A executor, with one agent process per key: the agent profiles, sandboxes, the egress boundary, tool rules, workspaces, questions, and the runner that starts and stops the processes. It knows nothing of people, roles, config files, chats, networks or the CLI. Keys are opaque strings to it.
+
+The frontend in `internal/` decides who calls and what they get. `internal/agentcfg` turns `config.yaml` into the core's inputs and words the core's errors with the flags and commands that fix them, and `internal/agentsrv` serves the A2A handler and gives the runner its hooks.
+
+Imports point from the frontend to the core. `go test ./core/` fails when the core imports a frontend package; the few leaves both sides share, such as `internal/fsutil`, are listed in that test.
+
 ### Testing the egress containers of Docker Desktop on Linux
 
 With Docker Desktop, an egress container forwards each agent container's connections to the server. `A2A_SERVE_SANDBOX_RELAY=1` gives containers on Linux one too, and the e2e tests then build its image from the work tree:
@@ -116,7 +124,7 @@ go test -tags e2e ./e2e/...
 
 The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in Docker, in an image the tests build from `fakeacp`. In Docker, only the tests marked with `dependsOnSandbox` run: those of how the agent process starts, crashes and restarts, what it sees, and how it reaches the server. Mark a new test of that kind. CI runs the suite both ways.
 
-With `E2E_HARNESS=opencode`, the `TestHarness` tests run the real opencode image in Docker against a scripted model that the tests serve, with no API key. Set `E2E_HARNESS_IMAGE` to test a local build of `internal/harness/images/opencode`. The nightly workflow runs them:
+With `E2E_HARNESS=opencode`, the `TestHarness` tests run the real opencode image in Docker against a scripted model that the tests serve, with no API key. Set `E2E_HARNESS_IMAGE` to test a local build of `core/agent/images/opencode`. The nightly workflow runs them:
 
 ```sh
 E2E_HARNESS=opencode go test -tags e2e -run '^TestHarness' -v ./e2e/...

@@ -30,6 +30,7 @@
 
 * Build components with constructors that take their dependencies explicitly. Don't patch fields after construction, and don't use package globals as test seams.
 * Dependencies point down. Lower packages don't import `agentsrv` or `cli`; move a shared helper down instead.
+* `core/` doesn't import frontend packages: no config, identities, store, chats or CLI. The frontend maps them to the core's inputs through `internal/agentcfg` and the runner's hooks, and words the core's typed errors.
 * Give each behavior one source of truth. A setting, a list of live settings, or an operation on a running or stopped agent has one implementation, and the other places derive from it.
 * Code that writes the agent directory holds its lock.
 

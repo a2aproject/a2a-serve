@@ -16,22 +16,11 @@ package agentsrv
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"iter"
 	"log/slog"
-	"slices"
-	"sync"
-
-	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aevent"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Pools of agent processes besides the main one.
@@ -40,80 +29,30 @@ const (
 	usersPool = "users"
 )
 
-func poolOf(key string) string {
-	if key == agentkey.Guest {
-		return guestPool
-	}
-	return usersPool
-}
+// maxUserAgents limits the agent processes of members that run at once;
+// the least recently used idle one stops to start another.
+const maxUserAgents = 10
 
-// agentKeys tells which agent process each conversation runs in, by its
-// agent key.
-type agentKeys struct {
-	sessions a2aacp.SessionStore
-
-	mu sync.Mutex
-	// pending are the agent keys of conversations without a stored session
-	// yet.
-	pending map[string]string
-}
-
-func newAgentKeys(sessions a2aacp.SessionStore) *agentKeys {
-	return &agentKeys{sessions: sessions, pending: map[string]string{}}
-}
-
-// of returns the agent key of a conversation: the one stored with its
-// session, or, for a new conversation, the one of the caller who starts it.
-func (k *agentKeys) of(ctx context.Context, contextID string) (string, error) {
-	sess, ok, err := k.sessions.Get(ctx, contextID)
-	if err != nil {
-		return "", err
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if ok {
-		delete(k.pending, contextID)
-		return sess.AgentKey, nil
-	}
-	if key, ok := k.pending[contextID]; ok {
-		return key, nil
-	}
-	return agentkey.Of(auth.Caller(ctx)), nil
-}
-
-// remember keeps the agent key of a conversation until forget, in case its
-// session isn't stored yet.
-func (k *agentKeys) remember(contextID, key string) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.pending[contextID] = key
-}
-
-// forget drops the agent key kept for a conversation once its turn ended:
-// a conversation that has a session is looked up there, and one that has
-// none after a whole turn starts over with its next caller.
-func (k *agentKeys) forget(contextID string) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	delete(k.pending, contextID)
-}
-
-// guest reports whether a conversation runs in the agent process of guests.
-func (k *agentKeys) guest(ctx context.Context, contextID string) bool {
-	key, err := k.of(ctx, contextID)
+// conversationKey returns the key of the agent process a conversation runs
+// in, logging a failure to look it up.
+func (s *Server) conversationKey(ctx context.Context, contextID string) string {
+	key, err := s.runner.KeyOf(ctx, contextID)
 	if err != nil {
 		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
 	}
-	return key == agentkey.Guest
+	return key
 }
 
-// user reports whether a conversation runs in the agent process of a member.
-func (k *agentKeys) user(ctx context.Context, contextID string) bool {
-	key, err := k.of(ctx, contextID)
-	if err != nil {
-		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
-	}
-	_, ok := agentkey.UserOf(key)
+// guestConversation reports whether a conversation runs in the agent
+// process of guests.
+func (s *Server) guestConversation(ctx context.Context, contextID string) bool {
+	return s.conversationKey(ctx, contextID) == agentkey.Guest
+}
+
+// userConversation reports whether a conversation runs in the agent process
+// of a member.
+func (s *Server) userConversation(ctx context.Context, contextID string) bool {
+	_, ok := agentkey.UserOf(s.conversationKey(ctx, contextID))
 	return ok
 }
 
@@ -134,306 +73,6 @@ func (s *Server) userHomeDir(key string) string {
 		return s.dir.CallerHomeDir(id, caller)
 	}
 	return s.dir.UserHomeDir(id)
-}
-
-// startPool starts the executor of a pool of agent processes.
-type startPool func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error)
-
-// splitExecutor runs each conversation in the agent process of the user
-// who started it. A conversation stays with its process, so the owner's
-// message to a user's conversation runs there too.
-type splitExecutor struct {
-	main   a2asrv.AgentExecutor
-	keys   *agentKeys
-	budget *guestBudget
-	// start starts the executor of a pool. If nil, every conversation runs
-	// in main.
-	start startPool
-	// admit refuses a turn in the agent process of a key, or prepares the
-	// process for it and counts the turn there until release. Optional.
-	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
-	// ctx ends when the server stops; pools start in it.
-	ctx context.Context
-
-	startMu sync.Mutex
-	mu      sync.Mutex
-	pools   map[string]*startedPool
-	// closed is set by close; a pool started after it would never stop.
-	closed bool
-	// closing is set once close starts, and running counts the turns in
-	// progress, which close waits for: an agent process that a turn starts
-	// after its pool closed would outlive the server.
-	closing bool
-	running turnCount
-	// turns cancels the context of each turn in progress, in the order the
-	// turns started, and canceled is set once the server stopped them.
-	turns    []*turnCancel
-	canceled bool
-}
-
-type turnCancel struct{ cancel context.CancelFunc }
-
-// splitDeps are the dependencies of [splitExecutor].
-type splitDeps struct {
-	Main   a2asrv.AgentExecutor
-	Keys   *agentKeys
-	Budget *guestBudget
-	// Start starts the executor of a pool. If nil, every conversation runs
-	// in Main.
-	Start startPool
-	// Admit refuses a turn in the agent process of a key, or prepares the
-	// process for it and counts the turn there until release. Optional.
-	Admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
-}
-
-func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
-	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, admit: deps.Admit, ctx: ctx}
-	if ctx != nil {
-		context.AfterFunc(ctx, e.stopTurns)
-	}
-	return e
-}
-
-// stopTurns ends the turns in progress, the newest first. A turn that waits
-// for the turn before it in its conversation is then stopped before that
-// turn can end and let it start. Callbacks of one context.AfterFunc per
-// turn run in goroutines of their own, in any order.
-func (e *splitExecutor) stopTurns() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.canceled = true
-	for _, t := range slices.Backward(e.turns) {
-		t.cancel()
-	}
-}
-
-type startedPool struct {
-	exec a2asrv.AgentExecutor
-	stop func(context.Context) error
-}
-
-var _ a2asrv.AgentExecutor = (*splitExecutor)(nil)
-
-// track registers a turn for close to wait for. The returned context ends
-// when the server stops.
-func (e *splitExecutor) track(ctx context.Context) (context.Context, func(), error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.closing {
-		return nil, nil, errServerStopping
-	}
-	e.running.add()
-	ctx, cancel := context.WithCancel(ctx)
-	if e.canceled {
-		cancel()
-	}
-	t := &turnCancel{cancel: cancel}
-	e.turns = append(e.turns, t)
-	return ctx, func() {
-		cancel()
-		e.mu.Lock()
-		e.turns = slices.DeleteFunc(e.turns, func(o *turnCancel) bool { return o == t })
-		e.mu.Unlock()
-		e.running.done()
-	}, nil
-}
-
-func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		ctx, done, err := e.track(ctx)
-		if err != nil {
-			failTask(execCtx, err)(yield)
-			return
-		}
-		defer done()
-		exec, key, err := e.pick(ctx, execCtx.ContextID, true)
-		defer e.keys.forget(execCtx.ContextID)
-		if err == nil && e.admit != nil {
-			var admitted func()
-			if admitted, err = e.admit(ctx, key, execCtx); err == nil {
-				defer admitted()
-			} else if answersWaiting(execCtx) {
-				cancelRefused(ctx, exec, execCtx)
-			}
-		}
-		if err != nil {
-			failTask(execCtx, err)(yield)
-			return
-		}
-		if p, ok := auth.Caller(ctx); ok && p.Role == auth.RoleGuest {
-			release, err := e.budget.run(budgetListener(p))
-			if err != nil {
-				failTask(execCtx, err)(yield)
-				return
-			}
-			defer release()
-		}
-		sent, final := false, false
-		for ev, err := range exec.Execute(ctx, execCtx) {
-			if err != nil && e.stopped() {
-				break
-			}
-			// A turn that the stop ended, or that waited for one, fails
-			// with the error of its canceled context.
-			if failed(ev) && e.stopped() {
-				break
-			}
-			if err == nil {
-				sent, final = true, a2aevent.IsFinal(ev)
-			}
-			if !yield(ev, err) {
-				return
-			}
-		}
-		if !final && e.stopped() {
-			failStopped(execCtx, sent)(yield)
-		}
-	}
-}
-
-// cancelRefused ends the turn of a waiting task in the agent once an answer
-// to it is refused, which fails the task; the agent would otherwise keep
-// its session waiting for the answer.
-func cancelRefused(ctx context.Context, exec a2asrv.AgentExecutor, execCtx *a2asrv.ExecutorContext) {
-	for _, err := range exec.Cancel(ctx, execCtx) {
-		if err != nil {
-			slog.Warn("canceling a waiting task whose answer was refused", "task", execCtx.TaskID, "error", err)
-		}
-	}
-}
-
-// failed reports whether ev fails its task.
-func failed(ev a2a.Event) bool {
-	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
-	return ok && up.Status.State == a2a.TaskStateFailed
-}
-
-// stopped reports whether the server stopped, which ends the turns.
-func (e *splitExecutor) stopped() bool { return e.ctx != nil && e.ctx.Err() != nil }
-
-// stoppedMessage fails the turns that the server stopped.
-const stoppedMessage = "The server stopped before this task finished. Send the message again."
-
-// failStopped fails the task of execCtx, which the server stopped, so
-// that its subscribers get a final event. sent is whether the task was
-// already sent.
-func failStopped(execCtx *a2asrv.ExecutorContext, sent bool) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		if !sent && execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
-			return
-		}
-		msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(stoppedMessage))
-		msg.Metadata = map[string]any{store.InterruptedKey: true}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
-	}
-}
-
-func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		ctx, done, err := e.track(ctx)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		defer done()
-		exec, _, err := e.pick(ctx, execCtx.ContextID, false)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		for ev, err := range exec.Cancel(ctx, execCtx) {
-			if !yield(ev, err) {
-				return
-			}
-		}
-	}
-}
-
-// pick returns the executor of a conversation and its agent key, and
-// starts its pool if needed. If remember is set, the conversation keeps its agent key until
-// the keys forget it, in case its session isn't stored yet.
-func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, string, error) {
-	key, err := e.keys.of(ctx, contextID)
-	if err != nil {
-		return nil, "", err
-	}
-	if key == "" || e.start == nil {
-		return e.main, key, nil
-	}
-	if remember {
-		e.keys.remember(contextID, key)
-	}
-	exec, err := e.pool(poolOf(key))
-	return exec, key, err
-}
-
-// errServerStopping fails turns that start, or would start agent processes,
-// while the server stops.
-var errServerStopping = errors.New("the server is stopping")
-
-func (e *splitExecutor) pool(name string) (a2asrv.AgentExecutor, error) {
-	e.startMu.Lock()
-	defer e.startMu.Unlock()
-	e.mu.Lock()
-	p, closed := e.pools[name], e.closed
-	e.mu.Unlock()
-	if p != nil {
-		return p.exec, nil
-	}
-	if closed {
-		return nil, errServerStopping
-	}
-	exec, stop, err := e.start(e.ctx, name)
-	if err != nil {
-		return nil, fmt.Errorf("starting the agent processes of %s callers: %w", name, err)
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.pools == nil {
-		e.pools = map[string]*startedPool{}
-	}
-	e.pools[name] = &startedPool{exec: exec, stop: stop}
-	return exec, nil
-}
-
-// close waits for the turns in progress, which end when the server stops,
-// and then stops the agent processes of the pools that started.
-func (e *splitExecutor) close(ctx context.Context) error {
-	e.mu.Lock()
-	e.closing = true
-	e.mu.Unlock()
-	e.running.wait(context.Background())
-	e.startMu.Lock()
-	defer e.startMu.Unlock()
-	e.mu.Lock()
-	pools := e.pools
-	e.pools, e.closed = nil, true
-	e.mu.Unlock()
-	var (
-		wg   sync.WaitGroup
-		errs = make([]error, 0, len(pools))
-		mu   sync.Mutex
-	)
-	for _, p := range pools {
-		wg.Go(func() {
-			err := p.stop(ctx)
-			mu.Lock()
-			defer mu.Unlock()
-			errs = append(errs, err)
-		})
-	}
-	wg.Wait()
-	return errors.Join(errs...)
-}
-
-// failTask fails the task of execCtx with err.
-func failTask(execCtx *a2asrv.ExecutorContext, err error) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
-			return
-		}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))), nil)
-	}
 }
 
 // roleRank orders roles by what they may do; no role ranks lowest.

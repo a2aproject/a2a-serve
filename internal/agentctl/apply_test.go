@@ -33,11 +33,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
 
@@ -947,7 +947,7 @@ func TestWaitingForRestart(t *testing.T) {
 
 func TestHarnessesMatchProfiles(t *testing.T) {
 	t.Parallel()
-	if diff := cmp.Diff(harness.ProfileNames(), agentdir.Harnesses); diff != "" {
+	if diff := cmp.Diff(agent.ProfileNames(), agentdir.Harnesses); diff != "" {
 		t.Fatalf("agentdir.Harnesses wrong result (-want +got) diff = %s", diff)
 	}
 }

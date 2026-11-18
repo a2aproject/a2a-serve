@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -144,17 +145,24 @@ func runFake(t *testing.T, b Backend) (relaydir.Dir, string, *control.Client, co
 	return d, relayURL, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, done
 }
 
+// freeLoopbackPort returns a free port below the ephemeral ranges of Linux
+// and macOS, which the relay binds later. A port of 127.0.0.1:0 could be
+// handed to a listener of a parallel test process in between.
 func freeLoopbackPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for range 100 {
+		port := 20000 + rand.IntN(10000)
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		if err := ln.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return port
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return port
+	t.Fatal("no free port in 20000-29999")
+	return 0
 }
 
 // waitStatus waits until the relay's control API answers Status, and

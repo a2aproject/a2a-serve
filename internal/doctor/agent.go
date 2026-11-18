@@ -25,12 +25,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -117,7 +118,7 @@ func checkConfig(cfg *agentdir.Config) []Result {
 // before the server warned about it.
 func checkModel(cfg *agentdir.Config) []Result {
 	var results []Result
-	for _, w := range harness.Warnings(cfg) {
+	for _, w := range agentcfg.Warnings(cfg) {
 		results = append(results, Result{ID: "model", Status: StatusWarn, Message: w})
 	}
 	return results
@@ -245,7 +246,7 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 	if err != nil {
 		return nil
 	}
-	servers, err := project.LoadMCP(ws.Src)
+	servers, err := workspace.LoadMCP(ws.Src)
 	if err != nil {
 		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the agent gets none of the project's MCP servers"}}
 	}
@@ -288,15 +289,15 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 		results = append(results, Result{
 			ID:      "mcp",
 			Status:  StatusWarn,
-			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", project.MCPFile),
-			Detail:  "the docker sandbox hides " + project.MCPFile + " from the agent",
+			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", workspace.MCPFile),
+			Detail:  "the docker sandbox hides " + workspace.MCPFile + " from the agent",
 			Fix:     "a2a-serve config unset sandbox",
 		})
 	}
 	if len(results) > 0 {
 		return results
 	}
-	msg := fmt.Sprintf("%d MCP servers in %s", len(servers), project.MCPFile)
+	msg := fmt.Sprintf("%d MCP servers in %s", len(servers), workspace.MCPFile)
 	if off > 0 {
 		msg += fmt.Sprintf(", %d off", off)
 	}

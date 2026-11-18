@@ -15,28 +15,22 @@
 package agentsrv
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
-
-	"github.com/a2aproject/a2a-serve/internal/access"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // ProjectStatus lists the MCP servers and skills the project of cfg brings.
-func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) (servers []controlapi.MCPServerStatus, skills []project.Skill, err error) {
+func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) (servers []controlapi.MCPServerStatus, skills []workspace.Skill, err error) {
 	ws, err := d.WorkspaceMount(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	found, mcpErr := project.LoadMCP(ws.Src)
+	found, mcpErr := workspace.LoadMCP(ws.Src)
 	if mcpErr != nil {
 		mcpErr = fmt.Errorf("%w; the agent gets no MCP servers from it", mcpErr)
 	}
@@ -48,120 +42,8 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 		}
 		servers = append(servers, st)
 	}
-	skills, err = project.Skills(ws.Src)
+	skills, err = workspace.Skills(ws.Src)
 	return servers, skills, errors.Join(mcpErr, err)
-}
-
-// sessionParams passes the MCP servers of the project's .mcp.json to each
-// new ACP session. It reads the file for every session, so edits apply to
-// the next conversation. Servers the config turns off are left out, and so
-// is a server with a variable that has no value in the container of the
-// conversation, such as a secret its sandbox rule doesn't give, since it
-// would only fail inside the harness.
-func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
-	cfg := s.rt.Config()
-	ws, err := s.workspace()
-	if err != nil {
-		return a2aacp.SessionParams{}, err
-	}
-	key, err := s.keys.of(ctx, execCtx.ContextID)
-	if err != nil {
-		return a2aacp.SessionParams{}, err
-	}
-	sb, err := s.sandboxes.of(ctx, key)
-	if err != nil {
-		return a2aacp.SessionParams{}, err
-	}
-	params, found, err := s.sessionMCP(ctx, cfg, ws, key, sb)
-	if err != nil {
-		return a2aacp.SessionParams{}, err
-	}
-	// The agent reads its policy when the session starts, so the policy
-	// follows the rules and gets the MCP servers added since the agent
-	// process started.
-	if cfg.Sandbox != agentdir.SandboxLocal {
-		if err := s.addPolicyServers(cfg, key, found); err != nil {
-			return a2aacp.SessionParams{}, err
-		}
-	}
-	return params, nil
-}
-
-// sessionMCP returns the params of a session of the agent process of key in
-// the workspace ws, with the MCP servers of the workspace it gets, and the
-// servers it found.
-func (s *Server) sessionMCP(ctx context.Context, cfg *agentdir.Config, ws, key string, sb access.Sandbox) (a2aacp.SessionParams, []project.MCPServer, error) {
-	// The servers come from the workspace the container gets: none for an
-	// empty one, and those of its copy for its own.
-	src := ws
-	if cfg.Sandbox != agentdir.SandboxLocal {
-		switch sb.Storage {
-		case agentdir.StorageEmpty:
-			return a2aacp.SessionParams{Cwd: ws}, nil, nil
-		case agentdir.StorageOwn:
-			src = s.workspaces.Dir(workspaceName(key), agentdir.StorageOwn)
-		}
-	}
-	found, err := project.LoadMCP(src)
-	if err != nil {
-		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
-		return a2aacp.SessionParams{Cwd: ws}, nil, nil
-	}
-	// The variables are the container's own: the secrets that the server
-	// adds at the boundary stay out of them.
-	granted, _, _, err := secretEnv(cfg, sb, s.rt.Secrets())
-	if err != nil {
-		return a2aacp.SessionParams{}, nil, err
-	}
-	vars := project.EnvVars(cfg.Env, granted)
-	var servers []json.RawMessage
-	for _, srv := range found {
-		if cfg.MCPDisabled(srv.Name) {
-			continue
-		}
-		resolved, missing := srv.Resolve(vars)
-		if len(missing) > 0 {
-			slog.WarnContext(ctx, "leaving out an MCP server with variables that the conversation's container doesn't get; pass them with --secret, or give them in the sandbox rule of its user", "server", srv.Name, "missing", missing)
-			continue
-		}
-		raw, err := resolved.ACP()
-		if err != nil {
-			return a2aacp.SessionParams{}, nil, err
-		}
-		servers = append(servers, raw)
-	}
-	return a2aacp.SessionParams{Cwd: ws, MCPServers: servers}, found, nil
-}
-
-// addPolicyServers writes the policy of the agent process of key, adding
-// the MCP servers.
-func (s *Server) addPolicyServers(cfg *agentdir.Config, key string, servers []project.MCPServer) error {
-	names := make([]string, len(servers))
-	for i, srv := range servers {
-		names[i] = srv.Name
-	}
-	if _, err := s.policies.write(cfg, key != "", names); err != nil {
-		return fmt.Errorf("writing the agent's policy: %w", err)
-	}
-	return nil
-}
-
-// mcpServerNames returns the names of the MCP servers of the project's
-// .mcp.json, or none if it can't be read.
-func (s *Server) mcpServerNames() []string {
-	ws, err := s.workspace()
-	if err != nil {
-		return nil
-	}
-	found, err := project.LoadMCP(ws)
-	if err != nil {
-		return nil
-	}
-	names := make([]string, len(found))
-	for i, srv := range found {
-		names[i] = srv.Name
-	}
-	return names
 }
 
 // workspace returns the working directory of the agent's sessions.

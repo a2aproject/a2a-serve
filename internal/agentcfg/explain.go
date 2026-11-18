@@ -1,0 +1,169 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentcfg
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+)
+
+// Explain returns err with the errors of the core that it wraps worded with
+// the settings and commands that fix them. It keeps what err wraps.
+func Explain(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	for _, typed := range typedErrors(err) {
+		msg = strings.Replace(msg, typed.Error(), Warning(typed), 1)
+	}
+	if msg == err.Error() {
+		return err
+	}
+	return &explained{msg: msg, err: err}
+}
+
+type explained struct {
+	msg string
+	err error
+}
+
+func (e *explained) Error() string { return e.msg }
+
+func (e *explained) Unwrap() error { return e.err }
+
+// typedErrors returns the errors of the core in err that Warning words.
+func typedErrors(err error) []error {
+	var out []error
+	add := func(e error, ok bool) {
+		if ok {
+			out = append(out, e)
+		}
+	}
+	add(asType[*agent.UnknownAgentError](err))
+	add(asType[*agent.NoImageError](err))
+	add(asType[*agent.NotInstalledError](err))
+	add(asType[*agent.WorkspacePathError](err))
+	add(asType[*agent.NestedAgentsError](err))
+	add(asType[*agent.AppearedError](err))
+	add(asType[*agent.EgressError](err))
+	add(asType[*sandbox.DockerError](err))
+	add(asType[*runner.MissingSecretError](err))
+	add(asType[*runner.CopyError](err))
+	add(asType[*runner.InjectRuleError](err))
+	for _, sentinel := range []error{runner.ErrGrantChanged, runner.ErrGrantNarrowed} {
+		add(sentinel, errors.Is(err, sentinel))
+	}
+	return out
+}
+
+func asType[T error](err error) (error, bool) {
+	e, ok := errors.AsType[T](err)
+	return e, ok
+}
+
+// restartHint follows the errors of a sandbox that doesn't hide what
+// changed since the agent started.
+const restartHint = "; restart this agent with `a2a-serve restart`"
+
+// localOrDoctor follows the problems of docker.
+const localOrDoctor = "run a2a-serve config set --sandbox local, or run a2a-serve doctor"
+
+// MissingSecretHint says how to store the secret name that the agent gets
+// but that has no value.
+func MissingSecretHint(name string) string {
+	return fmt.Sprintf("secret %s is not set; pass --secret %s again with the variable set", name, name)
+}
+
+// Warning words an error or warning of the core for the user.
+func Warning(err error) string {
+	switch e := err.(type) {
+	case *agent.UnknownAgentError:
+		return e.Error() + ", or pass --command for any ACP agent"
+	case *agent.NoImageError:
+		return e.Error() + "; pass --image or --sandbox local"
+	case *agent.NotInstalledError:
+		return e.Error() + "; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"
+	case *agent.WorkspacePathError:
+		return fmt.Sprintf("the first --mount is the workspace and must keep its path (%s), got %s", e.Src, e.Dst)
+	case *agent.NestedAgentsError:
+		return e.Error() + restartHint
+	case *agent.AppearedError:
+		return e.Error() + restartHint
+	case *agent.NestedAgentsWarning:
+		if e.Exposed {
+			return fmt.Sprintf("found other agents in %s; --sandbox local doesn't hide their .a2a directories, so the agent can read their secrets", strings.Join(e.Roots, ", "))
+		}
+		return e.Error()
+	case *agent.EgressError:
+		if e.Local {
+			return noInject(e.Egress.Inject, "the agent runs with --sandbox local")
+		}
+		return egressProblem(e.Egress, e.Reason)
+	case *agent.NoBoundaryWarning:
+		return NoBoundary(e.Reason)
+	case *agent.EgressIgnoredWarning:
+		return egressIgnored(e)
+	case agent.EgressWarnings:
+		texts := make([]string, len(e))
+		for i, w := range e {
+			texts[i] = Warning(w)
+		}
+		return strings.Join(texts, "; ")
+	case *sandbox.DockerError:
+		sep := " or "
+		if strings.Contains(e.Fix, " or ") {
+			sep = ", or "
+		}
+		s := "docker " + e.Problem + "; " + e.Fix + sep + localOrDoctor
+		if e.Err != nil {
+			s += ": " + e.Err.Error()
+		}
+		return s
+	}
+	if e, ok := err.(*runner.MissingSecretError); ok {
+		if e.Main {
+			return MissingSecretHint(e.Name)
+		}
+		return fmt.Sprintf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", e.Name)
+	}
+	if e, ok := err.(*runner.InjectRuleError); ok {
+		why := e.Err.Error()
+		if p, ok := errors.AsType[*egress.UnknownProviderError](e.Err); ok {
+			why = agentdir.UnknownProviderText(p.Name)
+		}
+		return "--" + agentdir.InjectSetting(e.Rule) + " " + e.Rule.Entry() + ": " + why
+	}
+	if e, ok := err.(*runner.CopyError); ok {
+		return e.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy"
+	}
+	switch err {
+	case runner.ErrGrantChanged:
+		return "the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then"
+	case runner.ErrGrantNarrowed:
+		return "the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again"
+	}
+	if errors.Is(err, agent.ErrNoAllowRules) {
+		return noAllowlistRules
+	}
+	return err.Error()
+}

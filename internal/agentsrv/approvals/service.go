@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package approvals routes the questions an agent asks while working. It
+// stores them so buttons and pages can answer them, decides who may answer,
+// and sends answers to the task, here or at another agent.
 package approvals
 
 import (
@@ -27,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -35,6 +39,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/webpage"
 )
+
+// FromRecord rebuilds the question of a stored record.
+func FromRecord(rec store.Question) *question.Question {
+	return question.FromData(rec.Data)
+}
 
 // Chat is a conversation on a messenger.
 type Chat struct {
@@ -62,7 +71,7 @@ type Notifier interface {
 // RemoteAnswerer forwards answers to the questions of other agents' tasks.
 type RemoteAnswerer interface {
 	// AnswerRemote sends by's answer to the task of the agent rec.Contact.
-	AnswerRemote(ctx context.Context, rec store.Question, q *Question, opt Option, by auth.Principal) error
+	AnswerRemote(ctx context.Context, rec store.Question, q *question.Question, opt question.Option, by auth.Principal) error
 }
 
 // Sender sends answers to the agent's own questions to its A2A handler.
@@ -158,7 +167,7 @@ var ErrNotApprover = errors.New("only the person who started the task or an owne
 // contact is the agent whose task asked, or empty for this agent; user is
 // who may answer it besides owners. It returns [store.ErrExists] for a
 // remote question stored before.
-func (r *Records) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact, user string, q *Question) (store.Question, error) {
+func (r *Records) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact, user string, q *question.Question) (store.Question, error) {
 	rec := store.Question{
 		ID:        cryptoutil.RandomString(8, cryptoutil.Alphanumeric),
 		Token:     cryptoutil.RandomString(32, cryptoutil.Alphanumeric),
@@ -214,8 +223,8 @@ func (r *Records) pageUser(ctx context.Context, rec store.Question) (auth.Princi
 // task answers in the place it came from: inline in an A2A task, or in its
 // conversation. Questions of members are rejected after
 // UserTimeout.
-func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *Question) {
-	if q.Type != TypePermission {
+func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *question.Question) {
+	if q.Type != question.TypePermission {
 		return
 	}
 	guest := s.guest != nil && s.guest(ctx, execCtx.ContextID)
@@ -292,7 +301,7 @@ func (s *Service) expire(ctx context.Context, id string) {
 
 // expireTask rejects the question of a task if the task still waits for
 // its answer. Unlike expire, it needs no stored record.
-func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question) {
+func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *question.Question) {
 	s.expireWith(func() (Outcome, error) {
 		opt, ok := q.Match("reject")
 		if !ok {
@@ -363,8 +372,8 @@ func (r *Records) Waiting(ctx context.Context, rec store.Question) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("checking task %s: %w", rec.TaskID, err)
 	}
-	q := FromStatus(stored.Task.Status)
-	return q != nil && q.Check(Ref{ID: rec.HitlID, Seq: FromRecord(rec).Seq}) == Matches, nil
+	q := question.FromStatus(stored.Task.Status)
+	return q != nil && q.Check(question.Ref{ID: rec.HitlID, Seq: FromRecord(rec).Seq}) == question.Matches, nil
 }
 
 // CloseQuestions closes the unanswered questions of a task which no longer
@@ -423,8 +432,8 @@ func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 	if task.Status.State != a2a.TaskStateInputRequired {
 		return nil
 	}
-	q := FromStatus(task.Status)
-	if q == nil || q.Type != TypePermission {
+	q := question.FromStatus(task.Status)
+	if q == nil || q.Type != question.TypePermission {
 		return nil
 	}
 	if MayAnswer(p, stored.User) {
@@ -463,16 +472,16 @@ type Send func(ctx context.Context, msg *a2a.Message, accepted func(error))
 // of remote agents to them. An answer that isn't delivered isn't kept, so
 // that the question can be answered again. Errors are failures; the
 // Outcome tells the rest.
-func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string) (Outcome, error) {
+func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option question.Option, who string) (Outcome, error) {
 	return s.AnswerWith(ctx, rec, p, option, who, nil)
 }
 
 // AnswerWith answers like Answer. It sends the answer to a question of the
 // agent's own task with send, such as one that shows the rest of the task
 // where it was answered; a nil send uses the notifier.
-func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string, send Send) (Outcome, error) {
+func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Principal, option question.Option, who string, send Send) (Outcome, error) {
 	q := FromRecord(rec)
-	if q.Type == TypePermission && !MayAnswer(p, rec.User) {
+	if q.Type == question.TypePermission && !MayAnswer(p, rec.User) {
 		return 0, ErrNotApprover
 	}
 	waiting, err := s.Waiting(ctx, rec)
@@ -501,7 +510,7 @@ func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Pri
 		accepted(s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option, who) }))
 		return out, outErr
 	}
-	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, option.ID, ShownAnswer(option, who))
+	msg, err := question.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, option.ID, question.ShownAnswer(option, who))
 	if err != nil {
 		accepted(err)
 		return out, outErr
@@ -512,7 +521,7 @@ func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Pri
 
 // settle keeps the answer of p to rec if its delivery succeeded, and clears
 // it if it failed with err.
-func (s *Service) settle(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string, err error) (Outcome, error) {
+func (s *Service) settle(ctx context.Context, rec store.Question, p auth.Principal, option question.Option, who string, err error) (Outcome, error) {
 	if err == nil {
 		s.notifier.MarkAnswered(ctx, rec.ID, option.Label, who)
 		return Answered, nil
@@ -552,7 +561,7 @@ func (s *Service) Release(ctx context.Context, taskID a2a.TaskID, hitlID, by str
 // option on behalf of p, like Answer. It claims the record of the question
 // if there is one; without one, the task takes one answer at a time, and
 // refuses the rest.
-func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option, who string) (Outcome, error) {
+func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *question.Question, p auth.Principal, option question.Option, who string) (Outcome, error) {
 	rec, err := s.store.OpenQuestionOf(ctx, string(taskID), q.ID)
 	if err == nil {
 		return s.Answer(ctx, rec, p, option, who)
@@ -568,11 +577,11 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 		if err != nil {
 			return false, fmt.Errorf("checking task %s: %w", taskID, err)
 		}
-		if q.Type == TypePermission && !MayAnswer(p, stored.User) {
+		if q.Type == question.TypePermission && !MayAnswer(p, stored.User) {
 			return false, ErrNotApprover
 		}
-		open := FromStatus(stored.Task.Status)
-		return open != nil && open.Check(Ref{ID: q.ID, Seq: q.Seq}) == Matches, nil
+		open := question.FromStatus(stored.Task.Status)
+		return open != nil && open.Check(question.Ref{ID: q.ID, Seq: q.Seq}) == question.Matches, nil
 	}
 	waiting, err := waits()
 	if err != nil {
@@ -594,7 +603,7 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 	return 0, err
 }
 
-func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option, who string) error {
+func (s *Service) deliver(ctx context.Context, rec store.Question, q *question.Question, p auth.Principal, option question.Option, who string) error {
 	if rec.Contact != "" {
 		return s.remote.AnswerRemote(ctx, rec, q, option, p)
 	}
@@ -603,8 +612,8 @@ func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, 
 
 // send sends p's answer option to q, a question of the agent's own task,
 // shown as answered by who.
-func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option, who string) error {
-	msg, err := AnswerMessage(taskID, contextID, q, option.ID, ShownAnswer(option, who))
+func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *question.Question, p auth.Principal, option question.Option, who string) error {
+	msg, err := question.AnswerMessage(taskID, contextID, q, option.ID, question.ShownAnswer(option, who))
 	if err != nil {
 		return err
 	}

@@ -17,21 +17,16 @@ package agentsrv
 import (
 	"context"
 	"errors"
-	"iter"
+	"fmt"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func TestMembersRunInTheirOwnProcesses(t *testing.T) {
@@ -135,10 +130,10 @@ func TestLocalSandboxWarning(t *testing.T) {
 		access   access.Description
 		wantWarn bool
 	}{
-		{name: "docker with others", sandbox: harness.SandboxDocker, access: access.Description{Pairings: 1}},
-		{name: "local for you only", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
-		{name: "local with a paired user", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
-		{name: "local open to others", sandbox: harness.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
+		{name: "docker with others", sandbox: agent.SandboxDocker, access: access.Description{Pairings: 1}},
+		{name: "local for you only", sandbox: agent.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
+		{name: "local with a paired user", sandbox: agent.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
+		{name: "local open to others", sandbox: agent.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,203 +144,39 @@ func TestLocalSandboxWarning(t *testing.T) {
 		})
 	}
 }
-
-func TestSplitExecutorClosePoolsInParallel(t *testing.T) {
+func TestNewTaskRefusedWhileAllUserAgentsAreBusy(t *testing.T) {
 	t.Parallel()
-	var running sync.WaitGroup
-	running.Add(2)
-	stop := func(context.Context) error {
-		running.Done()
-		done := make(chan struct{})
-		go func() { running.Wait(); close(done) }()
-		select {
-		case <-done:
-			return nil
-		case <-time.After(5 * time.Second):
-			return errors.New("the other pool did not stop at the same time")
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	first := ts.client(ts.pair("u0", auth.RoleMember))
+	asked := send(t, first, userText("ask", "", ""))
+	for i := 1; i < maxUserAgents; i++ {
+		c := ts.client(ts.pair(fmt.Sprintf("u%d", i), auth.RoleMember))
+		if task := send(t, c, userText("ask", "", "")); task.Status.State != a2a.TaskStateInputRequired {
+			t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
 		}
 	}
-	e := &splitExecutor{pools: map[string]*startedPool{
-		guestPool: {stop: stop},
-		usersPool: {stop: stop},
-	}}
+	late := ts.client(ts.pair("late", auth.RoleMember))
 
-	if err := e.close(context.Background()); err != nil {
-		t.Fatalf("splitExecutor.close() error = %v", err)
+	if _, err := late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")}); !errors.Is(err, a2a.ErrServerError) {
+		t.Fatalf("SendMessage() while all agents are busy error = %v, want %v", err, a2a.ErrServerError)
 	}
-}
-
-// emptyExecutor ends every turn without events, as a turn that fails before
-// the agent stores a session.
-type emptyExecutor struct{ a2asrv.AgentExecutor }
-
-func (emptyExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(func(a2a.Event, error) bool) {}
-}
-
-func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
-	t.Parallel()
-	keys := newAgentKeys(openTestStore(t).Sessions())
-	e := newSplitExecutor(context.Background(), splitDeps{
-		Main:   emptyExecutor{},
-		Keys:   keys,
-		Budget: newGuestBudget(),
-		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-			return emptyExecutor{}, func(context.Context) error { return nil }, nil
-		},
+	list, err := late.ListTasks(ctx, &a2a.ListTasksRequest{})
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	if len(list.Tasks) != 0 {
+		t.Fatalf("ListTasks() = %d tasks, want none stored for a refused message", len(list.Tasks))
+	}
+	if _, err := first.CancelTask(ctx, &a2a.CancelTaskRequest{ID: asked.ID}); err != nil {
+		t.Fatalf("CancelTask() error = %v", err)
+	}
+	var res a2a.SendMessageResult
+	waitFor(t, "a message accepted after a process became idle", func() bool {
+		res, err = late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+		return err == nil
 	})
-	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleMember})
-
-	for range e.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
-	}
-
-	keys.mu.Lock()
-	defer keys.mu.Unlock()
-	if got := len(keys.pending); got != 0 {
-		t.Fatalf("agentKeys.pending has %d entries after the turn, want 0", got)
-	}
-}
-
-func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
-	t.Parallel()
-	started := false
-	e := newSplitExecutor(context.Background(), splitDeps{
-		Main:   emptyExecutor{},
-		Keys:   newAgentKeys(openTestStore(t).Sessions()),
-		Budget: newGuestBudget(),
-		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-			started = true
-			return emptyExecutor{}, func(context.Context) error { return nil }, nil
-		},
-	})
-	if err := e.close(context.Background()); err != nil {
-		t.Fatalf("splitExecutor.close() error = %v", err)
-	}
-
-	_, err := e.pool(usersPool)
-
-	if err == nil {
-		t.Fatalf("splitExecutor.pool() after close error = nil, want error")
-	}
-	if started {
-		t.Fatalf("splitExecutor.pool() after close started the pool, want it not started")
-	}
-}
-
-// blockingExecutor runs every turn until its context ends.
-type blockingExecutor struct {
-	a2asrv.AgentExecutor
-	started chan struct{}
-	ended   atomic.Bool
-}
-
-func (b *blockingExecutor) Execute(ctx context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(func(a2a.Event, error) bool) {
-		close(b.started)
-		<-ctx.Done()
-		time.Sleep(50 * time.Millisecond)
-		b.ended.Store(true)
-	}
-}
-
-// lockingExecutor runs one turn at a time, as a2aacp runs the turns of a
-// conversation: a turn waits for the turn before it, and doesn't start once
-// its context ended. The first turn runs until its context ends; later ones
-// complete at once.
-type lockingExecutor struct {
-	a2asrv.AgentExecutor
-	lock    chan struct{}
-	holding chan struct{}
-	waiting chan struct{}
-}
-
-func (l *lockingExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		first := execCtx.TaskID == "t1"
-		if !first {
-			close(l.waiting)
-		}
-		select {
-		case l.lock <- struct{}{}:
-		case <-ctx.Done():
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
-			return
-		}
-		defer func() { <-l.lock }()
-		if ctx.Err() != nil {
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
-			return
-		}
-		if first {
-			close(l.holding)
-			<-ctx.Done()
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
-			return
-		}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
-	}
-}
-
-func TestSplitExecutorStopEndsTheTurnsWaitingBehindARunningTurn(t *testing.T) {
-	t.Parallel()
-	for range 200 {
-		serverCtx, stopServer := context.WithCancel(context.Background())
-		inner := &lockingExecutor{lock: make(chan struct{}, 1), holding: make(chan struct{}), waiting: make(chan struct{})}
-		e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newGuestBudget()})
-		go func() {
-			for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
-			}
-		}()
-		<-inner.holding
-		states := make(chan []a2a.TaskState, 1)
-		go func() {
-			var got []a2a.TaskState
-			for ev := range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t2", StoredTask: &a2a.Task{}}) {
-				if st, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
-					got = append(got, st.Status.State)
-				}
-			}
-			states <- got
-		}()
-		<-inner.waiting
-
-		stopServer()
-
-		if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateFailed}, <-states); diff != "" {
-			t.Fatalf("splitExecutor.Execute() of a waiting turn after the stop wrong states (-want +got) diff = %s", diff)
-		}
-	}
-}
-
-func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
-	t.Parallel()
-	serverCtx, stopServer := context.WithCancel(context.Background())
-	inner := &blockingExecutor{started: make(chan struct{})}
-	e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newGuestBudget()})
-	go func() {
-		for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
-		}
-	}()
-	<-inner.started
-
-	stopServer()
-	if err := e.close(context.Background()); err != nil {
-		t.Fatalf("splitExecutor.close() error = %v", err)
-	}
-
-	if !inner.ended.Load() {
-		t.Fatal("splitExecutor.close() returned while a turn ran, want it to stop the turns first")
-	}
-	var got []a2a.TaskState
-	for ev, err := range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c2", TaskID: "t2"}) {
-		if err != nil {
-			t.Fatalf("splitExecutor.Execute() after close() error = %v", err)
-		}
-		if st, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
-			got = append(got, st.Status.State)
-		}
-	}
-	if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateFailed}, got); diff != "" {
-		t.Fatalf("splitExecutor.Execute() after close() wrong states (-want +got) diff = %s", diff)
+	if task, ok := res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("SendMessage() after a process became idle = %v, want a completed task", res)
 	}
 }

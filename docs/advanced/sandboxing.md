@@ -17,7 +17,7 @@ This page summarizes how a2a-serve sandboxes the agent and controls its traffic.
 
 To start a container the server:
 
-1. Pulls an agent image from the docker registry. The image has a2a-cli and commonly needed utilities in it: [example](../../internal/harness/images/opencode/Dockerfile).
+1. Pulls an agent image from the docker registry. The image has a2a-cli and commonly needed utilities in it: [example](../../core/agent/images/opencode/Dockerfile).
 1. Prepares the agent home (`./.a2a/state/homes/<user>`). That's where sandbox `$HOME` will point and where sessions will live.
 1. Opens two unix sockets for the container: the a2a-cli socket and the all-egress socket.
 1. Writes the env vars and secrets into a private docker env file with placeholders for injected keys, and deletes the file when the container stops.

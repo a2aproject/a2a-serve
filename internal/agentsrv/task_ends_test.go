@@ -32,7 +32,7 @@ func TestEndingQuestionTaskKeepsContextUnattended(t *testing.T) {
 	ctx := context.Background()
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
-	ts.srv.turns.wait(waitCtx)
+	ts.srv.turns.Wait(waitCtx)
 	if waitCtx.Err() != nil {
 		t.Fatalf("turns.wait() error = %v, want the turn of the first message ended", waitCtx.Err())
 	}

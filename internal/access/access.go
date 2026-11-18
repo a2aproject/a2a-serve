@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -194,11 +194,11 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 	for _, g := range l.Sandbox.Secrets {
 		names = append(names, g.Name)
 	}
-	provider, key := harness.ModelKeyWithheld(cfg, names)
+	provider, key := agentcfg.ModelKeyWithheld(cfg, names)
 	if provider == "" {
 		return ""
 	}
-	name := harness.ProviderName(provider)
+	name := agentcfg.ProviderName(provider)
 	switch {
 	case l.Guest:
 		return fmt.Sprintf("Guests' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets %s`.", name, key, key)

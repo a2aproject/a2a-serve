@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/harness"
+	coreagent "github.com/a2aproject/a2a-serve/core/agent"
 )
 
 func TestDockerSandboxMounts(t *testing.T) {
@@ -98,7 +98,7 @@ func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
 	owner, anna := newUser(t), newUser(t)
 	coder := owner.startAgent("coder", "--deny-tools", "execute")
 	anna.pairJoin(coder.url, coder.invite("anna"))
-	home := harness.ContainerHome
+	home := coreagent.ContainerHome
 
 	for _, name := range []string{
 		filepath.Join(".claude", "settings.json"),

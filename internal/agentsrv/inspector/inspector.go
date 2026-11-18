@@ -32,6 +32,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -190,7 +191,7 @@ type Approval struct {
 	// empty if the inspector doesn't know it.
 	ContextID string
 	Contact   string
-	Options   []approvals.Option
+	Options   []question.Option
 	Created   time.Time
 }
 
@@ -292,7 +293,7 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 		return nil, err
 	}
 	for _, t := range tasks {
-		q := approvals.FromStatus(t.Status)
+		q := question.FromStatus(t.Status)
 		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Question: q.ID, Seq: q.Seq, Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
@@ -329,7 +330,7 @@ func waitingTasks(ctx context.Context, tasks *store.TaskStore) ([]*a2a.Task, err
 	}
 	var out []*a2a.Task
 	for _, t := range resp.Tasks {
-		if approvals.FromStatus(t.Status) != nil {
+		if question.FromStatus(t.Status) != nil {
 			out = append(out, t)
 		}
 	}
@@ -507,17 +508,17 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	t := stored.Task
-	q := approvals.FromStatus(t.Status)
+	q := question.FromStatus(t.Status)
 	if t.Status.State != a2a.TaskStateInputRequired || q == nil {
 		http.Error(w, "This task no longer waits for an answer. Reload the page.", http.StatusConflict)
 		return
 	}
-	ref := approvals.Ref{ID: r.FormValue("question"), Seq: formSeq(r)}
+	ref := question.Ref{ID: r.FormValue("question"), Seq: formSeq(r)}
 	switch m := q.Check(ref); {
-	case m == approvals.Earlier:
+	case m == question.Earlier:
 		http.Error(w, "This question was already answered, and the task asks another one now. Reload the page to see it.", http.StatusConflict)
 		return
-	case ref.ID == "" || m != approvals.Matches:
+	case ref.ID == "" || m != question.Matches:
 		http.Error(w, "This task asks a different question now. Reload the page to see it.", http.StatusConflict)
 		return
 	}

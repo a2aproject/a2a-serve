@@ -18,30 +18,22 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
-// toolDecider answers tool permissions with the allow and deny rules of the
-// current config, so that changing them doesn't need a restart, and then
-// with the preferences of the person who started the task and the grants
-// of the conversation for that person. It logs each answer by what decided
-// it, and notes the denied calls.
+// toolDecider answers the tool permissions that the tool rules don't with
+// the preferences of the person who started the task and the grants of the
+// conversation for that person. The runner asks the rules first.
 type toolDecider struct {
-	config func() *agentdir.Config
-	// servers returns the names of the MCP servers of the project, which
-	// name the MCP tools of calls.
-	servers func() []string
-	notes   *toolNotes
-	store   *store.Store
+	store *store.Store
 	// taskUser returns the user who started a stored task.
 	taskUser func(ctx context.Context, id a2a.TaskID) (string, error)
 }
@@ -60,135 +52,52 @@ func (d *toolDecider) starter(ctx context.Context, execCtx *a2asrv.ExecutorConte
 	return d.taskUser(ctx, execCtx.TaskID)
 }
 
-// call describes a tool call of a permission request.
-func (d *toolDecider) call(kind, title string, input any) toolrules.Call {
-	var servers []string
-	if d.servers != nil {
-		servers = d.servers()
-	}
-	return toolrules.NewCall(kind, title, input, servers)
-}
-
-// rules returns the allow and deny rules of the current config.
-func (d *toolDecider) rules() toolrules.Rules {
-	cfg := d.config()
-	return toolrules.Rules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
-}
-
-// decision is how a call is answered without asking.
-type decision struct {
-	allow bool
-	// entry is the rule, preference or grant that decided, and by what it
-	// is.
-	entry string
-	by    string
-	// user is the person whose preference or grant decided.
-	user string
-}
-
-// What decides a call.
+// What decides a call besides the rules.
 const (
-	byRule       = "rule"
 	byPreference = "preference"
 	byGrant      = "grant of the conversation"
 )
 
-// decide answers call with the rules, then the preferences of user, who
-// started its task, then the grants of the conversation for user. It
-// returns false if none decides; without a user, only the rules decide.
-func (d *toolDecider) decide(ctx context.Context, contextID, user string, call toolrules.Call) (decision, bool, error) {
-	if dec, ok := d.rules().Decide(call); ok {
-		return decision{allow: dec.Allow, entry: dec.Entry, by: byRule}, true, nil
+// hook answers call for the person who started the task of execCtx. It
+// implements the Decide hook of the runner.
+func (d *toolDecider) hook(ctx context.Context, execCtx *a2asrv.ExecutorContext, call toolrules.Call) (runner.Decision, bool, error) {
+	user, err := d.starter(ctx, execCtx)
+	if err != nil {
+		slog.Warn("looking up who started a task, asking only the rules", "task", execCtx.TaskID, "error", err)
+		return runner.Decision{}, false, nil
 	}
+	return d.decide(ctx, execCtx.ContextID, user, call)
+}
+
+// decide answers call with the preferences of user, who started its task,
+// then the grants of the conversation for user. It returns false if none
+// decides.
+func (d *toolDecider) decide(ctx context.Context, contextID, user string, call toolrules.Call) (runner.Decision, bool, error) {
 	if user == "" || d.store == nil {
-		return decision{}, false, nil
+		return runner.Decision{}, false, nil
 	}
 	prefs, err := d.store.ToolPreferences(ctx, user)
 	if err != nil {
-		return decision{}, false, err
+		return runner.Decision{}, false, err
 	}
 	if rule, ok := toolrules.Match(prefs, call); ok {
-		return decision{allow: true, entry: rule, by: byPreference, user: user}, true, nil
+		return runner.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byPreference, User: user}, true, nil
 	}
 	grants, err := d.store.ToolGrants(ctx, contextID, user)
 	if err != nil {
-		return decision{}, false, err
+		return runner.Decision{}, false, err
 	}
 	if rule, ok := toolrules.Match(grants, call); ok {
-		return decision{allow: true, entry: rule, by: byGrant, user: user}, true, nil
+		return runner.Decision{Decision: toolrules.Decision{Allow: true, Entry: rule}, By: byGrant, User: user}, true, nil
 	}
-	return decision{}, false, nil
+	return runner.Decision{}, false, nil
 }
 
-func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
-	if q.Tool == nil {
-		return a2aacp.Answer{}, false
+// decideWithRules answers call with the rules of the config, then as
+// decide does.
+func (s *Server) decideWithRules(ctx context.Context, contextID, user string, call toolrules.Call) (runner.Decision, bool, error) {
+	if dec, ok := agentcfg.ToolRules(s.rt.Config()).Decide(call); ok {
+		return runner.Decision{Decision: dec, By: runner.ByRule}, true, nil
 	}
-	var contextID, user string
-	var taskID a2a.TaskID
-	if execCtx != nil {
-		contextID, taskID = execCtx.ContextID, execCtx.TaskID
-		var err error
-		if user, err = d.starter(ctx, execCtx); err != nil {
-			slog.Warn("looking up who started a task, asking only the rules", "task", taskID, "error", err)
-		}
-	}
-	dec, ok, err := d.decide(ctx, contextID, user, d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input))
-	if err != nil {
-		slog.Warn("reading what a person allowed, asking", "task", taskID, "error", err)
-		return a2aacp.Answer{}, false
-	}
-	if !ok {
-		return a2aacp.Answer{}, false
-	}
-	ans, ok := ruleAnswer(q.Options, dec.allow)
-	if !ok || execCtx == nil {
-		return ans, ok
-	}
-	if !dec.allow {
-		d.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
-	}
-	slog.Info("approval answered by a "+dec.by, dec.logAttrs(execCtx.TaskID, q.Tool.Kind, ans.Option)...)
-	return ans, true
-}
-
-// logAttrs are the attributes of the log line of the approval of task that
-// dec answered with option. A preference or grant comes from an answer to
-// a command, which can hold secrets, so it names only the program.
-func (dec decision) logAttrs(task a2a.TaskID, kind, option string) []any {
-	entry := dec.entry
-	if dec.by != byRule {
-		entry = toolrules.Redact(entry)
-	}
-	attrs := []any{"task", task, "rule", entry, "kind", kind}
-	if dec.user != "" {
-		attrs = append(attrs, "user", dec.user)
-	}
-	return append(attrs, "option", option)
-}
-
-// ruleAnswer returns the option that allows a tool call once, or always if
-// the agent offers no other way to allow it, or the option that rejects
-// it, canceling it if the agent offers no way to reject it.
-func ruleAnswer(options []string, allow bool) (a2aacp.Answer, bool) {
-	if !allow {
-		if id := firstOffered(options, a2aacp.OptionReject, a2aacp.OptionRejectAlways); id != "" {
-			return a2aacp.Answer{Option: id}, true
-		}
-		return a2aacp.Answer{Option: a2aacp.OptionCancel}, true
-	}
-	if id := firstOffered(options, a2aacp.OptionOnce, a2aacp.OptionAlways); id != "" {
-		return a2aacp.Answer{Option: id}, true
-	}
-	return a2aacp.Answer{}, false
-}
-
-// firstOffered returns the first of ids that options has, or "".
-func firstOffered(options []string, ids ...string) string {
-	for _, id := range ids {
-		if slices.Contains(options, id) {
-			return id
-		}
-	}
-	return ""
+	return s.decider.decide(ctx, contextID, user, call)
 }

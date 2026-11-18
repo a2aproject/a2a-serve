@@ -26,11 +26,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -83,7 +83,7 @@ func TestNetworkProviderRefusedTokenFailsBeforeAgentStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: freePort(t)}
+	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: agent.SandboxLocal, Port: freePort(t)}
 	onLoopnet("loopnet://" + testutil.ShortTempDir(t) + "?token=good")(cfg)
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)

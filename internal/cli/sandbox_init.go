@@ -22,8 +22,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 func newSandboxInitCmd() *cobra.Command {
@@ -35,7 +35,7 @@ func newSandboxInitCmd() *cobra.Command {
 network. It routes every connection of the container through the egress
 socket, drops every capability, and runs the command as uid:gid. With
 --check, it sets up the network and drops the capabilities, then exits.
-When the setup fails, it exits with status ` + strconv.Itoa(sandboxnet.SetupFailedExit) + `.`,
+When the setup fails, it exits with status ` + strconv.Itoa(boundary.SetupFailedExit) + `.`,
 		Args:               cobra.MinimumNArgs(3),
 		DisableFlagParsing: true,
 		SilenceUsage:       true,
@@ -55,15 +55,15 @@ When the setup fails, it exits with status ` + strconv.Itoa(sandboxnet.SetupFail
 			if err != nil {
 				return fmt.Errorf("invalid gid %q", args[2])
 			}
-			code, err := sandboxnet.Launch(sandboxnet.LaunchConfig{
+			code, err := boundary.Launch(boundary.LaunchConfig{
 				Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: os.Environ(), Check: check,
-				FailSetup: os.Getenv(sandboxnet.EnvFailSetup) != "",
+				FailSetup: os.Getenv(boundary.EnvFailSetup) != "",
 			})
-			if setupErr, ok := errors.AsType[*sandboxnet.SetupError](err); ok {
+			if setupErr, ok := errors.AsType[*boundary.SetupError](err); ok {
 				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "a2a-init: setting up the sandbox's network: %v\n", setupErr); err != nil {
 					return err
 				}
-				return clierr.Exit(sandboxnet.SetupFailedExit, "")
+				return clierr.Exit(boundary.SetupFailedExit, "")
 			}
 			if err != nil {
 				return fmt.Errorf("starting the sandbox: %w", err)

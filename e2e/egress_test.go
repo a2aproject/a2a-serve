@@ -29,7 +29,8 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+
+	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 )
 
 // publicTarget is a public host the sandbox reaches, overridable for
@@ -218,7 +219,7 @@ func TestDockerSandboxEgressFallsBackWhenSetupFails(t *testing.T) {
 	requireDocker(t)
 	owner := newUser(t)
 	env := owner.env
-	owner.env = append(slices.Clone(env), sandboxnet.EnvFailSetup+"=all")
+	owner.env = append(slices.Clone(env), boundary.EnvFailSetup+"=all")
 	coder := owner.newAgent("coder")
 	t.Cleanup(coder.cleanup)
 	out := coder.serve(append([]string{"start", "acp", "--name", "coder", "--detach"}, sandboxFlags()...)...)
@@ -248,7 +249,7 @@ func TestDockerSandboxEgressFallsBackWhenTheAgentsSetupFails(t *testing.T) {
 	t.Parallel()
 	requireDocker(t)
 	owner := newUser(t)
-	owner.env = append(owner.env, sandboxnet.EnvFailSetup+"=agent")
+	owner.env = append(owner.env, boundary.EnvFailSetup+"=agent")
 	coder := owner.startAgent("coder")
 	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
 		t.Fatalf("a2a send dial %s with Docker's network = %q, want the public host reached", publicTarget(), got)

@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -125,7 +126,7 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 	svc := newService(t, h)
 	ctx := context.Background()
 	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-	q := FromMessage(permissionMessage(t))
+	q := question.FromMessage(permissionMessage(t))
 	rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 	if err != nil {
 		t.Fatalf("NewRecord() error = %v", err)
@@ -170,7 +171,7 @@ func TestAnswer(t *testing.T) {
 			svc := newService(t, h)
 			ctx := context.Background()
 			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-			q := FromMessage(permissionMessage(t))
+			q := question.FromMessage(permissionMessage(t))
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
@@ -208,7 +209,7 @@ func TestAnswerClosedQuestion(t *testing.T) {
 			if tc.store {
 				storeTask(t, svc, "t1", tc.state)
 			}
-			q := FromMessage(permissionMessage(t))
+			q := question.FromMessage(permissionMessage(t))
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
@@ -255,7 +256,7 @@ func TestAnswerRecordChecksTheNumber(t *testing.T) {
 			if _, err := svc.tasks.Create(ctx, task); err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
-			q := FromMessage(numberedMessage(t, "tool1", tc.recordSeq))
+			q := question.FromMessage(numberedMessage(t, "tool1", tc.recordSeq))
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
@@ -276,7 +277,7 @@ func TestCloseKeepsQuestionClosed(t *testing.T) {
 	svc := newService(t, h)
 	ctx := context.Background()
 	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-	q := FromMessage(permissionMessage(t))
+	q := question.FromMessage(permissionMessage(t))
 	rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 	if err != nil {
 		t.Fatalf("NewRecord() error = %v", err)
@@ -307,14 +308,14 @@ func TestOnQuestion(t *testing.T) {
 		name       string
 		unattended bool
 		ownerChat  *Chat
-		question   *Question
+		question   *question.Question
 		wantAsked  []Chat
 		wantRecord bool
 	}{
 		{name: "attended task", ownerChat: &owner},
 		{name: "unattended task", unattended: true, ownerChat: &owner, wantAsked: []Chat{owner}, wantRecord: true},
 		{name: "unattended task without an owner chat", unattended: true, wantRecord: true},
-		{name: "not a permission question", unattended: true, ownerChat: &owner, question: &Question{Type: "input"}},
+		{name: "not a permission question", unattended: true, ownerChat: &owner, question: &question.Question{Type: "input"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -326,7 +327,7 @@ func TestOnQuestion(t *testing.T) {
 			})
 			q := tc.question
 			if q == nil {
-				q = FromMessage(permissionMessage(t))
+				q = question.FromMessage(permissionMessage(t))
 			}
 			ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna"})
 
@@ -387,7 +388,7 @@ func TestHandlePage(t *testing.T) {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
 			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-			q := FromMessage(permissionMessage(t))
+			q := question.FromMessage(permissionMessage(t))
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, q)
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
@@ -442,7 +443,7 @@ func TestPageURL(t *testing.T) {
 			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleMember}); err != nil {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
-			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, FromMessage(permissionMessage(t)))
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, question.FromMessage(permissionMessage(t)))
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
 			}
@@ -468,7 +469,7 @@ func TestHandlePageSetsSecurityHeaders(t *testing.T) {
 	svc := newService(t, &sendingHandler{})
 	ctx := context.Background()
 	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-	rec, err := svc.NewRecord(ctx, "t1", "c1", "", auth.OwnerID, FromMessage(permissionMessage(t)))
+	rec, err := svc.NewRecord(ctx, "t1", "c1", "", auth.OwnerID, question.FromMessage(permissionMessage(t)))
 	if err != nil {
 		t.Fatalf("NewRecord() error = %v", err)
 	}
@@ -578,7 +579,7 @@ func TestAnswerOutcome(t *testing.T) {
 			svc := newService(t, h)
 			ctx := context.Background()
 			storeTask(t, svc, "t1", tc.state)
-			q := FromMessage(permissionMessage(t))
+			q := question.FromMessage(permissionMessage(t))
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
@@ -635,17 +636,11 @@ func TestAnswerTask(t *testing.T) {
 			h := &scriptedHandler{errs: []error{tc.sendErr}}
 			svc := newService(t, h)
 			ctx := context.Background()
-			msg := permissionMessage(t)
-			if tc.taskSeq != 0 {
-				var err error
-				if msg, err = withSeq(msg, tc.taskSeq); err != nil {
-					t.Fatalf("withSeq() error = %v", err)
-				}
-			}
+			msg := questionMessage(t, "tool1", tc.taskSeq, [2]string{"once", "Allow"}, [2]string{"always", "Always allow"}, [2]string{"reject", ""})
 			if _, err := svc.tasks.Create(ctx, &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg}}); err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
-			q := FromMessage(permissionMessage(t))
+			q := question.FromMessage(permissionMessage(t))
 			if tc.record {
 				rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 				if err != nil {
@@ -688,7 +683,7 @@ func TestUserApprovalTimeoutRetriesWhileTheTaskIsBusy(t *testing.T) {
 	})
 	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
 
-	svc.OnQuestion(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, FromMessage(permissionMessage(t)))
+	svc.OnQuestion(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, question.FromMessage(permissionMessage(t)))
 
 	deadline := time.Now().Add(5 * time.Second)
 	for h.sent() < 2 {
@@ -708,7 +703,7 @@ func TestUserApprovalTimeoutRetriesWhileAnotherAnswerHoldsTheQuestion(t *testing
 	})
 	ctx := context.Background()
 	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
-	q := FromMessage(permissionMessage(t))
+	q := question.FromMessage(permissionMessage(t))
 	rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
 	if err != nil {
 		t.Fatalf("NewRecord() error = %v", err)

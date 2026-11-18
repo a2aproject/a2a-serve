@@ -28,6 +28,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
@@ -266,7 +268,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		case <-ctx.Done():
 			return
 		case <-e.stopped():
-			failStopped(execCtx, true)(yield)
+			runner.FailStopped(execCtx, true)(yield)
 			return
 		case o = <-outcomes:
 		}
@@ -325,9 +327,9 @@ func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2as
 // replyOption returns the option a reply chooses: structured input for the
 // question, a data part with an option, such as `a2a send --data-part`
 // sends without the structured input tag, or typed words.
-func replyOption(msg *a2a.Message, q *approvals.Question) (approvals.Option, bool) {
+func replyOption(msg *a2a.Message, q *question.Question) (question.Option, bool) {
 	if msg == nil {
-		return approvals.Option{}, false
+		return question.Option{}, false
 	}
 	for _, p := range msg.Parts {
 		meta, ok := structuredinput.GetPartMetadata(p)

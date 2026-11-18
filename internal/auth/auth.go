@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -434,14 +435,7 @@ func caller(h http.Header) string {
 }
 
 // BearerToken extracts the token of an Authorization header.
-func BearerToken(h string) (string, bool) {
-	scheme, tok, ok := strings.Cut(strings.TrimSpace(h), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return "", false
-	}
-	tok = strings.TrimSpace(tok)
-	return tok, tok != ""
-}
+func BearerToken(h string) (string, bool) { return httpserver.BearerToken(h) }
 
 // Pairing.
 

@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
@@ -125,7 +124,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		st.Public = ""
 	}
 	st.Messengers = s.supervisor.Status()
-	st.Egress = s.egress.status(cfg)
+	st.Egress = s.egressStatus(cfg)
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -192,12 +191,8 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	}
 	// Claude Code reloads its policy in open sessions too, so the agent asks
 	// about shell commands as soon as the rules deny some.
-	if cfg := s.rt.Config(); cfg.Sandbox != agentdir.SandboxLocal {
-		for _, lockHome := range []bool{false, true} {
-			if _, err := s.policies.write(cfg, lockHome, nil); err != nil {
-				return fmt.Errorf("writing the agent's policy: %w", err)
-			}
-		}
+	if err := s.runner.WritePolicies(); err != nil {
+		return err
 	}
 	return s.answerWaiting(ctx, nil)
 }

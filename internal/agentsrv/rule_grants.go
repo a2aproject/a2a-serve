@@ -23,10 +23,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // ruleAnswers saves what an answer to a permission question with the
@@ -47,7 +48,7 @@ type ruleAnswers struct {
 
 // record saves what opt, p's answer to q, the question of the task of
 // execCtx, allows.
-func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2asrv.ExecutorContext, q *approvals.Question, opt approvals.Option) error {
+func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2asrv.ExecutorContext, q *question.Question, opt question.Option) error {
 	if q.Rule == "" {
 		return nil
 	}
@@ -56,7 +57,7 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2a
 		return fmt.Errorf("checking task %s: %w", execCtx.TaskID, err)
 	}
 	own := p.ID == stored.User
-	if isRejection(opt.ID) && own {
+	if runner.IsRejection(opt.ID) && own {
 		if err := r.store.ResetToolTaps(ctx, stored.User, q.Rule); err != nil {
 			slog.Warn("resetting the taps on always allow", "task", execCtx.TaskID, "error", err)
 		}

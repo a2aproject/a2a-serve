@@ -12,12 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package project words what an agent's configuration means for the MCP
+// servers and skills of its workspace.
 package project
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
@@ -40,22 +44,39 @@ func Vars(cfg *agentdir.Config, secrets agentdir.Secrets) func(string) (string, 
 	}
 }
 
-// EnvVars returns the values ${VAR} in a project's .mcp.json can take in an
-// agent container that gets the --env NAME=value pairs of env and the
-// NAME=value pairs of the secrets it gets. Like [Vars], --env wins, and a
-// secret with an empty value has none.
-func EnvVars(env, secrets []string) func(string) (string, bool) {
-	return func(name string) (string, bool) {
-		for _, kv := range slices.Backward(env) {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-				return v, true
-			}
-		}
-		for _, kv := range secrets {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-				return v, v != ""
-			}
-		}
-		return "", false
+// UnknownServer is a name of a list of disabled servers that .mcp.json has
+// no server for.
+type UnknownServer struct {
+	Name string
+	// Suggestion is the server whose name is closest, or "".
+	Suggestion string
+	// Known are the names of the servers .mcp.json has.
+	Known []string
+}
+
+func (u UnknownServer) String() string {
+	msg := fmt.Sprintf("--disable-mcp %s names no server of %s", u.Name, workspace.MCPFile)
+	switch {
+	case u.Suggestion != "":
+		return msg + ": did you mean " + u.Suggestion + "?"
+	case len(u.Known) == 0:
+		return msg + "; it has none"
 	}
+	return msg + "; it has " + strings.Join(u.Known, ", ")
+}
+
+// UnknownDisabled returns the names of disabled that servers don't have.
+func UnknownDisabled(servers []workspace.MCPServer, disabled []string) []UnknownServer {
+	known := make([]string, len(servers))
+	for i, s := range servers {
+		known[i] = s.Name
+	}
+	var out []UnknownServer
+	for _, name := range disabled {
+		if slices.Contains(known, name) {
+			continue
+		}
+		out = append(out, UnknownServer{Name: name, Suggestion: agentdir.Closest(name, known), Known: known})
+	}
+	return out
 }

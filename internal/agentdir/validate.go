@@ -26,12 +26,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/speech"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // HarnessACP is the harness which runs any ACP agent given as a command.
@@ -503,11 +504,11 @@ func (c *Config) ContainerEnvErrors(secrets Secrets) []error {
 // checkBroadMount refuses a mount of src that exposes the user's home
 // directory, unless allowed names src.
 func checkBroadMount(label, src string, allowed []string) error {
-	broad, err := BroadMount(src)
+	broad, err := workspace.BroadMount(src)
 	if err != nil || !broad {
 		return err
 	}
-	if slices.ContainsFunc(allowed, func(p string) bool { return resolved(p) == resolved(src) }) {
+	if slices.ContainsFunc(allowed, func(p string) bool { return workspace.SamePath(p, src) }) {
 		return nil
 	}
 	return fmt.Errorf("%s includes your home directory, with your credentials and the secrets of other agents, and the sandbox would expose it to the agent; use a project directory, or pass --allow-broad-mount %s to mount it anyway", label, src)

@@ -34,6 +34,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
@@ -255,7 +256,7 @@ func TestInspectorPendingApprovals(t *testing.T) {
 	}
 	want := []inspector.Approval{{
 		Action: inspector.Path + "/questions/q1", Text: "git push origin main", ContextID: "local-c1", Contact: "reviewer",
-		Options: []approvals.Option{{ID: "allow", Label: "Allow"}},
+		Options: []question.Option{{ID: "allow", Label: "Allow"}},
 	}}
 	if diff := cmp.Diff(want, got, cmp.FilterPath(func(p cmp.Path) bool { return p.Last().String() == ".Created" }, cmp.Ignore())); diff != "" {
 		t.Fatalf("Inspector.PendingApprovals() wrong result (-want +got) diff = %s", diff)
@@ -348,7 +349,7 @@ func TestInspectorPendingApprovalsAnswerTheCurrentQuestionOfATask(t *testing.T) 
 	}
 	want := []inspector.Approval{{
 		Action: inspector.Path + "/questions/q-current", Text: "git push", ContextID: "c1",
-		Options: []approvals.Option{{ID: "once", Label: "Allow"}},
+		Options: []question.Option{{ID: "once", Label: "Allow"}},
 	}}
 	if diff := cmp.Diff(want, got, cmp.FilterPath(func(p cmp.Path) bool { return p.Last().String() == ".Created" }, cmp.Ignore())); diff != "" {
 		t.Fatalf("Inspector.PendingApprovals() wrong result (-want +got) diff = %s", diff)
@@ -459,7 +460,7 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 				t.Fatalf("POST task answer sent %d answers, want %d", len(sent), tc.wantSent)
 			}
 			for _, msg := range sent {
-				if diff := cmp.Diff(approvals.Ref{ID: "tool2", Seq: 2}, approvals.ReplyRef(msg)); diff != "" {
+				if diff := cmp.Diff(question.Ref{ID: "tool2", Seq: 2}, question.ReplyRef(msg)); diff != "" {
 					t.Fatalf("POST task answer sent an answer for the wrong question (-want +got) diff = %s", diff)
 				}
 			}

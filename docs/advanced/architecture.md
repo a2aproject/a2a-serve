@@ -59,4 +59,5 @@ Each provider is its own Go module, so the core binary carries none of their dep
 
 - **Why the `a2a` CLI.** It is already in the sandbox and covers the whole A2A protocol. ACP can pass only MCP servers to a session, and an MCP bridge adds a tool surface for the agent to learn.
 - **Why calls go through the server.** The server reaches the private network, contact tokens stay out of the sandbox, and the server can route approvals and late results to people.
+- **A core that runs the agent.** The executor, the sandbox, the egress boundary and the tool rules form a core that runs an ACP agent as an A2A executor, with one agent process per caller. The rest of the server decides who calls and what their process gets, and turns the configuration into the core's inputs. Other projects can build on the core without the rest.
 - **What survives a restart.** Conversations, schedules and the tasks the server watches for other agents are stored in the database. Tasks that were running fail on restart, and their open questions close.

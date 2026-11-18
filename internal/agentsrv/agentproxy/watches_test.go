@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -171,7 +172,7 @@ func (f *watchesFixture) waitPolls(t *testing.T, n int64) {
 	waitFor(t, "more polls of the watched task", func() bool { return f.remote.gets.Load() >= want })
 }
 
-func permissionQuestion(t *testing.T, title string) *approvals.Question {
+func permissionQuestion(t *testing.T, title string) *question.Question {
 	t.Helper()
 	req := permissionRequest()
 	req.Schema.Title = title
@@ -179,9 +180,9 @@ func permissionQuestion(t *testing.T, title string) *approvals.Question {
 	if err != nil {
 		t.Fatalf("structuredinput.NewRequestEvent() error = %v", err)
 	}
-	q := approvals.FromStatus(ev.Status)
+	q := question.FromStatus(ev.Status)
 	if q == nil {
-		t.Fatalf("approvals.FromStatus() = nil, want a permission question")
+		t.Fatalf("question.FromStatus() = nil, want a permission question")
 	}
 	return q
 }

@@ -20,8 +20,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 const quietUsage = "Print less on the terminal: keep the agent image pull and build output in the log"
@@ -87,7 +87,7 @@ directory.`,
 	f := cmd.Flags()
 	sf.addDirFlag(f)
 	mode.addRunFlags(f)
-	for _, name := range harness.ProfileNames() {
+	for _, name := range agent.ProfileNames() {
 		cmd.AddCommand(newHarnessCmd(cfg, sf, name))
 	}
 	cmd.AddCommand(
