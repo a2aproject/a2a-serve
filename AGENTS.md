@@ -30,9 +30,19 @@
 
 * Build components with constructors that take their dependencies explicitly. Don't patch fields after construction, and don't use package globals as test seams.
 * Dependencies point down. Lower packages don't import `agentsrv` or `cli`; move a shared helper down instead.
-* `core/` doesn't import frontend packages: no config, identities, store, chats or CLI. The frontend maps them to the core's inputs through `internal/agentcfg` and the runner's hooks, and words the core's typed errors.
+* `core/` doesn't import frontend packages: no config, identities, store, chats or CLI. The frontend maps them to the core's inputs through `internal/agentcfg` and the core's interfaces and hooks, and words the core's typed errors.
 * Give each behavior one source of truth. A setting, a list of live settings, or an operation on a running or stopped agent has one implementation, and the other places derive from it.
 * Code that writes the agent directory holds its lock.
+
+### Public API
+
+* Public packages are a contract we support, so design them for composition. Each one is a working object behind a small interface that is useful on its own. A composing package takes the built object and calls its methods. A package that re-exports internal types or settings structs doesn't count as an API.
+* Define an interface where users plug in their own implementation, and an opaque type with methods where only we implement. Data types can gain fields.
+* Keep parsers, matchers and other helpers in the module's `internal/` packages, which the frontend can use and other modules can't. Export a symbol only when an embedder needs it.
+* Separate what is fixed for an object's life from what applies live, and pass live values as functions or interfaces that read the current state.
+* The public API speaks A2A. ACP is an implementation detail of running the agent, and shows only where a custom agent has to speak it.
+* Imports between public packages point one way, and none imports the package that composes them. Enforce the import rules with a test.
+* Name packages and types so they read without stutter (`tools.Rules`, `agent.Profile`), and avoid names our users know with another meaning: `Runner` is ADK's term, `Controller` is Kubernetes'.
 
 ### Correctness
 
