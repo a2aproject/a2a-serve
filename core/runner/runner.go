@@ -37,7 +37,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
-	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"

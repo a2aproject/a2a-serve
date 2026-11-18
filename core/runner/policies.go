@@ -20,7 +20,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
