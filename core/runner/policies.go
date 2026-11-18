@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // policies writes the settings that the agent processes in containers
