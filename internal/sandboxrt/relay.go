@@ -286,7 +286,7 @@ func startRelay(ctx context.Context, spec RelaySpec) (stop func(context.Context)
 			err = errors.Join(err, rerr)
 		}
 	}()
-	if _, err := keyFile.WriteString("A2A_SERVE_RELAY_KEY=" + spec.Egress.RelayKey + "\n"); err != nil {
+	if _, err := keyFile.WriteString(boundary.EnvRelayKey + "=" + spec.Egress.RelayKey + "\n"); err != nil {
 		return nil, errors.Join(err, keyFile.Close())
 	}
 	if err := keyFile.Close(); err != nil {

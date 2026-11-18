@@ -89,6 +89,8 @@ type BoundaryConfig struct {
 	CA     *CA
 	// UpstreamRoots verify the hosts of Inject; nil uses the system's.
 	UpstreamRoots *x509.CertPool
+	// OnClose runs at the end of every Close; nil runs nothing.
+	OnClose func()
 }
 
 // Network tells what the policy needs to know about this host's network.
@@ -168,13 +170,27 @@ func Listen(path string, cfg BoundaryConfig) (*Boundary, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := b.ListenUnix(path); err != nil {
+		return nil, errors.Join(err, b.Close())
+	}
+	return b, nil
+}
+
+// ListenUnix serves b on a Unix socket at path, until b closes. It is
+// called at most once.
+func (b *Boundary) ListenUnix(path string) error {
 	ln, err := net.Listen("unix", path)
 	if err != nil {
-		return nil, fmt.Errorf("listening for the sandbox's connections on %s: %w", path, err)
+		return fmt.Errorf("listening for the sandbox's connections on %s: %w", path, err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return errors.Join(net.ErrClosed, ln.Close())
 	}
 	b.ln = ln
 	b.wg.Go(b.serve)
-	return b, nil
+	return nil
 }
 
 // Close stops the boundary and closes its open tunnels.
@@ -194,6 +210,9 @@ func (b *Boundary) Close() error {
 	b.mu.Unlock()
 	b.wg.Wait()
 	b.log.flush()
+	if b.cfg.OnClose != nil {
+		b.cfg.OnClose()
+	}
 	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}

@@ -36,6 +36,9 @@ const HTTPSPort = 443
 // sandbox's requests.
 type Provider struct {
 	Name string
+	// KeyEnv is the variable that clients read the API key from, such as
+	// ANTHROPIC_API_KEY.
+	KeyEnv string
 	// Host is the API host, reached on HTTPSPort.
 	Host string
 	// Header carries an API key, after Scheme.
@@ -60,23 +63,23 @@ type Provider struct {
 
 var providers = []Provider{
 	{
-		Name: "anthropic", Host: "api.anthropic.com", Header: "X-Api-Key",
+		Name: "anthropic", KeyEnv: "ANTHROPIC_API_KEY", Host: "api.anthropic.com", Header: "X-Api-Key",
 		TokenHeader: "Authorization", TokenScheme: "Bearer ", TokenKeys: []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"},
 		Endpoints: []string{"POST /v1/messages", "POST /v1/messages/count_tokens", "GET /v1/models", "GET /v1/models/*"},
 		prefix:    "sk-ant-api03-", tokenPrefix: "sk-ant-oat01-",
 	},
 	{
-		Name: "gemini", Host: "generativelanguage.googleapis.com", Header: "X-Goog-Api-Key", QueryKey: "key",
+		Name: "gemini", KeyEnv: "GEMINI_API_KEY", Host: "generativelanguage.googleapis.com", Header: "X-Goog-Api-Key", QueryKey: "key",
 		Endpoints: geminiEndpoints(),
 		prefix:    "AIza",
 	},
 	{
-		Name: "openai", Host: "api.openai.com", Header: "Authorization", Scheme: "Bearer ",
+		Name: "openai", KeyEnv: "OPENAI_API_KEY", Host: "api.openai.com", Header: "Authorization", Scheme: "Bearer ",
 		Endpoints: []string{"POST /v1/responses", "POST /v1/chat/completions", "POST /v1/completions", "POST /v1/embeddings", "GET /v1/models", "GET /v1/models/*"},
 		prefix:    "sk-proj-",
 	},
 	{
-		Name: "openrouter", Host: "openrouter.ai", Header: "Authorization", Scheme: "Bearer ",
+		Name: "openrouter", KeyEnv: "OPENROUTER_API_KEY", Host: "openrouter.ai", Header: "Authorization", Scheme: "Bearer ",
 		Endpoints: []string{"POST /api/v1/chat/completions", "POST /api/v1/completions", "POST /api/v1/embeddings", "GET /api/v1/models"},
 		prefix:    "sk-or-v1-",
 	},
@@ -229,7 +232,7 @@ func ParseHeaderRule(s string) (HeaderRule, error) {
 	switch {
 	case !ok || !httpguts.ValidHeaderFieldName(name):
 		return HeaderRule{}, invalid("want a header Name: value after the host")
-	case slices.Contains(reservedHeaders, r.Name) || strings.HasPrefix(r.Name, "Proxy-"):
+	case ReservedHeader(r.Name):
 		return HeaderRule{}, invalid("the server can't set the header " + r.Name)
 	case !httpguts.ValidHeaderFieldValue(value):
 		return HeaderRule{}, invalid("the value has a control character")
@@ -244,6 +247,13 @@ func ParseHeaderRule(s string) (HeaderRule, error) {
 // reservedHeaders frame the request or the connection, which the server
 // writes itself.
 var reservedHeaders = []string{"Host", "Content-Length", "Transfer-Encoding", "Connection", "Keep-Alive", "Te", "Trailer", "Upgrade"}
+
+// ReservedHeader reports whether the server writes the header name itself,
+// so that a rule can't set it.
+func ReservedHeader(name string) bool {
+	name = http.CanonicalHeaderKey(name)
+	return slices.Contains(reservedHeaders, name) || strings.HasPrefix(name, "Proxy-")
+}
 
 // ParseInjectTarget parses the host[:port] of a rule that adds a header: a
 // host name, with the HTTPS port by default.

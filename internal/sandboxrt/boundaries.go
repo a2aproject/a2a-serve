@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -74,10 +75,18 @@ type BoundaryRules struct {
 // Opener returns the function that opens the boundary of the container
 // named name with rules.
 func (e *Boundaries) Opener(name string, rules BoundaryRules) OpenEgress {
+	return e.OpenerOf(func(gateway func(ctx context.Context, port uint16) (netip.AddrPort, bool)) (*boundary.Boundary, error) {
+		return boundary.New(boundary.BoundaryConfig{Sandbox: name, Policy: rules.Policy, HostGateway: gateway, Blocks: e.blocks, Inject: rules.Inject, CA: rules.CA})
+	})
+}
+
+// OpenerOf returns the function that serves the boundary that open makes:
+// on an egress socket alone in a directory of its own, or through the
+// relay listener with a key of its own.
+func (e *Boundaries) OpenerOf(open func(hostGateway func(ctx context.Context, port uint16) (netip.AddrPort, bool)) (*boundary.Boundary, error)) OpenEgress {
 	return func(gateway HostGatewayFunc, relay bool) (EgressEndpoint, error) {
-		cfg := boundary.BoundaryConfig{Sandbox: name, Policy: rules.Policy, HostGateway: gateway, Blocks: e.blocks, Inject: rules.Inject, CA: rules.CA}
 		if relay {
-			return e.openRelayed(cfg)
+			return e.openRelayed(func() (*boundary.Boundary, error) { return open(gateway) })
 		}
 		if err := fsutil.MkdirPrivate(e.dir); err != nil {
 			return EgressEndpoint{}, err
@@ -86,10 +95,13 @@ func (e *Boundaries) Opener(name string, rules BoundaryRules) OpenEgress {
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			return EgressEndpoint{}, err
 		}
-		sock := filepath.Join(dir, boundary.SocketName)
-		b, err := boundary.Listen(sock, cfg)
+		b, err := open(gateway)
 		if err != nil {
 			return EgressEndpoint{}, errors.Join(err, os.RemoveAll(dir))
+		}
+		sock := filepath.Join(dir, boundary.SocketName)
+		if err := b.ListenUnix(sock); err != nil {
+			return EgressEndpoint{}, errors.Join(err, b.Close(), os.RemoveAll(dir))
 		}
 		return EgressEndpoint{Socket: sock, Close: func() error { return errors.Join(b.Close(), os.RemoveAll(dir)) }}, nil
 	}
@@ -97,12 +109,12 @@ func (e *Boundaries) Opener(name string, rules BoundaryRules) OpenEgress {
 
 // openRelayed opens a boundary that a relay container reaches through the
 // server's relay listener, with a key of its own.
-func (e *Boundaries) openRelayed(cfg boundary.BoundaryConfig) (EgressEndpoint, error) {
+func (e *Boundaries) openRelayed(open func() (*boundary.Boundary, error)) (EgressEndpoint, error) {
 	relays, addr, mount, err := e.relayListener()
 	if err != nil {
 		return EgressEndpoint{}, err
 	}
-	b, err := boundary.New(cfg)
+	b, err := open()
 	if err != nil {
 		return EgressEndpoint{}, err
 	}
