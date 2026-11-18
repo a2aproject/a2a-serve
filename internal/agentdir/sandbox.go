@@ -20,8 +20,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // SandboxRule sets what the agent containers of the callers it matches get:
@@ -41,14 +41,14 @@ type SandboxRule struct {
 
 // Storage modes of a sandbox rule.
 const (
-	StorageShared   = workspace.StorageShared
-	StorageReadOnly = workspace.StorageReadOnly
-	StorageOwn      = workspace.StorageOwn
-	StorageEmpty    = workspace.StorageEmpty
+	StorageShared   = workspaces.StorageShared
+	StorageReadOnly = workspaces.StorageReadOnly
+	StorageOwn      = workspaces.StorageOwn
+	StorageEmpty    = workspaces.StorageEmpty
 )
 
 // StorageModes are the storage modes, from the most access to the least.
-var StorageModes = workspace.StorageModes
+var StorageModes = workspaces.StorageModes
 
 // SecretsAll and SecretsNone in the secrets of a rule pass every secret of
 // the agent, or none. Each goes alone.

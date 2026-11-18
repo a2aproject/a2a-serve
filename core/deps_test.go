@@ -35,8 +35,10 @@ var sharedLeaves = []string{
 	module + "internal/fsutil",
 	module + "internal/httpserver",
 	module + "internal/jsonhttp",
+	module + "internal/projectfiles",
 	module + "internal/testutil",
 	module + "internal/turncount",
+	module + "internal/workspaces",
 }
 
 // platforms are the systems whose files the test lists, since go list sees

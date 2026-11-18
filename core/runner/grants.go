@@ -27,7 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // Refusals of turns in processes whose grant changed.
@@ -240,18 +240,18 @@ func (r *Runner) applyGrantChange(ctx context.Context, procs *procs, key string)
 // grantMounts returns the mounts of a container with storage: as they are
 // for shared, read-only for read-only and own, and only the workspace for
 // empty. Own and empty mount a private workspace in place of the workspace.
-func grantMounts(storage workspace.Storage, mounts []agent.Mount) []agent.Mount {
+func grantMounts(storage workspaces.Storage, mounts []agent.Mount) []agent.Mount {
 	switch storage {
-	case workspace.StorageShared:
+	case workspaces.StorageShared:
 		return mounts
-	case workspace.StorageEmpty:
+	case workspaces.StorageEmpty:
 		ws := mounts[0]
 		ws.ReadOnly = false
 		return []agent.Mount{ws}
 	}
 	out := slices.Clone(mounts)
 	for i := range out {
-		out[i].ReadOnly = storage != workspace.StorageOwn || i > 0
+		out[i].ReadOnly = storage != workspaces.StorageOwn || i > 0
 	}
 	return out
 }
@@ -274,11 +274,11 @@ func (r *Runner) grantSandbox(ctx context.Context, spec *agent.Spec, cfg Spec, k
 	}
 	ws := spec.Mounts[0].Src
 	spec.Mounts = grantMounts(g.Storage, spec.Mounts)
-	if g.Storage != workspace.StorageOwn && g.Storage != workspace.StorageEmpty {
+	if g.Storage != workspaces.StorageOwn && g.Storage != workspaces.StorageEmpty {
 		return inject, nil
 	}
 	dir, err := r.copies.Prepare(ctx, proc.CopyName, proc.Owner, g.Storage, ws)
-	if errors.Is(err, workspace.ErrTooLarge) || errors.Is(err, workspace.ErrTooMany) {
+	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
 		return nil, &CopyError{Err: err}
 	}
 	if err != nil {

@@ -24,7 +24,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // sessionParams passes the MCP servers of the project's .mcp.json to each
@@ -72,19 +73,19 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 // sessionMCP returns the params of a session of the agent process proc in
 // the workspace ws, with the MCP servers of the workspace it gets, and the
 // servers it found.
-func (r *Runner) sessionMCP(ctx context.Context, spec Spec, ws string, proc Process) (a2aacp.SessionParams, []workspace.MCPServer, error) {
+func (r *Runner) sessionMCP(ctx context.Context, spec Spec, ws string, proc Process) (a2aacp.SessionParams, []projectfiles.MCPServer, error) {
 	// The servers come from the workspace the container gets: none for an
 	// empty one, and those of its copy for its own.
 	src := ws
 	if spec.Sandbox != agent.SandboxLocal {
 		switch proc.Grant.Storage {
-		case workspace.StorageEmpty:
+		case workspaces.StorageEmpty:
 			return a2aacp.SessionParams{Cwd: ws}, nil, nil
-		case workspace.StorageOwn:
-			src = r.copyDir(proc, workspace.StorageOwn)
+		case workspaces.StorageOwn:
+			src = r.copyDir(proc, workspaces.StorageOwn)
 		}
 	}
-	found, err := workspace.LoadMCP(src)
+	found, err := projectfiles.LoadMCP(src)
 	if err != nil {
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
 		return a2aacp.SessionParams{Cwd: ws}, nil, nil
@@ -95,7 +96,7 @@ func (r *Runner) sessionMCP(ctx context.Context, spec Spec, ws string, proc Proc
 	if err != nil {
 		return a2aacp.SessionParams{}, nil, err
 	}
-	vars := workspace.EnvVars(spec.Env, granted)
+	vars := projectfiles.EnvVars(spec.Env, granted)
 	var servers []json.RawMessage
 	for _, srv := range found {
 		if slices.Contains(spec.DisabledMCP, srv.Name) {
@@ -126,7 +127,7 @@ func (r *Runner) mcpServerNames() []string {
 	if err != nil {
 		return nil
 	}
-	found, err := workspace.LoadMCP(ws)
+	found, err := projectfiles.LoadMCP(ws)
 	if err != nil {
 		return nil
 	}

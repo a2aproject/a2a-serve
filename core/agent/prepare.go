@@ -29,8 +29,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Sandboxes a harness can run in.
@@ -220,14 +220,14 @@ func nestedAgents(spec Spec) ([]string, error) {
 	}
 	var out []string
 	for _, m := range spec.Mounts {
-		broad, err := workspace.BroadMount(m.Src)
+		broad, err := projectfiles.BroadMount(m.Src)
 		if err != nil {
 			return nil, err
 		}
 		if broad {
 			continue
 		}
-		found, err := workspace.FindBelow(fsutil.ResolvePath(m.Src), maxNestedScan)
+		found, err := projectfiles.FindBelow(fsutil.ResolvePath(m.Src), maxNestedScan)
 		if err != nil {
 			return nil, err
 		}
@@ -442,7 +442,7 @@ func maskMCP(mask string, mounts []Mount) ([]sandbox.Mask, error) {
 	if err := fsutil.WriteAtomic(mask, []byte(emptyMCP), 0o644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", mask, err)
 	}
-	file := filepath.Join(mounts[0].Src, workspace.MCPFile)
+	file := filepath.Join(mounts[0].Src, projectfiles.MCPFile)
 	if err := writeIfMissing(file, []byte(emptyMCP)); err != nil {
 		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the agent: %w", file, err)
 	}

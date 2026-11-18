@@ -23,7 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 func mkdir(t *testing.T, dir string) string {
@@ -144,16 +144,16 @@ func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
 		{
 			name: "agent directory that is a symlink in the workspace",
 			setup: func(t *testing.T, ws, outside string) ([]Mount, []string, string) {
-				mkdir(t, filepath.Join(outside, workspace.AgentDir))
+				mkdir(t, filepath.Join(outside, projectfiles.AgentDir))
 				agent := symlink(t, outside, filepath.Join(ws, "agent"))
-				return []Mount{{Src: ws, Dst: ws}}, []string{filepath.Join(agent, workspace.AgentDir)}, ""
+				return []Mount{{Src: ws, Dst: ws}}, []string{filepath.Join(agent, projectfiles.AgentDir)}, ""
 			},
 			wantErr: "goes through the symlink",
 		},
 		{
 			name: "home under a symlink in the workspace",
 			setup: func(t *testing.T, ws, outside string) ([]Mount, []string, string) {
-				a2a := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+				a2a := mkdir(t, filepath.Join(ws, projectfiles.AgentDir))
 				state := symlink(t, outside, filepath.Join(a2a, "state"))
 				return []Mount{{Src: ws, Dst: ws}}, []string{a2a}, filepath.Join(state, "home")
 			},
@@ -182,7 +182,7 @@ func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, e := range entries {
-				if e.Name() != workspace.AgentDir && e.Name() != "sub" && e.Name() != "outer" {
+				if e.Name() != projectfiles.AgentDir && e.Name() != "sub" && e.Name() != "outer" {
 					t.Fatalf("Prepare() wrote %s through the symlink", e.Name())
 				}
 			}
@@ -217,7 +217,7 @@ func newAgentLayout(t *testing.T) agentLayout {
 	t.Helper()
 	ws := t.TempDir()
 	root := filepath.Join(ws, "code", "proj")
-	a2a := filepath.Join(root, workspace.AgentDir)
+	a2a := filepath.Join(root, projectfiles.AgentDir)
 	state := filepath.Join(a2a, "state")
 	home := mkdir(t, filepath.Join(state, "home"))
 	return agentLayout{ws: ws, root: root, a2a: a2a, state: state, home: home}

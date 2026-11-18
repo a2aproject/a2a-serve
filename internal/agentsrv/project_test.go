@@ -25,11 +25,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -42,7 +42,7 @@ const testMCPFile = `{"mcpServers": {
 func startProjectServer(t *testing.T) *testServer {
 	t.Helper()
 	d := testutil.ShortTempDir(t)
-	if err := os.WriteFile(filepath.Join(d, workspace.MCPFile), []byte(testMCPFile), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(d, projectfiles.MCPFile), []byte(testMCPFile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	skill := filepath.Join(d, ".agents", "skills", "deploy")
@@ -88,14 +88,14 @@ func TestStatusListsProject(t *testing.T) {
 		t.Fatalf("Status() error = %v", err)
 	}
 	wantServers := []controlapi.MCPServerStatus{
-		{Name: "api", Type: workspace.MCPHTTP, Summary: "http https://api.example.com/mcp", Missing: []string{"API_KEY"}},
-		{Name: "bot", Type: workspace.MCPStdio, Summary: "bot-mcp", Missing: []string{"CODER_BOT_TOKEN"}},
-		{Name: "github", Type: workspace.MCPStdio, Summary: "npx -y server-github"},
+		{Name: "api", Type: projectfiles.MCPHTTP, Summary: "http https://api.example.com/mcp", Missing: []string{"API_KEY"}},
+		{Name: "bot", Type: projectfiles.MCPStdio, Summary: "bot-mcp", Missing: []string{"CODER_BOT_TOKEN"}},
+		{Name: "github", Type: projectfiles.MCPStdio, Summary: "npx -y server-github"},
 	}
 	if diff := cmp.Diff(wantServers, st.MCPServers); diff != "" {
 		t.Fatalf("Status() wrong MCP servers (-want +got) diff = %s", diff)
 	}
-	if diff := cmp.Diff([]workspace.Skill{{Name: "deploy", Dir: ".agents/skills"}}, st.Skills); diff != "" {
+	if diff := cmp.Diff([]projectfiles.Skill{{Name: "deploy", Dir: ".agents/skills"}}, st.Skills); diff != "" {
 		t.Fatalf("Status() wrong skills (-want +got) diff = %s", diff)
 	}
 }
@@ -132,9 +132,9 @@ func TestDisabledMCPServersApplyLive(t *testing.T) {
 		t.Fatalf("Status() error = %v", err)
 	}
 	wantServers := []controlapi.MCPServerStatus{
-		{Name: "api", Type: workspace.MCPHTTP, Summary: "http https://api.example.com/mcp", Disabled: true},
-		{Name: "bot", Type: workspace.MCPStdio, Summary: "bot-mcp", Missing: []string{"CODER_BOT_TOKEN"}},
-		{Name: "github", Type: workspace.MCPStdio, Summary: "npx -y server-github", Disabled: true},
+		{Name: "api", Type: projectfiles.MCPHTTP, Summary: "http https://api.example.com/mcp", Disabled: true},
+		{Name: "bot", Type: projectfiles.MCPStdio, Summary: "bot-mcp", Missing: []string{"CODER_BOT_TOKEN"}},
+		{Name: "github", Type: projectfiles.MCPStdio, Summary: "npx -y server-github", Disabled: true},
 	}
 	if diff := cmp.Diff(wantServers, st.MCPServers); diff != "" {
 		t.Fatalf("Status() wrong MCP servers (-want +got) diff = %s", diff)
@@ -206,7 +206,7 @@ func TestProjectStatusWithRefusedMCPFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			path := filepath.Join(root, workspace.MCPFile)
+			path := filepath.Join(root, projectfiles.MCPFile)
 			tc.setup(t, path)
 			skill := filepath.Join(root, ".agents", "skills", "deploy")
 			if err := os.MkdirAll(skill, 0o755); err != nil {
@@ -224,7 +224,7 @@ func TestProjectStatusWithRefusedMCPFile(t *testing.T) {
 			if len(servers) != 0 {
 				t.Fatalf("ProjectStatus() servers = %v, want none", servers)
 			}
-			if diff := cmp.Diff([]workspace.Skill{{Name: "deploy", Dir: ".agents/skills"}}, skills); diff != "" {
+			if diff := cmp.Diff([]projectfiles.Skill{{Name: "deploy", Dir: ".agents/skills"}}, skills); diff != "" {
 				t.Fatalf("ProjectStatus() wrong skills (-want +got) diff = %s", diff)
 			}
 		})

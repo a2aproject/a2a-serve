@@ -23,20 +23,20 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // skillReader is a profile which reads skills from some of the project
 // skill folders, and from a folder in its home.
 type skillReader interface {
-	// projectSkillDirs are the entries of [workspace.SkillDirs] it reads.
+	// projectSkillDirs are the entries of [projectfiles.SkillDirs] it reads.
 	projectSkillDirs() []string
 	// homeSkillDir is the folder in its home it reads, relative to the home.
 	homeSkillDir() string
 }
 
-func (opencode) projectSkillDirs() []string { return workspace.SkillDirs }
+func (opencode) projectSkillDirs() []string { return projectfiles.SkillDirs }
 func (opencode) homeSkillDir() string       { return filepath.Join(".config", "opencode", "skills") }
 
 func (claude) projectSkillDirs() []string { return []string{".claude/skills"} }
@@ -55,7 +55,7 @@ func LinkSkills(p Profile, ws Workspace) (err error) {
 	if !ok {
 		return nil
 	}
-	skills, err := workspace.Skills(ws.Dir)
+	skills, err := projectfiles.Skills(ws.Dir)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func removeStaleSkillLinks(root *os.Root, home, dir string, want map[string]stri
 }
 
 func isProjectSkill(root, path string) bool {
-	for _, dir := range workspace.SkillDirs {
+	for _, dir := range projectfiles.SkillDirs {
 		if strings.HasPrefix(path, filepath.Join(root, dir)+string(filepath.Separator)) {
 			return true
 		}

@@ -18,19 +18,19 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // ProjectStatus lists the MCP servers and skills the project of cfg brings.
-func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) (servers []controlapi.MCPServerStatus, skills []workspace.Skill, err error) {
+func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) (servers []controlapi.MCPServerStatus, skills []projectfiles.Skill, err error) {
 	ws, err := d.WorkspaceMount(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	found, mcpErr := workspace.LoadMCP(ws.Src)
+	found, mcpErr := projectfiles.LoadMCP(ws.Src)
 	if mcpErr != nil {
 		mcpErr = fmt.Errorf("%w; the agent gets no MCP servers from it", mcpErr)
 	}
@@ -42,7 +42,7 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 		}
 		servers = append(servers, st)
 	}
-	skills, err = workspace.Skills(ws.Src)
+	skills, err = projectfiles.Skills(ws.Src)
 	return servers, skills, errors.Join(mcpErr, err)
 }
 

@@ -34,7 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -437,9 +437,9 @@ func tmpfsMounts(args []string) []string {
 func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 	sandboxtest.FakeDocker(t, runningDocker)
 	ws, docs := t.TempDir(), t.TempDir()
-	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
-	mkdir(t, filepath.Join(ws, "sub", "deeper", workspace.AgentDir, "state"))
-	mkdir(t, filepath.Join(docs, "x", workspace.AgentDir))
+	own := mkdir(t, filepath.Join(ws, projectfiles.AgentDir))
+	mkdir(t, filepath.Join(ws, "sub", "deeper", projectfiles.AgentDir, "state"))
+	mkdir(t, filepath.Join(docs, "x", projectfiles.AgentDir))
 
 	p, err := startDocker(t, Spec{
 		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
@@ -453,8 +453,8 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 
 	want := []string{
 		"type=tmpfs,dst=" + own + ",readonly",
-		"type=tmpfs,dst=" + filepath.Join(ws, "sub", "deeper", workspace.AgentDir) + ",readonly",
-		"type=tmpfs,dst=/docs/x/" + workspace.AgentDir + ",readonly",
+		"type=tmpfs,dst=" + filepath.Join(ws, "sub", "deeper", projectfiles.AgentDir) + ",readonly",
+		"type=tmpfs,dst=/docs/x/" + projectfiles.AgentDir + ",readonly",
 	}
 	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
 		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
@@ -466,7 +466,7 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 	if err := startErr(t, p); err != nil {
 		t.Fatalf("Prepared.Start() error = %v, want nil", err)
 	}
-	mkdir(t, filepath.Join(ws, "later", workspace.AgentDir))
+	mkdir(t, filepath.Join(ws, "later", projectfiles.AgentDir))
 	if _, ok := errors.AsType[*NestedAgentsError](startErr(t, p)); !ok {
 		t.Fatalf("Prepared.Start() error = %v, want a restart for the agent created later", startErr(t, p))
 	}
@@ -475,8 +475,8 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
 	sandboxtest.FakeDocker(t, runningDocker)
 	ws := t.TempDir()
-	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
-	leftover := mkdir(t, filepath.Join(ws, workspace.RestorePrefix+"123", "state"))
+	own := mkdir(t, filepath.Join(ws, projectfiles.AgentDir))
+	leftover := mkdir(t, filepath.Join(ws, projectfiles.RestorePrefix+"123", "state"))
 
 	p, err := startDocker(t, Spec{
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
@@ -492,7 +492,7 @@ func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
 	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
 		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
 	}
-	mkdir(t, filepath.Join(ws, "sub", workspace.RestorePrefix+"456"))
+	mkdir(t, filepath.Join(ws, "sub", projectfiles.RestorePrefix+"456"))
 	if _, ok := errors.AsType[*NestedAgentsError](startErr(t, p)); !ok {
 		t.Fatalf("Prepared.Start() error = %v, want a restart for the restore started later", startErr(t, p))
 	}
@@ -501,7 +501,7 @@ func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
 func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 	sandboxtest.FakeDocker(t, runningDocker)
 	ws := t.TempDir()
-	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+	own := mkdir(t, filepath.Join(ws, projectfiles.AgentDir))
 
 	p, err := startDocker(t, Spec{
 		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: "/", Dst: "/host", ReadOnly: true}},
@@ -522,7 +522,7 @@ func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
 	t.Parallel()
 	ws := t.TempDir()
-	mkdir(t, filepath.Join(ws, "sub", workspace.AgentDir))
+	mkdir(t, filepath.Join(ws, "sub", projectfiles.AgentDir))
 
 	p, err := Prepare(context.Background(), Spec{
 		Profile: claude{},
@@ -554,7 +554,7 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, home, state := t.TempDir(), t.TempDir(), t.TempDir()
-			mcpFile := filepath.Join(ws, workspace.MCPFile)
+			mcpFile := filepath.Join(ws, projectfiles.MCPFile)
 			if tc.existing != "" {
 				if err := os.WriteFile(mcpFile, []byte(tc.existing), 0o644); err != nil {
 					t.Fatal(err)
@@ -583,7 +583,7 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 					mounts = append(mounts, output(t, p)[i+1])
 				}
 			}
-			wantMounts := []string{ws + ":" + ws, ws + ":/copy:ro", mask + ":" + mcpFile + ":ro", mask + ":/copy/" + workspace.MCPFile + ":ro", home + ":" + ContainerHome}
+			wantMounts := []string{ws + ":" + ws, ws + ":/copy:ro", mask + ":" + mcpFile + ":ro", mask + ":/copy/" + projectfiles.MCPFile + ":ro", home + ":" + ContainerHome}
 			if diff := cmp.Diff(wantMounts, mounts); diff != "" {
 				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
 			}
@@ -592,7 +592,7 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(tc.want, string(got)); diff != "" {
-				t.Fatalf("Prepare() changed %s (-want +got) diff = %s", workspace.MCPFile, diff)
+				t.Fatalf("Prepare() changed %s (-want +got) diff = %s", projectfiles.MCPFile, diff)
 			}
 			gotMask, err := os.ReadFile(mask)
 			if err != nil {
@@ -674,7 +674,7 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, docs, state := t.TempDir(), t.TempDir(), t.TempDir()
-			hidden := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+			hidden := mkdir(t, filepath.Join(ws, projectfiles.AgentDir))
 			copyDir := mkdir(t, filepath.Join(hidden, "state", "workspaces", "ben"))
 			mask := filepath.Join(state, "config-mask.json")
 			writeTestFile(t, filepath.Join(ws, "opencode.json"), `{"permission": {"bash": "allow"}}`)

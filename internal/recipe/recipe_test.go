@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 const (
@@ -87,11 +87,11 @@ func TestLoad(t *testing.T) {
 				"OPENROUTER_API_KEY": {Description: "model key"},
 			},
 		},
-		MCP: []workspace.MCPServer{
-			{Name: "grafana", Type: workspace.MCPStdio, Command: "uvx", Args: []string{"mcp-grafana"}, Env: map[string]string{"GRAFANA_URL": "${GRAFANA_URL}", "GRAFANA_TOKEN": "${GRAFANA_TOKEN}"}},
-			{Name: "kubernetes", Type: workspace.MCPStdio, Command: "npx", Args: []string{"kubernetes-mcp-server"}, Env: map[string]string{"KUBECONFIG": "/kube/config"}},
+		MCP: []projectfiles.MCPServer{
+			{Name: "grafana", Type: projectfiles.MCPStdio, Command: "uvx", Args: []string{"mcp-grafana"}, Env: map[string]string{"GRAFANA_URL": "${GRAFANA_URL}", "GRAFANA_TOKEN": "${GRAFANA_TOKEN}"}},
+			{Name: "kubernetes", Type: projectfiles.MCPStdio, Command: "npx", Args: []string{"kubernetes-mcp-server"}, Env: map[string]string{"KUBECONFIG": "/kube/config"}},
 		},
-		Skills: []workspace.Skill{{Name: "triage", Dir: ".agents/skills"}},
+		Skills: []projectfiles.Skill{{Name: "triage", Dir: ".agents/skills"}},
 		Files: Files{
 			".mcp.json":                      {Hash: sha(testMCP), Size: int64(len(testMCP))},
 			"AGENTS.md":                      {Hash: sha("instructions"), Size: 12},

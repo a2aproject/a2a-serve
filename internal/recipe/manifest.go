@@ -26,8 +26,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // ManifestFile is the name of the file in .a2a that describes a recipe's
@@ -98,7 +98,7 @@ func ParseManifest(data []byte) (*Manifest, error) {
 
 // check checks that the manifest names only servers of .mcp.json, mounts of
 // cfg, and variables the servers or the secrets of cfg have.
-func (m *Manifest) check(cfg *agentdir.Config, servers []workspace.MCPServer) error {
+func (m *Manifest) check(cfg *agentdir.Config, servers []projectfiles.MCPServer) error {
 	vars := map[string]bool{}
 	known := map[string]bool{}
 	for _, s := range servers {

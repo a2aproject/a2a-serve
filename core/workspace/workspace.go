@@ -12,52 +12,61 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package workspace handles the workspace an agent works in: how a
-// container sees it, the private copies of containers that get their own,
-// and what a project brings for its agent, such as the MCP servers of its
-// .mcp.json and the skills in its skill folders.
+// Package workspace gives each agent process the project directory it works
+// in: a directory shared by all processes, a private copy per process, or an
+// empty directory per process.
 package workspace
 
 import (
-	"slices"
-	"strings"
+	"context"
+	"errors"
 )
 
-// Storage is how a container sees the workspace and the other mounts.
-type Storage = string
+// Workspace gives each process its project directory.
+type Workspace interface {
+	// Attach returns the directory of the process of key, and keeps it until
+	// Release. Copies prepare a copy here.
+	Attach(ctx context.Context, key string) (Attachment, error)
+}
 
-// Storage modes.
-const (
-	// StorageShared mounts the workspace and mounts as configured.
-	StorageShared Storage = "shared"
-	// StorageReadOnly mounts the workspace and mounts read-only.
-	StorageReadOnly Storage = "read-only"
-	// StorageOwn mounts a private copy of the workspace, and the mounts
-	// read-only.
-	StorageOwn Storage = "own"
-	// StorageEmpty mounts an empty private workspace, and no mounts.
-	StorageEmpty Storage = "empty"
-)
+// Attachment is the directory of a process.
+type Attachment struct {
+	// Dir is the directory on the host.
+	Dir string
+	// Path is where the process sees the directory; Dir if empty.
+	Path     string
+	ReadOnly bool
+	// Release ends the attachment. Private directories stay for the next
+	// Attach of the same key.
+	Release func() error
+}
 
-// StorageModes are the storage modes, from the most access to the least.
-var StorageModes = []Storage{StorageShared, StorageOwn, StorageReadOnly, StorageEmpty}
+// Dir returns the workspace of the directory path, which all processes share
+// and may change.
+func Dir(path string) Workspace { return dirWorkspace(path) }
 
-// EnvVars returns the values ${VAR} in a project's .mcp.json can take in an
-// agent container that gets the NAME=value pairs of env and the NAME=value
-// pairs of the secrets it gets. env wins, and a secret with an empty value
-// has none.
-func EnvVars(env, secrets []string) func(string) (string, bool) {
-	return func(name string) (string, bool) {
-		for _, kv := range slices.Backward(env) {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-				return v, true
-			}
-		}
-		for _, kv := range secrets {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-				return v, v != ""
-			}
-		}
-		return "", false
+// ReadOnly returns w with the directories it attaches marked read-only.
+func ReadOnly(w Workspace) Workspace { return readOnly{w} }
+
+type dirWorkspace string
+
+func (d dirWorkspace) Attach(ctx context.Context, key string) (Attachment, error) {
+	if err := ctx.Err(); err != nil {
+		return Attachment{}, err
 	}
+	return Attachment{Dir: string(d), Release: func() error { return nil }}, nil
+}
+
+type readOnly struct{ w Workspace }
+
+func (r readOnly) Attach(ctx context.Context, key string) (Attachment, error) {
+	if r.w == nil {
+		return Attachment{}, errors.New("workspace: no workspace to make read-only")
+	}
+	a, err := r.w.Attach(ctx, key)
+	if err != nil {
+		return Attachment{}, err
+	}
+	a.ReadOnly = true
+	return a, nil
 }

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workspace
+// Package projectfiles reads what a project brings for its agent: the MCP
+// servers of its .mcp.json, the skills in its skill folders and the agent
+// config files, and finds the agent directories in a workspace.
+package projectfiles
 
 import (
 	"errors"

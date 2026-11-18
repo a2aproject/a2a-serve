@@ -25,15 +25,15 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // emptyConfig is an agent configuration file that changes nothing.
 const emptyConfig = "{}\n"
 
 // configReader is a profile which reads some of the project configuration
-// files of [workspace.AgentConfigFiles].
+// files of [projectfiles.AgentConfigFiles].
 type configReader interface {
 	projectConfigFiles() []string
 	// readsParentConfig reports whether it also reads them in the folders
@@ -41,9 +41,9 @@ type configReader interface {
 	readsParentConfig() bool
 }
 
-func (opencode) projectConfigFiles() []string { return workspace.OpencodeConfigFiles }
+func (opencode) projectConfigFiles() []string { return projectfiles.OpencodeConfigFiles }
 func (opencode) readsParentConfig() bool      { return true }
-func (claude) projectConfigFiles() []string   { return workspace.ClaudeConfigFiles }
+func (claude) projectConfigFiles() []string   { return projectfiles.ClaudeConfigFiles }
 func (claude) readsParentConfig() bool        { return false }
 
 // configFiles returns the project configuration files p reads, and whether
@@ -56,7 +56,7 @@ func configFiles(p Profile) ([]string, bool) {
 	if r, ok := p.(configReader); ok {
 		return r.projectConfigFiles(), r.readsParentConfig()
 	}
-	return workspace.AgentConfigFiles, true
+	return projectfiles.AgentConfigFiles, true
 }
 
 // opencodeOwnFiles are what opencode writes into a configuration folder

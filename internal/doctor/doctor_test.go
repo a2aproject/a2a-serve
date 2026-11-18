@@ -33,7 +33,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/core/agent"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
@@ -41,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -847,7 +847,7 @@ func TestAgentChecks(t *testing.T) {
 					t.Fatalf("SaveSecrets() error = %v", err)
 				}
 				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}}}`
-				if err := os.WriteFile(filepath.Join(d.Root, workspace.MCPFile), []byte(mcp), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte(mcp), 0o644); err != nil {
 					t.Fatalf("os.WriteFile() error = %v", err)
 				}
 			},
@@ -859,7 +859,7 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
 				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}, "api": {"url": "https://x/${KEY}"}}}`
-				if err := os.WriteFile(filepath.Join(d.Root, workspace.MCPFile), []byte(mcp), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte(mcp), 0o644); err != nil {
 					t.Fatalf("os.WriteFile() error = %v", err)
 				}
 			},
@@ -871,7 +871,7 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
 				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}, "api": {"url": "https://x/${KEY}"}}}`
-				if err := os.WriteFile(filepath.Join(d.Root, workspace.MCPFile), []byte(mcp), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte(mcp), 0o644); err != nil {
 					t.Fatalf("os.WriteFile() error = %v", err)
 				}
 			},
@@ -883,7 +883,7 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["claude-agent-acp"] = "/usr/bin/claude-agent-acp"
 				mcp := `{"mcpServers": {"github": {"command": "gh-mcp"}}}`
-				if err := os.WriteFile(filepath.Join(d.Root, workspace.MCPFile), []byte(mcp), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte(mcp), 0o644); err != nil {
 					t.Fatalf("os.WriteFile() error = %v", err)
 				}
 			},
@@ -902,7 +902,7 @@ func TestAgentChecks(t *testing.T) {
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
-				if err := os.WriteFile(filepath.Join(d.Root, workspace.MCPFile), []byte("{"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte("{"), 0o644); err != nil {
 					t.Fatalf("os.WriteFile() error = %v", err)
 				}
 			},
