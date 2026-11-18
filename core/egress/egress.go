@@ -49,6 +49,7 @@ func init() {
 			Credentials: len(e.inject) > 0,
 		}, true
 	})
+	boundary.RegisterCredential(func(inj boundary.Injection) any { return injection(inj) })
 }
 
 // Mode is what a policy lets the client reach.
@@ -263,6 +264,14 @@ type Refusal struct {
 // Credential is a [Header] or a [ModelKey].
 type Credential interface {
 	injection() (boundary.Injection, []string, error)
+}
+
+// injection is a credential the frontend of this module made from its own
+// rules, which the endpoint adds as it is.
+type injection boundary.Injection
+
+func (i injection) injection() (boundary.Injection, []string, error) {
+	return boundary.Injection(i), nil, nil
 }
 
 // Header is a header added to the HTTPS requests to Host, in place of
