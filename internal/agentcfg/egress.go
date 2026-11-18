@@ -19,10 +19,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // UnrestrictedEffect says what a sandbox without the egress boundary reaches.
@@ -43,7 +43,7 @@ type EgressDecision struct {
 // boundary on a machine that probe checks, which it calls only when cfg
 // asks for the boundary, for starting the containers, doctor, status and
 // the agent's instructions.
-func DecideEgress(cfg *agentdir.Config, probe func() sandbox.Capabilities) EgressDecision {
+func DecideEgress(cfg *agentdir.Config, probe func() sandboxrt.Capabilities) EgressDecision {
 	e := Egress(cfg)
 	d := agentprofile.DecideEgress(e, probe)
 	return EgressDecision{Boundary: d.Boundary, Relay: d.Relay, Problem: d.Problem, Warning: Warning(agentprofile.EgressWarnings(d.Warnings(e)))}
@@ -51,7 +51,7 @@ func DecideEgress(cfg *agentdir.Config, probe func() sandbox.Capabilities) Egres
 
 // HostEgress decides about the egress boundary of cfg on this machine.
 func HostEgress(cfg *agentdir.Config) EgressDecision {
-	return DecideEgress(cfg, sandbox.HostEgressEnv().Probe)
+	return DecideEgress(cfg, sandboxrt.HostEgressEnv().Probe)
 }
 
 // StrictEgress reports whether the containers of cfg don't start without
@@ -81,7 +81,7 @@ func egressIgnored(w *agentprofile.EgressIgnoredWarning) string {
 // or reach the network as the settings ask, for why.
 func egressProblem(e agentprofile.Egress, why string) string {
 	switch {
-	case e.Mode == egress.ModeAllowlist:
+	case e.Mode == egressrules.ModeAllowlist:
 		return noAllowlist(why)
 	case len(e.Inject) > 0:
 		return noInject(e.Inject, why)

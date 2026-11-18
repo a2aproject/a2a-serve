@@ -31,10 +31,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
-	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -51,9 +51,9 @@ func TestPrepareLocal(t *testing.T) {
 		Sandbox: SandboxLocal,
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
 		Home:    home,
-		Backend: sandbox.Local{},
+		Backend: sandboxrt.Local{},
 		Env:     []string{"API_KEY=k"},
-		Server:  sandbox.Socket{Path: "/run/agent/a2a.sock"},
+		Server:  sandboxrt.Socket{Path: "/run/agent/a2a.sock"},
 		CLI:     "/opt/a2a/bin/a2a",
 	})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestPrepareLocalChecksCommand(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup() error = %v", err)
 			}
-			p, err := Prepare(context.Background(), Spec{Profile: profile, Sandbox: SandboxLocal, Backend: sandbox.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}, Home: t.TempDir()})
+			p, err := Prepare(context.Background(), Spec{Profile: profile, Sandbox: SandboxLocal, Backend: sandboxrt.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}, Home: t.TempDir()})
 			if err != nil {
 				t.Fatalf("Prepare() error = %v", err)
 			}
@@ -147,7 +147,7 @@ func TestPrepareModel(t *testing.T) {
 				Sandbox: SandboxLocal,
 				Mounts:  []Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
-				Backend: sandbox.Local{},
+				Backend: sandboxrt.Local{},
 				Model:   tc.model,
 			})
 			if err != nil {
@@ -192,7 +192,7 @@ func TestPrepareProviderKeyAliases(t *testing.T) {
 				Sandbox: SandboxLocal,
 				Mounts:  []Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
-				Backend: sandbox.Local{},
+				Backend: sandboxrt.Local{},
 				Env:     tc.env,
 			})
 			if err != nil {
@@ -227,11 +227,11 @@ func TestPrepareDocker(t *testing.T) {
 	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 	p, err := Prepare(context.Background(), Spec{
 		Profile: claude{},
-		Base:    sandbox.Spec{Name: "a2a-test"},
+		Base:    sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
 		Home:    home,
-		Backend: sandbox.NewDocker(t.TempDir(), nil),
-		Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+		Backend: sandboxrt.NewDocker(t.TempDir(), nil),
+		Server:  sandboxrt.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
 		CLI:     "/opt/a2a/bin/a2a",
 	})
 	if err != nil {
@@ -277,19 +277,19 @@ esac
 
 func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 	log := sandboxtest.FakeDocker(t, noRelayImageDocker)
-	t.Setenv(sandbox.EnvForceRelay, "1")
-	t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+	t.Setenv(sandboxrt.EnvForceRelay, "1")
+	t.Setenv(sandboxrt.EnvRelayImage, "example.com/egress:test")
 	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 	p, err := Prepare(context.Background(), Spec{
 		Profile: claude{},
-		Base:    sandbox.Spec{Name: "a2a-test"},
+		Base:    sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
 		Home:    home,
-		Backend: sandbox.NewDocker(t.TempDir(), nil),
-		Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+		Backend: sandboxrt.NewDocker(t.TempDir(), nil),
+		Server:  sandboxrt.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
 		CLI:     "/opt/a2a/bin/a2a",
-		OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
-			return sandbox.EgressEndpoint{}, errors.New("unexpected boundary")
+		OpenEgress: func(sandboxrt.HostGatewayFunc, bool) (sandboxrt.EgressEndpoint, error) {
+			return sandboxrt.EgressEndpoint{}, errors.New("unexpected boundary")
 		},
 	})
 	if err != nil {
@@ -335,7 +335,7 @@ func TestPrepareCLITimeout(t *testing.T) {
 				Sandbox: SandboxLocal,
 				Mounts:  []Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
-				Backend: sandbox.Local{},
+				Backend: sandboxrt.Local{},
 				Env:     tc.env,
 			})
 			if err != nil {
@@ -366,8 +366,8 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 		{name: "moved workspace", spec: Spec{Sandbox: SandboxLocal, Mounts: []Mount{{Src: ws, Dst: "/work"}}}, wantErr: "must keep its path"},
 		{name: "unknown sandbox", spec: Spec{Sandbox: "vm", Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "unknown sandbox"},
 		{name: "no backend", spec: Spec{Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
-		{name: "local backend for docker", spec: Spec{Backend: sandbox.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
-		{name: "docker backend for local", spec: Spec{Sandbox: SandboxLocal, Backend: sandbox.NewDocker(t.TempDir(), nil), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the local sandbox"},
+		{name: "local backend for docker", spec: Spec{Backend: sandboxrt.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
+		{name: "docker backend for local", spec: Spec{Sandbox: SandboxLocal, Backend: sandboxrt.NewDocker(t.TempDir(), nil), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the local sandbox"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -445,7 +445,7 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
 		Hidden:  []string{own},
 		Home:    t.TempDir(),
-		Backend: sandbox.NewDocker(t.TempDir(), nil),
+		Backend: sandboxrt.NewDocker(t.TempDir(), nil),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -482,7 +482,7 @@ func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
 		Hidden:  []string{own},
 		Home:    t.TempDir(),
-		Backend: sandbox.NewDocker(t.TempDir(), nil),
+		Backend: sandboxrt.NewDocker(t.TempDir(), nil),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -507,7 +507,7 @@ func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: "/", Dst: "/host", ReadOnly: true}},
 		Hidden:  []string{own},
 		Home:    t.TempDir(),
-		Backend: sandbox.NewDocker(t.TempDir(), nil),
+		Backend: sandboxrt.NewDocker(t.TempDir(), nil),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -529,7 +529,7 @@ func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
 		Sandbox: SandboxLocal,
 		Mounts:  []Mount{{Src: ws, Dst: ws}},
 		Home:    t.TempDir(),
-		Backend: sandbox.Local{},
+		Backend: sandboxrt.Local{},
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -563,10 +563,10 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 			mask := filepath.Join(state, "mcp-mask.json")
 			p, err := Prepare(context.Background(), Spec{
 				Profile: claude{},
-				Base:    sandbox.Spec{Name: "a2a-test"},
+				Base:    sandboxrt.Spec{Name: "a2a-test"},
 				Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: ws, Dst: "/copy", ReadOnly: true}},
 				Home:    home,
-				Backend: sandbox.NewDocker(t.TempDir(), nil),
+				Backend: sandboxrt.NewDocker(t.TempDir(), nil),
 				MCPMask: mask,
 			})
 			if err != nil {
@@ -683,11 +683,11 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 			writeTestFile(t, filepath.Join(docs, "opencode.json"), `{}`)
 			spec := Spec{
 				Profile:    tc.profile,
-				Base:       sandbox.Spec{Name: "a2a-test"},
+				Base:       sandboxrt.Spec{Name: "a2a-test"},
 				Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
 				Hidden:     []string{hidden},
 				Home:       t.TempDir(),
-				Backend:    sandbox.NewDocker(t.TempDir(), nil),
+				Backend:    sandboxrt.NewDocker(t.TempDir(), nil),
 				ConfigMask: mask,
 			}
 			if tc.copy {
@@ -748,10 +748,10 @@ func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
 
 	p, err := Prepare(context.Background(), Spec{
 		Profile:    opencode{},
-		Base:       sandbox.Spec{Name: "a2a-test"},
+		Base:       sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: repo, Dst: repo}},
 		Home:       t.TempDir(),
-		Backend:    sandbox.NewDocker(t.TempDir(), nil),
+		Backend:    sandboxrt.NewDocker(t.TempDir(), nil),
 		ConfigMask: mask,
 	})
 	if err != nil {
@@ -786,10 +786,10 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 	symlink(t, "claude", filepath.Join(dotfiles, ".claude"))
 	spec := Spec{
 		Profile:    claude{},
-		Base:       sandbox.Spec{Name: "a2a-test"},
+		Base:       sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: dotfiles, Dst: "/dotfiles"}},
 		Home:       t.TempDir(),
-		Backend:    sandbox.NewDocker(t.TempDir(), nil),
+		Backend:    sandboxrt.NewDocker(t.TempDir(), nil),
 		ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
 	}
 
@@ -865,10 +865,10 @@ func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 
 			_, err := Prepare(context.Background(), Spec{
 				Profile:    tc.profile,
-				Base:       sandbox.Spec{Name: "a2a-test"},
+				Base:       sandboxrt.Spec{Name: "a2a-test"},
 				Mounts:     []Mount{{Src: ws, Dst: ws}},
 				Home:       t.TempDir(),
-				Backend:    sandbox.NewDocker(t.TempDir(), nil),
+				Backend:    sandboxrt.NewDocker(t.TempDir(), nil),
 				ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
 			})
 
@@ -954,10 +954,10 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			ws, home := t.TempDir(), t.TempDir()
 			spec := Spec{
 				Profile:  tc.profile,
-				Base:     sandbox.Spec{Name: "a2a-test", Image: "img:1"},
+				Base:     sandboxrt.Spec{Name: "a2a-test", Image: "img:1"},
 				Mounts:   []Mount{{Src: ws, Dst: ws}},
 				Home:     home,
-				Backend:  sandbox.NewDocker(t.TempDir(), nil),
+				Backend:  sandboxrt.NewDocker(t.TempDir(), nil),
 				LockHome: tc.lock,
 			}
 
@@ -1035,10 +1035,10 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 
 			p, err := Prepare(context.Background(), Spec{
 				Profile:  tc.profile,
-				Base:     sandbox.Spec{Name: "a2a-test"},
+				Base:     sandboxrt.Spec{Name: "a2a-test"},
 				Mounts:   []Mount{{Src: ws, Dst: ws}},
 				Home:     home,
-				Backend:  sandbox.NewDocker(t.TempDir(), nil),
+				Backend:  sandboxrt.NewDocker(t.TempDir(), nil),
 				LockHome: true,
 			})
 			if err != nil {
@@ -1080,10 +1080,10 @@ func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
 
 	_, err := Prepare(context.Background(), Spec{
 		Profile:  claude{},
-		Base:     sandbox.Spec{Name: "a2a-test"},
+		Base:     sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:   []Mount{{Src: ws, Dst: ws}},
 		Home:     home,
-		Backend:  sandbox.NewDocker(t.TempDir(), nil),
+		Backend:  sandboxrt.NewDocker(t.TempDir(), nil),
 		LockHome: true,
 	})
 
@@ -1139,20 +1139,20 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sandboxtest.FakeDocker(t, relayDocker(tc.check))
-			t.Setenv(sandbox.EnvForceRelay, "1")
-			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			t.Setenv(sandboxrt.EnvForceRelay, "1")
+			t.Setenv(sandboxrt.EnvRelayImage, "example.com/egress:test")
 			ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
 			var closed atomic.Bool
 			p, err := Prepare(context.Background(), Spec{
 				Profile: claude{},
-				Base:    sandbox.Spec{Name: "a2a-test"},
+				Base:    sandboxrt.Spec{Name: "a2a-test"},
 				Mounts:  []Mount{{Src: ws, Dst: ws}},
 				Home:    home,
-				Backend: sandbox.NewDocker(t.TempDir(), nil),
-				Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+				Backend: sandboxrt.NewDocker(t.TempDir(), nil),
+				Server:  sandboxrt.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
 				CLI:     "/opt/a2a/bin/a2a",
-				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
-					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
+				OpenEgress: func(sandboxrt.HostGatewayFunc, bool) (sandboxrt.EgressEndpoint, error) {
+					return sandboxrt.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
 						closed.Store(true)
 						return nil
 					}}, nil
@@ -1229,18 +1229,18 @@ func TestPrepareDockerFallsBackAtStart(t *testing.T) {
 *) echo "fake docker: $1 failed" >&2; exit 1 ;;
 esac
 `)
-			t.Setenv(sandbox.EnvForceRelay, "1")
-			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			t.Setenv(sandboxrt.EnvForceRelay, "1")
+			t.Setenv(sandboxrt.EnvRelayImage, "example.com/egress:test")
 			ws := t.TempDir()
 			var stderr strings.Builder
 			p, err := Prepare(context.Background(), Spec{
 				Profile: claude{},
-				Base:    sandbox.Spec{Name: "a2a-test", Stderr: &stderr},
+				Base:    sandboxrt.Spec{Name: "a2a-test", Stderr: &stderr},
 				Mounts:  []Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
-				Backend: sandbox.NewDocker(t.TempDir(), nil),
-				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
-					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				Backend: sandboxrt.NewDocker(t.TempDir(), nil),
+				OpenEgress: func(sandboxrt.HostGatewayFunc, bool) (sandboxrt.EgressEndpoint, error) {
+					return sandboxrt.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
 				},
 			})
 			if err != nil {
@@ -1252,7 +1252,7 @@ esac
 				}
 			})
 			for i, wantErr := range tc.wantErr {
-				if err := startErr(t, p); (err != nil) != wantErr || errors.Is(err, sandbox.ErrNoBoundary) {
+				if err := startErr(t, p); (err != nil) != wantErr || errors.Is(err, sandboxrt.ErrNoBoundary) {
 					t.Fatalf("start %d Prepared.Start() error = %v, want error %v", i+1, err, wantErr)
 				}
 			}
@@ -1307,8 +1307,8 @@ func TestPrepareDockerResolvesImageOnce(t *testing.T) {
 *) echo "fake docker: $1 failed" >&2; exit 1 ;;
 esac
 `)
-			t.Setenv(sandbox.EnvForceRelay, tc.relay)
-			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			t.Setenv(sandboxrt.EnvForceRelay, tc.relay)
+			t.Setenv(sandboxrt.EnvRelayImage, "example.com/egress:test")
 			var launcher func() string
 			if tc.launcher != "" {
 				launcher = func() string { return filepath.Join(t.TempDir(), tc.launcher) }
@@ -1316,14 +1316,14 @@ esac
 			ws := t.TempDir()
 			p, err := Prepare(context.Background(), Spec{
 				Profile:     claude{},
-				Base:        sandbox.Spec{Name: "a2a-test"},
-				Backend:     sandbox.NewDocker(t.TempDir(), launcher),
+				Base:        sandboxrt.Spec{Name: "a2a-test"},
+				Backend:     sandboxrt.NewDocker(t.TempDir(), launcher),
 				Mounts:      []Mount{{Src: ws, Dst: ws}},
 				Home:        t.TempDir(),
 				EgressMode:  tc.mode,
 				EgressAllow: []string{"example.com"},
-				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
-					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				OpenEgress: func(sandboxrt.HostGatewayFunc, bool) (sandboxrt.EgressEndpoint, error) {
+					return sandboxrt.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
 				},
 			})
 			if err != nil {

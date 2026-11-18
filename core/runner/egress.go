@@ -21,10 +21,10 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // egressSockets decides the connections of the agent's containers with
@@ -33,7 +33,7 @@ import (
 type egressSockets struct {
 	settings   func() agentprofile.Egress
 	blocks     *boundary.Blocks
-	boundaries *sandbox.Boundaries
+	boundaries *sandboxrt.Boundaries
 
 	mu sync.Mutex
 	// mode is the egress mode the containers started with, and problem
@@ -79,25 +79,25 @@ func (e *egressSockets) fellBack() string {
 
 func newEgressSockets(dir string, settings func() agentprofile.Egress) *egressSockets {
 	blocks := &boundary.Blocks{}
-	return &egressSockets{settings: settings, blocks: blocks, boundaries: sandbox.NewBoundaries(dir, sandbox.SocketIDLen, idAlphabet, blocks), fallbacks: map[int]func() string{}}
+	return &egressSockets{settings: settings, blocks: blocks, boundaries: sandboxrt.NewBoundaries(dir, sandboxrt.SocketIDLen, idAlphabet, blocks), fallbacks: map[int]func() string{}}
 }
 
 // opener returns the function that opens the boundary of the container
 // named name, which keeps mode and the headers of inject until it
 // restarts. Changes of the allow rules apply to its next connection.
-func (e *egressSockets) opener(name, mode string, inject []boundary.Injection, ca *boundary.CA) sandbox.OpenEgress {
+func (e *egressSockets) opener(name, mode string, inject []boundary.Injection, ca *boundary.CA) sandboxrt.OpenEgress {
 	allow := injectAllow(inject)
-	return e.boundaries.Opener(name, sandbox.BoundaryRules{Policy: func() egress.Policy { return e.policy(mode, allow...) }, Inject: inject, CA: ca})
+	return e.boundaries.Opener(name, sandboxrt.BoundaryRules{Policy: func() egressrules.Policy { return e.policy(mode, allow...) }, Inject: inject, CA: ca})
 }
 
 // policy returns the policy of mode with the allow rules of the current
 // settings and extra. Rules that the runner can't read allow nothing, as
 // the caller validated them before.
-func (e *egressSockets) policy(mode string, extra ...string) egress.Policy {
-	p, err := egress.NewPolicy(mode, append(slices.Clone(e.settings().Allow), extra...))
+func (e *egressSockets) policy(mode string, extra ...string) egressrules.Policy {
+	p, err := egressrules.NewPolicy(mode, append(slices.Clone(e.settings().Allow), extra...))
 	if err != nil {
 		slog.Error("reading the egress rules; the sandbox reaches nothing until they are fixed", "error", err)
-		return egress.Policy{Mode: egress.ModeAllowlist}
+		return egressrules.Policy{Mode: egressrules.ModeAllowlist}
 	}
 	return p
 }
@@ -107,7 +107,7 @@ func (e *egressSockets) policy(mode string, extra ...string) egress.Policy {
 func (e *egressSockets) started(mode, problem string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.mode, e.problem, e.prepared = cmp.Or(mode, egress.ModeInternet), problem, true
+	e.mode, e.problem, e.prepared = cmp.Or(mode, egressrules.ModeInternet), problem, true
 }
 
 // state returns what the runner knows of the egress of the containers.

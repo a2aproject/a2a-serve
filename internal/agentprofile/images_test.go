@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 )
 
 // noImagesNoBuildDocker is sandboxtest.NoImagesDocker whose builds fail too.

@@ -17,8 +17,8 @@ package agentprofile
 import (
 	"errors"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // Egress are the settings that decide the egress of an agent's containers.
@@ -36,7 +36,7 @@ type Egress struct {
 // boundary: with the allowlist mode, or with secrets that the boundary adds
 // to requests, which would otherwise be lost or exposed.
 func (e Egress) Strict() bool {
-	return e.Mode == egress.ModeAllowlist || len(e.Inject) > 0
+	return e.Mode == egressrules.ModeAllowlist || len(e.Inject) > 0
 }
 
 // EgressDecision is whether an agent's containers get the egress boundary.
@@ -47,7 +47,7 @@ type EgressDecision struct {
 	// Problem is why they don't although the settings ask for it, or "".
 	Problem string
 	// RelayImage is the relay image that the next start fetches, if any.
-	RelayImage *sandbox.MissingRelayImage
+	RelayImage *sandboxrt.MissingRelayImage
 	// NoAllowRules is set for an allowlist that allows nothing.
 	NoAllowRules bool
 	// Ignored is set for an agent without a sandbox whose egress settings
@@ -58,18 +58,18 @@ type EgressDecision struct {
 // DecideEgress decides whether the containers with the settings e get the
 // egress boundary on a machine that probe checks, which it calls only when
 // e asks for the boundary. It is the one place that decides it.
-func DecideEgress(e Egress, probe func() sandbox.Capabilities) EgressDecision {
+func DecideEgress(e Egress, probe func() sandboxrt.Capabilities) EgressDecision {
 	if e.Sandbox == SandboxLocal {
 		return EgressDecision{Ignored: e.Mode != "" || len(e.Allow) > 0}
 	}
-	if e.Mode == egress.ModeUnrestricted {
+	if e.Mode == egressrules.ModeUnrestricted {
 		return EgressDecision{}
 	}
-	noRules := e.Mode == egress.ModeAllowlist && len(e.Allow) == 0 && len(e.Inject) == 0
+	noRules := e.Mode == egressrules.ModeAllowlist && len(e.Allow) == 0 && len(e.Inject) == 0
 	caps := probe()
 	if caps.EgressRelay {
 		d := EgressDecision{Boundary: true, Relay: true, NoAllowRules: noRules}
-		if missing, ok := errors.AsType[*sandbox.MissingRelayImage](caps.RelayImage); ok {
+		if missing, ok := errors.AsType[*sandboxrt.MissingRelayImage](caps.RelayImage); ok {
 			d.RelayImage = missing
 		} else if caps.RelayImage != nil {
 			return EgressDecision{Problem: caps.RelayImage.Error()}
@@ -84,7 +84,7 @@ func DecideEgress(e Egress, probe func() sandbox.Capabilities) EgressDecision {
 
 // HostEgress decides about the egress boundary of e on this machine.
 func HostEgress(e Egress) EgressDecision {
-	return DecideEgress(e, sandbox.HostEgressEnv().Probe)
+	return DecideEgress(e, sandboxrt.HostEgressEnv().Probe)
 }
 
 // Warnings returns what the user should know of d, for the settings e.

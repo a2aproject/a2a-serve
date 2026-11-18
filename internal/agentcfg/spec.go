@@ -16,9 +16,9 @@ package agentcfg
 
 import (
 	"github.com/a2aproject/a2a-serve/core/runner"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -37,7 +37,7 @@ func Spec(cfg *agentdir.Config, d agentdir.Dir, cli string) (runner.Spec, error)
 		Model:       cfg.Model,
 		Env:         cfg.Env,
 		Sandbox:     cfg.Sandbox,
-		Limits:      sandbox.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
+		Limits:      sandboxrt.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
 		Mounts:      mounts,
 		EgressMode:  cfg.Egress.Mode,
 		EgressAllow: cfg.Egress.Allow,

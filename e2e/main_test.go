@@ -26,9 +26,9 @@ import (
 	"strings"
 	"testing"
 
-	sbx "github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	sbx "github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -164,7 +164,7 @@ func buildRelayImage() error {
 		return err
 	}
 	const image = "a2a-e2e-relay:latest"
-	build := exec.Command("docker", "build", "-t", image, "-f", "core/sandbox/boundary/Dockerfile", ".")
+	build := exec.Command("docker", "build", "-t", image, "-f", "internal/boundary/Dockerfile", ".")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("docker build of the relay image: %w\n%s", err, out)

@@ -28,8 +28,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
@@ -87,8 +87,8 @@ func (r *Runner) pruneContainers(ctx context.Context) error {
 	if sb := r.spec().Sandbox; sb != "" && sb != agentprofile.SandboxDocker || len(r.cfg.PruneLabels) == 0 {
 		return nil
 	}
-	n, err := sandbox.PruneContainers(ctx, r.cfg.PruneLabels)
-	if errors.Is(err, sandbox.ErrDockerNoAnswer) {
+	n, err := sandboxrt.PruneContainers(ctx, r.cfg.PruneLabels)
+	if errors.Is(err, sandboxrt.ErrDockerNoAnswer) {
 		return err
 	}
 	if err != nil {
@@ -104,7 +104,7 @@ func (r *Runner) pruneContainers(ctx context.Context) error {
 // pruneEnvFiles removes the env files of containers that an earlier run
 // left behind, before any container starts.
 func (r *Runner) pruneEnvFiles() {
-	n, err := sandbox.PruneEnvFiles(r.cfg.Dirs.EnvFiles)
+	n, err := sandboxrt.PruneEnvFiles(r.cfg.Dirs.EnvFiles)
 	if err != nil {
 		slog.Warn("removing env files left by an earlier run", "error", err)
 	}
@@ -237,7 +237,7 @@ func (h *prepared) process() agentProcess {
 // agentProcess starts the agent process in its sandbox, which checks the
 // sandbox before every start, since a pool starts it again after it stops.
 type agentProcess struct {
-	sandbox sandbox.Sandbox
+	sandbox sandboxrt.Sandbox
 	// maxMessage bounds a message from the agent.
 	maxMessage int
 }
@@ -281,7 +281,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		Profile: profile,
 		Sandbox: cfg.Sandbox,
 		Backend: r.backend(cfg.Sandbox),
-		Base: sandbox.Spec{
+		Base: sandboxrt.Spec{
 			Name:     name,
 			Image:    cfg.Image,
 			Limits:   cfg.Limits,
@@ -358,9 +358,9 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 }
 
 // backend returns the backend of the sandbox kind.
-func (r *Runner) backend(kind string) sandbox.Backend {
+func (r *Runner) backend(kind string) sandboxrt.Backend {
 	if kind == agentprofile.SandboxLocal {
-		return sandbox.Local{}
+		return sandboxrt.Local{}
 	}
 	return r.docker
 }

@@ -15,14 +15,12 @@
 package cli
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
@@ -40,33 +38,9 @@ When the setup fails, it exits with status ` + strconv.Itoa(boundary.SetupFailed
 		DisableFlagParsing: true,
 		SilenceUsage:       true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			check := args[0] == "--check"
-			if check {
-				args = args[1:]
-			}
-			if len(args) < 3 || !check && len(args) < 4 {
-				return fmt.Errorf("want <socket> <uid> <gid> and a command, or --check")
-			}
-			uid, err := strconv.Atoi(args[1])
+			code, err := boundary.RunInit(args, os.Environ(), os.Getenv(boundary.EnvFailSetup) != "", cmd.ErrOrStderr())
 			if err != nil {
-				return fmt.Errorf("invalid uid %q", args[1])
-			}
-			gid, err := strconv.Atoi(args[2])
-			if err != nil {
-				return fmt.Errorf("invalid gid %q", args[2])
-			}
-			code, err := boundary.Launch(boundary.LaunchConfig{
-				Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: os.Environ(), Check: check,
-				FailSetup: os.Getenv(boundary.EnvFailSetup) != "",
-			})
-			if setupErr, ok := errors.AsType[*boundary.SetupError](err); ok {
-				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "a2a-init: setting up the sandbox's network: %v\n", setupErr); err != nil {
-					return err
-				}
-				return clierr.Exit(boundary.SetupFailedExit, "")
-			}
-			if err != nil {
-				return fmt.Errorf("starting the sandbox: %w", err)
+				return err
 			}
 			if code != 0 {
 				return clierr.Exit(code, "")

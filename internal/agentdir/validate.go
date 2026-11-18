@@ -26,11 +26,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
-	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
@@ -126,11 +126,11 @@ func (c *Config) Validate() error {
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
 		invalid("sandbox", c.Sandbox, "want docker or local")
 	}
-	if c.Egress.Mode != "" && !slices.Contains(egress.Modes, c.Egress.Mode) {
-		invalid("egress", c.Egress.Mode, "want %s", strings.Join(egress.Modes, ", "))
+	if c.Egress.Mode != "" && !slices.Contains(egressrules.Modes, c.Egress.Mode) {
+		invalid("egress", c.Egress.Mode, "want %s", strings.Join(egressrules.Modes, ", "))
 	}
 	for _, r := range c.Egress.Allow {
-		if _, err := egress.ParseRule(r); err != nil {
+		if _, err := egressrules.ParseRule(r); err != nil {
 			add("%v", err)
 		}
 	}
@@ -473,11 +473,11 @@ func (d Dir) checkMachine(cfg *Config, secrets Secrets, badMounts bool) error {
 
 // LineBreakError reports an environment variable of the agent whose value
 // has a line break.
-type LineBreakError = sandbox.LineBreakError
+type LineBreakError = sandboxrt.LineBreakError
 
 // CheckEnvValue returns a [*LineBreakError] if docker can't pass value as
 // the environment variable name, since its env file holds one per line.
-func CheckEnvValue(name, value string) error { return sandbox.CheckEnvValue(name, value) }
+func CheckEnvValue(name, value string) error { return sandboxrt.CheckEnvValue(name, value) }
 
 // ContainerEnvErrors returns an error for each --env and --secret value
 // which the docker sandbox can't pass to the container. Other sandboxes

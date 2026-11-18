@@ -20,7 +20,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 //go:embed images/*/Dockerfile
@@ -40,7 +40,7 @@ func LocalImage(harness string) string {
 // imageOf returns image, or the profile's image when empty, and the
 // image to build when the pull fails: the harness's embedded Dockerfile,
 // for the profile's own image only.
-func imageOf(image string, profile Profile) (string, *sandbox.LocalBuild, error) {
+func imageOf(image string, profile Profile) (string, *sandboxrt.LocalBuild, error) {
 	harness := profile.Name()
 	if image == "" {
 		image = profile.Image()
@@ -48,9 +48,9 @@ func imageOf(image string, profile Profile) (string, *sandbox.LocalBuild, error)
 	if image == "" {
 		return "", nil, &NoImageError{Agent: harness}
 	}
-	var local *sandbox.LocalBuild
+	var local *sandboxrt.LocalBuild
 	if df, ok := Dockerfile(harness); ok && image == profile.Image() {
-		local = &sandbox.LocalBuild{Tag: LocalImage(harness), Dockerfile: df, Reason: strings.TrimPrefix(image, ImageRepo) + " is not published"}
+		local = &sandboxrt.LocalBuild{Tag: LocalImage(harness), Dockerfile: df, Reason: strings.TrimPrefix(image, ImageRepo) + " is not published"}
 	}
 	return image, local, nil
 }
@@ -63,5 +63,5 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 	if err != nil {
 		return "", "", err
 	}
-	return sandbox.EnsureImage(ctx, image, local, progress)
+	return sandboxrt.EnsureImage(ctx, image, local, progress)
 }

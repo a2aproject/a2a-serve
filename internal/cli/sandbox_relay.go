@@ -15,21 +15,17 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 )
 
-// envRelayKey holds the key a relay sends with each egress connection.
-const envRelayKey = "A2A_SERVE_RELAY_KEY"
-
 func newSandboxRelayCmd() *cobra.Command {
-	var egressListen, egressTo, serverListen, serverTo string
+	var flags boundary.RelayFlags
 	cmd := &cobra.Command{
 		Use:    "sandbox-relay",
 		Hidden: true,
@@ -38,27 +34,19 @@ func newSandboxRelayCmd() *cobra.Command {
 can't mount the server's sockets. It serves the egress socket, and the
 socket through which the agent reaches the server, in a volume both
 containers share, and forwards their connections to the server. The key of
-the egress socket is in $` + envRelayKey + `.`,
+the egress socket is in $` + boundary.EnvRelayKey + `.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			key := os.Getenv(envRelayKey)
-			if key == "" {
-				return errors.New(envRelayKey + " is not set")
-			}
-			pairs := []boundary.RelayPair{{Listen: egressListen, Target: egressTo, Key: key}}
-			if serverListen != "" {
-				pairs = append(pairs, boundary.RelayPair{Listen: serverListen, Target: serverTo})
-			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
 			defer stop()
-			return boundary.Relay(ctx, pairs, cmd.OutOrStdout())
+			return boundary.RunRelay(ctx, flags, os.Getenv(boundary.EnvRelayKey), cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&egressListen, "egress-listen", "", "path of the egress socket")
-	cmd.Flags().StringVar(&egressTo, "egress-to", "", "where the egress socket's connections go: tcp://host:port or unix:///path")
-	cmd.Flags().StringVar(&serverListen, "server-listen", "", "path of the socket through which the agent reaches the server")
-	cmd.Flags().StringVar(&serverTo, "server-to", "", "where the server socket's connections go: tcp://host:port or unix:///path")
+	cmd.Flags().StringVar(&flags.EgressListen, "egress-listen", "", "path of the egress socket")
+	cmd.Flags().StringVar(&flags.EgressTo, "egress-to", "", "where the egress socket's connections go: tcp://host:port or unix:///path")
+	cmd.Flags().StringVar(&flags.ServerListen, "server-listen", "", "path of the socket through which the agent reaches the server")
+	cmd.Flags().StringVar(&flags.ServerTo, "server-to", "", "where the server socket's connections go: tcp://host:port or unix:///path")
 	for _, f := range []string{"egress-listen", "egress-to"} {
 		if err := cmd.MarkFlagRequired(f); err != nil {
 			panic(err)

@@ -30,7 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 )
 
 // publicTarget is a public host the sandbox reaches, overridable for

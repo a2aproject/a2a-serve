@@ -12,262 +12,306 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package egress guards the requests the server sends to addresses that
-// other parties pick, such as the interfaces on a contact's card and the
-// redirects of a webhook.
+// Package egress decides the connections of a client by policy and adds
+// credentials to its requests for chosen hosts. The client reaches it as
+// an HTTP CONNECT proxy, and sees placeholders in place of the
+// credentials.
 package egress
 
 import (
 	"cmp"
-	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
+	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
-	"strings"
+	"slices"
+	"strconv"
 	"sync"
-	"syscall"
-	"time"
+
+	"golang.org/x/net/http/httpguts"
+
+	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
-// ErrPrivateAddress is the error of a connection from a public origin to a
-// private address.
-var ErrPrivateAddress = errors.New("a public URL can't lead to a private address")
-
-// ErrInsecureRedirect is the error of a redirect from https to http.
-var ErrInsecureRedirect = errors.New("refusing a redirect from https to http")
-
-// ErrResponseTooLarge is the error of reading a response over the limit.
-var ErrResponseTooLarge = errors.New("response too large")
-
-var nonPublic = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	// Shared address space, where Tailscale puts tailnet addresses.
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	// NAT64 and 6to4 addresses embed an IPv4 address, which may be private.
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("2002::/16"),
-	// IPv4-compatible, IETF protocol, documentation, deprecated site-local
-	// and SRv6 addresses.
-	netip.MustParsePrefix("::/96"),
-	netip.MustParsePrefix("2001::/23"),
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("3fff::/20"),
-	netip.MustParsePrefix("5f00::/16"),
-	netip.MustParsePrefix("fec0::/10"),
-	// The discard prefix, and IPv4-mapped addresses that a parser didn't
-	// unmap.
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("::ffff:0:0/96"),
-}
-
-// azureWireServer is the address of the host services of Azure VMs, which
-// hand out VM settings, such as those of extensions. Azure routes it
-// through the default gateway, so it looks public.
-var azureWireServer = netip.AddrFrom4([4]byte{168, 63, 129, 16})
-
-// Special reports whether ip belongs to this host or its link, or to no
-// host at all: loopback, unspecified, link-local, as cloud metadata
-// services are, multicast or reserved. It also reports the Azure
-// WireServer. A rule that allows a name never reaches it.
-func Special(ip netip.Addr) bool {
-	ip = ip.Unmap()
-	return ip == azureWireServer || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) ||
-		netip.MustParsePrefix("0.0.0.0/8").Contains(ip) || netip.MustParsePrefix("240.0.0.0/4").Contains(ip)
-}
-
-// Public reports whether ip is a public unicast address: not loopback,
-// private, link-local or on the tailnet.
-func Public(ip netip.Addr) bool {
-	ip = ip.Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip == azureWireServer {
-		return false
-	}
-	for _, p := range nonPublic {
-		if p.Contains(ip) {
-			return false
+func init() {
+	boundary.RegisterEndpoint(func(v any) (boundary.Endpoint, bool) {
+		e, ok := v.(*Endpoint)
+		if !ok || e == nil {
+			return boundary.Endpoint{}, false
 		}
+		return boundary.Endpoint{
+			Open:        e.newBoundary,
+			CA:          e.CA(),
+			Mode:        func() string { return string(e.b.mode()) },
+			Credentials: len(e.inject) > 0,
+		}, true
+	})
+}
+
+// Mode is what a policy lets the client reach.
+type Mode string
+
+const (
+	// ModeInternet allows the public internet and the destinations of
+	// Allow. It is the mode of an empty Mode.
+	ModeInternet Mode = "internet"
+	// ModeAllowlist allows only the destinations of Allow.
+	ModeAllowlist Mode = "allowlist"
+	// ModeUnrestricted gives a sandbox the runtime's own network, without
+	// the boundary. A client that an Endpoint serves directly gets
+	// ModeInternet.
+	ModeUnrestricted Mode = "unrestricted"
+)
+
+// Policy decides where the client may connect. Names that resolve to this
+// host, its link or private networks stay out of reach unless Allow names
+// them.
+type Policy struct {
+	Mode Mode
+	// Allow are the destinations the policy admits in every mode: a host
+	// such as nas.lan, *.example.com for the names under example.com, an
+	// IP address or a CIDR range, each with an optional :port.
+	Allow []string
+}
+
+// Validate reports an unknown mode or a rule that doesn't parse.
+func (p Policy) Validate() error {
+	_, err := egressrules.NewPolicy(string(p.Mode), p.Allow)
+	return err
+}
+
+// Config configures a [Boundary].
+type Config struct {
+	// Policy returns the policy, which decides every connection when it
+	// opens, so that a change applies to the next one.
+	Policy func() Policy
+	// Log receives one record per decision; nil uses the default logger.
+	Log *slog.Logger
+}
+
+// Boundary decides connections by policy and adds credentials. One
+// Boundary serves many clients; each gets an [Endpoint] with its own
+// credentials. It records the connections its policy refuses.
+type Boundary struct {
+	policy func() Policy
+	log    *slog.Logger
+	blocks *boundary.Blocks
+	deps   deps
+
+	mu        sync.Mutex
+	ca        *boundary.CA
+	endpoints map[*Endpoint]struct{}
+	closed    bool
+}
+
+// New returns a boundary that decides by cfg.Policy, whose current value
+// must be valid.
+func New(cfg Config) (*Boundary, error) { return newBoundary(cfg, deps{}) }
+
+// deps are what a boundary uses of this host; their zero values use the
+// host's own.
+type deps struct {
+	// roots verify the hosts that get credentials.
+	roots *x509.CertPool
+	// resolver resolves the names the client asks for.
+	resolver boundary.Resolver
+}
+
+func newBoundary(cfg Config, d deps) (*Boundary, error) {
+	if cfg.Policy == nil {
+		return nil, errors.New("the egress boundary needs a policy")
 	}
-	return true
-}
-
-// Transport returns a transport for requests that start at origin, a URL
-// the owner configured. Once its first connection to the origin reaches a
-// public address, it connects to public addresses only, so that a card or
-// a redirect can't lead it into a private network. An origin on a private
-// network, such as the tailnet or the LAN, may lead anywhere.
-//
-// It checks the address each connection dials, so a name that resolves
-// differently later can't get around it. Connections through a proxy from
-// the environment go unchecked, as the proxy picks the address.
-func Transport(origin string) *http.Transport {
-	return newTransport(origin, func(ap netip.AddrPort) bool { return Public(ap.Addr()) })
-}
-
-func newTransport(origin string, public func(netip.AddrPort) bool) *http.Transport {
-	g := &guard{public: public, proxies: map[string]bool{}}
-	if u, err := url.Parse(origin); err == nil {
-		g.origin = net.JoinHostPort(u.Hostname(), cmp.Or(u.Port(), defaultPorts[u.Scheme]))
+	if err := cfg.Policy().Validate(); err != nil {
+		return nil, err
 	}
-	return &http.Transport{
-		Proxy:                 g.proxy,
-		DialContext:           g.dial,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: time.Second,
+	return &Boundary{
+		policy:    cfg.Policy,
+		log:       cmp.Or(cfg.Log, slog.Default()),
+		blocks:    &boundary.Blocks{},
+		deps:      d,
+		endpoints: map[*Endpoint]struct{}{},
+	}, nil
+}
+
+// Open returns an endpoint for one client, named in the log, whose
+// requests to the hosts of creds get them. Those hosts are allowed in
+// every mode.
+func (b *Boundary) Open(name string, creds ...Credential) (*Endpoint, error) {
+	e := &Endpoint{b: b, name: name, boundaries: map[*boundary.Boundary]struct{}{}, listeners: map[net.Listener]struct{}{}}
+	for _, c := range creds {
+		inj, env, err := c.injection()
+		if err != nil {
+			return nil, err
+		}
+		if slices.ContainsFunc(e.inject, func(o boundary.Injection) bool { return o.Host == inj.Host && o.Port == inj.Port }) {
+			return nil, fmt.Errorf("two credentials for %s; give each host one", net.JoinHostPort(inj.Host, strconv.Itoa(int(inj.Port))))
+		}
+		e.inject = append(e.inject, inj)
+		e.env = append(e.env, env...)
+		e.allow = append(e.allow, net.JoinHostPort(inj.Host, strconv.Itoa(int(inj.Port))))
 	}
-}
-
-var defaultPorts = map[string]string{"http": "80", "https": "443", "socks5": "1080", "socks5h": "1080"}
-
-// guard decides which addresses the connections of one transport may reach.
-type guard struct {
-	// origin is the host and port of the origin.
-	origin string
-	public func(netip.AddrPort) bool
-
-	mu sync.Mutex
-	// decided is set by the first connection to the origin; until then
-	// the origin counts as public.
-	decided bool
-	// open is set when the origin is on a private network.
-	open    bool
-	proxies map[string]bool
-}
-
-func (g *guard) proxy(r *http.Request) (*url.URL, error) {
-	u, err := http.ProxyFromEnvironment(r)
-	if u == nil || err != nil {
-		return u, err
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil, errors.New("the egress boundary is closed")
 	}
-	g.mu.Lock()
-	g.proxies[net.JoinHostPort(u.Hostname(), cmp.Or(u.Port(), defaultPorts[u.Scheme], "80"))] = true
-	g.mu.Unlock()
-	return u, nil
-}
-
-func (g *guard) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, _, err := net.SplitHostPort(addr)
+	if len(e.inject) > 0 {
+		ca, err := b.authority(e.inject)
+		if err != nil {
+			return nil, err
+		}
+		e.ca = ca
+	}
+	main, err := e.newBoundary(nil)
 	if err != nil {
 		return nil, err
 	}
-	g.mu.Lock()
-	viaProxy := g.proxies[addr]
-	first := !g.decided && strings.EqualFold(addr, g.origin)
-	g.mu.Unlock()
-	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	if !viaProxy && !first {
-		d.Control = func(_, address string, _ syscall.RawConn) error { return g.check(host, address) }
-	}
-	conn, err := d.DialContext(ctx, network, addr)
-	if err != nil || !first {
-		return conn, err
-	}
-	// The address the first connection to the origin reached decides, so
-	// that a name with a closed private address next to its public one
-	// can't open the guard.
-	if err := g.decide(host, conn.RemoteAddr().String()); err != nil {
-		return nil, errors.Join(err, conn.Close())
-	}
-	return conn, nil
+	e.main = main
+	b.endpoints[e] = struct{}{}
+	return e, nil
 }
 
-func (g *guard) decide(host, address string) error {
-	ap, err := netip.ParseAddrPort(address)
-	if err != nil {
-		return err
+// authority returns the CA of the hosts of inject, making a new one when
+// the current one doesn't cover them all. An endpoint keeps the CA it
+// opened with. It runs with b.mu held.
+func (b *Boundary) authority(inject []boundary.Injection) (*boundary.CA, error) {
+	var hosts []string
+	for _, inj := range inject {
+		if !slices.Contains(hosts, inj.Host) {
+			hosts = append(hosts, inj.Host)
+		}
 	}
-	g.mu.Lock()
-	if !g.decided {
-		g.decided, g.open = true, !g.public(ap)
+	if b.ca != nil && !slices.ContainsFunc(hosts, func(h string) bool { return !b.ca.Covers(h) }) {
+		return b.ca, nil
 	}
-	g.mu.Unlock()
-	return g.check(host, address)
-}
-
-func (g *guard) check(host, address string) error {
-	ap, err := netip.ParseAddrPort(address)
-	if err != nil {
-		return err
-	}
-	g.mu.Lock()
-	open := g.open
-	g.mu.Unlock()
-	if open || g.public(ap) {
-		return nil
-	}
-	return fmt.Errorf("%w: %s is at %s", ErrPrivateAddress, host, ap.Addr())
-}
-
-// CheckRedirect is the redirect policy of [http.Client], which also refuses
-// a redirect from https to http.
-func CheckRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
-	}
-	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
-		return ErrInsecureRedirect
-	}
-	return nil
-}
-
-// LimitResponses returns rt with response bodies limited to n bytes. Event
-// streams aren't limited, because they last as long as their task.
-func LimitResponses(rt http.RoundTripper, n int64) http.RoundTripper {
-	return &limitTransport{base: rt, n: n}
-}
-
-type limitTransport struct {
-	base http.RoundTripper
-	n    int64
-}
-
-func (t *limitTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(r)
+	ca, err := boundary.NewCA(hosts)
 	if err != nil {
 		return nil, err
 	}
-	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mt == "text/event-stream" {
-		return resp, nil
-	}
-	tooLarge := fmt.Errorf("%w: over %d bytes", ErrResponseTooLarge, t.n)
-	if resp.ContentLength > t.n {
-		return nil, errors.Join(tooLarge, resp.Body.Close())
-	}
-	resp.Body = &limitedBody{ReadCloser: resp.Body, left: t.n, err: tooLarge}
-	return resp, nil
+	b.ca = ca
+	return ca, nil
 }
 
-type limitedBody struct {
-	io.ReadCloser
-	left int64
-	err  error
+// rules returns the current policy with extra allowed. A policy that
+// doesn't parse allows nothing until it is fixed.
+func (b *Boundary) rules(extra []string) egressrules.Policy {
+	p := b.policy()
+	mode := p.Mode
+	if mode == ModeUnrestricted {
+		mode = ModeInternet
+	}
+	r, err := egressrules.NewPolicy(string(mode), append(slices.Clone(p.Allow), extra...))
+	if err != nil {
+		b.log.Error("reading the egress rules; the client reaches nothing until they are fixed", "error", err)
+		return egressrules.Policy{Mode: egressrules.ModeAllowlist}
+	}
+	return r
 }
 
-func (b *limitedBody) Read(p []byte) (int, error) {
-	if b.left <= 0 {
-		var probe [1]byte
-		n, err := b.ReadCloser.Read(probe[:])
-		if n > 0 {
-			return 0, b.err
-		}
-		return 0, err
+func (b *Boundary) mode() Mode { return cmp.Or(b.policy().Mode, ModeInternet) }
+
+// Status returns the current mode and the connections the policy refused.
+func (b *Boundary) Status() Status {
+	n, recent := b.blocks.Snapshot()
+	st := Status{Mode: b.mode(), Refused: n}
+	for _, blk := range recent {
+		st.Recent = append(st.Recent, Refusal{Destination: blk.Destination, Rule: blk.Allow, Unresolved: blk.Unresolved})
 	}
-	if int64(len(p)) > b.left {
-		p = p[:b.left]
+	return st
+}
+
+// Close closes the endpoints and their connections.
+func (b *Boundary) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	endpoints := make([]*Endpoint, 0, len(b.endpoints))
+	for e := range b.endpoints {
+		endpoints = append(endpoints, e)
 	}
-	n, err := b.ReadCloser.Read(p)
-	b.left -= int64(n)
-	return n, err
+	b.mu.Unlock()
+	var errs []error
+	for _, e := range endpoints {
+		errs = append(errs, e.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// Status is what a boundary knows of its connections.
+type Status struct {
+	Mode Mode
+	// Refused counts the connections the policy refused.
+	Refused int
+	// Recent are the latest refused destinations, newest first. A
+	// destination leaves the list once a connection to it succeeds.
+	Recent []Refusal
+}
+
+// Refusal is a destination the policy refused.
+type Refusal struct {
+	// Destination is the host:port the client asked for.
+	Destination string
+	// Rule is the Allow entry that admits the destination, or "" when
+	// none can, such as for a tailnet address that only its name can.
+	Rule string
+	// Unresolved is set for a name that didn't resolve.
+	Unresolved bool
+}
+
+// Credential is a [Header] or a [ModelKey].
+type Credential interface {
+	injection() (boundary.Injection, []string, error)
+}
+
+// Header is a header added to the HTTPS requests to Host, in place of
+// the one the client sent.
+type Header struct {
+	// Host is a host name, with :port for a port other than 443.
+	Host  string
+	Name  string
+	Value string
+}
+
+func (h Header) injection() (boundary.Injection, []string, error) {
+	host, port, err := egressrules.ParseInjectTarget(h.Host)
+	if err != nil {
+		return boundary.Injection{}, nil, fmt.Errorf("invalid header credential: the host %w", err)
+	}
+	name := http.CanonicalHeaderKey(h.Name)
+	switch {
+	case !httpguts.ValidHeaderFieldName(h.Name):
+		return boundary.Injection{}, nil, fmt.Errorf("invalid header credential for %s: %q isn't a header name", h.Host, h.Name)
+	case egressrules.ReservedHeader(name):
+		return boundary.Injection{}, nil, fmt.Errorf("invalid header credential for %s: the boundary can't set the header %s", h.Host, name)
+	case !httpguts.ValidHeaderFieldValue(h.Value):
+		return boundary.Injection{}, nil, fmt.Errorf("invalid header credential for %s: the value of %s has a character that a header can't carry", h.Host, name)
+	}
+	return boundary.Injection{Host: host, Port: port, Header: name, Value: h.Value, Secrets: []string{name}}, nil, nil
+}
+
+// ModelKey is the API key of a model provider: anthropic, gemini, openai
+// or openrouter. The boundary sets it only on the provider's inference
+// and model list requests, and the client gets a placeholder in the
+// provider's conventional variable, such as ANTHROPIC_API_KEY.
+type ModelKey struct {
+	Provider string
+	Key      string
+}
+
+func (k ModelKey) injection() (boundary.Injection, []string, error) {
+	p, ok := egressrules.LookupProvider(k.Provider)
+	if !ok {
+		return boundary.Injection{}, nil, egressrules.UnknownProvider(k.Provider)
+	}
+	header, scheme := p.Credential(p.KeyEnv)
+	if !httpguts.ValidHeaderFieldValue(scheme + k.Key) {
+		return boundary.Injection{}, nil, fmt.Errorf("the %s key has a character that a header can't carry", k.Provider)
+	}
+	inj := boundary.Injection{
+		Host: p.Host, Port: egressrules.HTTPSPort, Header: header, Value: scheme + k.Key,
+		Model: true, QueryKey: p.QueryKey, Endpoints: p.Endpoints, Secrets: []string{p.KeyEnv},
+	}
+	return inj, []string{p.KeyEnv + "=" + p.Placeholder(p.KeyEnv)}, nil
 }

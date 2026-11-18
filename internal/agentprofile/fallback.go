@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // boundaryFallback starts the agent's container with the egress boundary
@@ -30,7 +30,7 @@ import (
 // Docker's own network from then on. Other failures fail the start, which
 // the server retries as it restarts any agent process.
 type boundaryFallback struct {
-	boundary, open sandbox.Sandbox
+	boundary, open sandboxrt.Sandbox
 	stderr         io.Writer
 
 	mu     sync.Mutex
@@ -43,7 +43,7 @@ func (f *boundaryFallback) Start(ctx context.Context) (io.ReadWriteCloser, error
 	f.mu.Unlock()
 	if !fellBack {
 		rwc, err := f.boundary.Start(ctx)
-		if !errors.Is(err, sandbox.ErrNoBoundary) {
+		if !errors.Is(err, sandboxrt.ErrNoBoundary) {
 			return rwc, err
 		}
 		f.mu.Lock()
@@ -59,7 +59,7 @@ func (f *boundaryFallback) Start(ctx context.Context) (io.ReadWriteCloser, error
 }
 
 // Info describes the sandbox that the next start runs.
-func (f *boundaryFallback) Info() sandbox.Info {
+func (f *boundaryFallback) Info() sandboxrt.Info {
 	f.mu.Lock()
 	fellBack := f.reason != ""
 	f.mu.Unlock()

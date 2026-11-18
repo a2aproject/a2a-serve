@@ -32,10 +32,10 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -527,8 +527,8 @@ func TestWakeClientRefusesRedirectFromHTTPSToHTTP(t *testing.T) {
 
 	err := c.CheckRedirect(req("http://hook.example/wake"), []*http.Request{req("https://hook.example/wake")})
 
-	if !errors.Is(err, egress.ErrInsecureRedirect) {
-		t.Fatalf("wakeClient().CheckRedirect() error = %v, want %v", err, egress.ErrInsecureRedirect)
+	if !errors.Is(err, egressrules.ErrInsecureRedirect) {
+		t.Fatalf("wakeClient().CheckRedirect() error = %v, want %v", err, egressrules.ErrInsecureRedirect)
 	}
 }
 

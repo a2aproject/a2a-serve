@@ -12,242 +12,336 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package egress
+package egress_test
 
 import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
 )
 
-func TestPublic(t *testing.T) {
+func newBoundary(t *testing.T, policy func() egress.Policy, roots *x509.CertPool) *egress.Boundary {
+	t.Helper()
+	b, err := egress.NewWithHosts(egress.Config{Policy: policy, Log: slog.New(slog.DiscardHandler)}, roots)
+	if err != nil {
+		t.Fatalf("egress.New() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := b.Close(); err != nil {
+			t.Errorf("Boundary.Close() error = %v", err)
+		}
+	})
+	return b
+}
+
+// serve serves ep on a TCP listener and returns its address.
+func serve(t *testing.T, ep *egress.Endpoint) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- ep.Serve(ln) }()
+	t.Cleanup(func() {
+		if err := ep.Close(); err != nil {
+			t.Errorf("Endpoint.Close() error = %v", err)
+		}
+		if err := <-done; !errors.Is(err, net.ErrClosed) {
+			t.Errorf("Endpoint.Serve() error = %v, want %v", err, net.ErrClosed)
+		}
+	})
+	return ln.Addr().String()
+}
+
+// connect sends a CONNECT for target to the proxy at addr and returns the
+// status of the answer.
+func connect(t *testing.T, addr, target string) int {
+	t.Helper()
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dialing the endpoint error = %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("closing the connection error = %v", err)
+		}
+	}()
+	if _, err := fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+		t.Fatalf("writing the CONNECT error = %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the answer to CONNECT %s error = %v", target, err)
+	}
+	return resp.StatusCode
+}
+
+func upstream(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	return srv.Listener.Addr().String()
+}
+
+func TestEndpointDecidesByPolicy(t *testing.T) {
 	t.Parallel()
+	allowed := upstream(t)
+	b := newBoundary(t, func() egress.Policy {
+		return egress.Policy{Mode: egress.ModeAllowlist, Allow: []string{"127.0.0.1"}}
+	}, nil)
+	ep, err := b.Open("test")
+	if err != nil {
+		t.Fatalf("Boundary.Open() error = %v", err)
+	}
+	addr := serve(t, ep)
+
 	tests := []struct {
-		ip   string
-		want bool
+		target string
+		want   int
 	}{
-		{ip: "8.8.8.8", want: true},
-		{ip: "2001:4860:4860::8888", want: true},
-		{ip: "127.0.0.1"},
-		{ip: "::1"},
-		{ip: "10.1.2.3"},
-		{ip: "172.16.0.1"},
-		{ip: "192.168.1.1"},
-		{ip: "169.254.169.254"},
-		{ip: "fe80::1"},
-		{ip: "100.101.102.103"},
-		{ip: "fd7a:115c:a1e0::1"},
-		{ip: "0.0.0.0"},
-		{ip: "0.1.2.3"},
-		{ip: "::"},
-		{ip: "224.0.0.1"},
-		{ip: "::ffff:127.0.0.1"},
-		{ip: "::ffff:8.8.8.8", want: true},
-		{ip: "168.63.129.16"},
+		{target: allowed, want: http.StatusOK},
+		{target: "denied.test:443", want: http.StatusForbidden},
+		{target: "missing.test:443", want: http.StatusForbidden},
 	}
 	for _, tc := range tests {
-		t.Run(tc.ip, func(t *testing.T) {
-			t.Parallel()
-			if got := Public(netip.MustParseAddr(tc.ip)); got != tc.want {
-				t.Fatalf("Public(%s) = %v, want %v", tc.ip, got, tc.want)
-			}
-		})
+		if got := connect(t, addr, tc.target); got != tc.want {
+			t.Fatalf("CONNECT %s status = %d, want %d", tc.target, got, tc.want)
+		}
+	}
+	want := egress.Status{
+		Mode:    egress.ModeAllowlist,
+		Refused: 2,
+		Recent: []egress.Refusal{
+			{Destination: "missing.test:443", Rule: "missing.test:443"},
+			{Destination: "denied.test:443", Rule: "denied.test:443"},
+		},
+	}
+	if diff := cmp.Diff(want, b.Status()); diff != "" {
+		t.Fatalf("Boundary.Status() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
-// servers starts two loopback servers: one that the test treats as public,
-// and one that it treats as private.
-func servers(t *testing.T, public http.Handler) (pub, priv *httptest.Server, isPublic func(netip.AddrPort) bool) {
-	t.Helper()
-	pub = httptest.NewServer(public)
-	t.Cleanup(pub.Close)
-	priv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, "private"); err != nil {
-			t.Errorf("writing the private response: %v", err)
-		}
-	}))
-	t.Cleanup(priv.Close)
-	pubAddr := netip.MustParseAddrPort(pub.Listener.Addr().String())
-	return pub, priv, func(ap netip.AddrPort) bool { return ap == pubAddr }
+func TestEndpointReportsUnresolvedNames(t *testing.T) {
+	t.Parallel()
+	b := newBoundary(t, func() egress.Policy { return egress.Policy{} }, nil)
+	ep, err := b.Open("test")
+	if err != nil {
+		t.Fatalf("Boundary.Open() error = %v", err)
+	}
+	if got := connect(t, serve(t, ep), "missing.test:443"); got != http.StatusBadGateway {
+		t.Fatalf("CONNECT missing.test:443 status = %d, want %d", got, http.StatusBadGateway)
+	}
+	want := egress.Status{Mode: egress.ModeInternet, Refused: 1, Recent: []egress.Refusal{{Destination: "missing.test:443", Unresolved: true}}}
+	if diff := cmp.Diff(want, b.Status()); diff != "" {
+		t.Fatalf("Boundary.Status() wrong result (-want +got) diff = %s", diff)
+	}
 }
 
-func get(t *testing.T, c *http.Client, u string) (string, error) {
-	t.Helper()
-	resp, err := c.Get(u)
+func TestEndpointAppliesPolicyChanges(t *testing.T) {
+	t.Parallel()
+	target := upstream(t)
+	var mu sync.Mutex
+	policy := egress.Policy{Mode: egress.ModeAllowlist}
+	b := newBoundary(t, func() egress.Policy {
+		mu.Lock()
+		defer mu.Unlock()
+		return policy
+	}, nil)
+	ep, err := b.Open("test")
 	if err != nil {
-		return "", err
+		t.Fatalf("Boundary.Open() error = %v", err)
+	}
+	addr := serve(t, ep)
+	if got := connect(t, addr, target); got != http.StatusForbidden {
+		t.Fatalf("CONNECT %s status = %d, want %d", target, got, http.StatusForbidden)
+	}
+	mu.Lock()
+	policy.Allow = []string{"127.0.0.1"}
+	mu.Unlock()
+	if got := connect(t, addr, target); got != http.StatusOK {
+		t.Fatalf("CONNECT %s after allowing it status = %d, want %d", target, got, http.StatusOK)
+	}
+	if got := b.Status().Recent; len(got) != 0 {
+		t.Fatalf("Boundary.Status().Recent = %v, want none after the connection succeeded", got)
+	}
+}
+
+func TestEndpointAddsHeader(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, r.Header.Get("Authorization")); err != nil {
+			t.Errorf("writing the answer error = %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// httptest's certificate names example.com, which the boundary of the
+	// test resolves to 127.0.0.1.
+	host := net.JoinHostPort("example.com", port)
+	b := newBoundary(t, func() egress.Policy {
+		return egress.Policy{Mode: egress.ModeAllowlist, Allow: []string{"127.0.0.1"}}
+	}, roots)
+	ep, err := b.Open("test", egress.Header{Host: host, Name: "Authorization", Value: "Bearer secret"})
+	if err != nil {
+		t.Fatalf("Boundary.Open() error = %v", err)
+	}
+	addr := serve(t, ep)
+	trusted := x509.NewCertPool()
+	if !trusted.AppendCertsFromPEM(ep.CA()) {
+		t.Fatalf("Endpoint.CA() = %q, want a PEM certificate", ep.CA())
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		Proxy:           http.ProxyURL(&url.URL{Scheme: "http", Host: addr}),
+		TLSClientConfig: &tls.Config{RootCAs: trusted},
+	}}
+	t.Cleanup(client.CloseIdleConnections)
+	req, err := http.NewRequest(http.MethodGet, "https://"+host+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer placeholder")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Client.Do() error = %v", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			t.Errorf("closing the response: %v", err)
+			t.Errorf("closing the body error = %v", err)
 		}
 	}()
 	body, err := io.ReadAll(resp.Body)
-	return string(body), err
+	if err != nil {
+		t.Fatalf("reading the answer error = %v", err)
+	}
+	if got, want := string(body), "Bearer secret"; got != want {
+		t.Fatalf("Authorization the host got = %q, want %q", got, want)
+	}
+	leaf := resp.TLS.PeerCertificates[0]
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: trusted, DNSName: "example.com"}); err != nil {
+		t.Fatalf("verifying the boundary's certificate with Endpoint.CA() error = %v", err)
+	}
 }
 
-func TestTransportKeepsPublicOriginOutOfPrivateNetworks(t *testing.T) {
+func TestEndpointEnv(t *testing.T) {
 	t.Parallel()
-	var privURL string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, "public"); err != nil {
-			t.Errorf("writing the public response: %v", err)
-		}
-	})
-	mux.HandleFunc("/to-private", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, privURL, http.StatusFound)
-	})
-	pub, priv, isPublic := servers(t, mux)
-	privURL = priv.URL
-	privByName := strings.Replace(priv.URL, "127.0.0.1", "localhost", 1)
+	b := newBoundary(t, func() egress.Policy { return egress.Policy{} }, nil)
+	tests := []struct {
+		name  string
+		creds []egress.Credential
+		want  []string
+	}{
+		{name: "no credentials"},
+		{name: "header", creds: []egress.Credential{egress.Header{Host: "api.github.com", Name: "Authorization", Value: "Bearer t"}}},
+		{name: "model keys", creds: []egress.Credential{
+			egress.ModelKey{Provider: "anthropic", Key: "k1"},
+			egress.ModelKey{Provider: "openai", Key: "k2"},
+		}, want: []string{"ANTHROPIC_API_KEY=sk-ant-api03-a2a-serve-placeholder", "OPENAI_API_KEY=sk-proj-a2a-serve-placeholder"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ep, err := b.Open(tc.name, tc.creds...)
+			if err != nil {
+				t.Fatalf("Boundary.Open() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := ep.Close(); err != nil {
+					t.Errorf("Endpoint.Close() error = %v", err)
+				}
+			})
+			if diff := cmp.Diff(tc.want, ep.Env()); diff != "" {
+				t.Fatalf("Endpoint.Env() wrong result (-want +got) diff = %s", diff)
+			}
+			if got, want := len(ep.CA()) > 0, len(tc.creds) > 0; got != want {
+				t.Fatalf("Endpoint.CA() set = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestOpenRefusesInvalidCredentials(t *testing.T) {
+	t.Parallel()
+	b := newBoundary(t, func() egress.Policy { return egress.Policy{} }, nil)
 	tests := []struct {
 		name string
-		// reachOrigin gets the origin first, which decides whether it is public.
-		reachOrigin bool
-		origin      string
-		get         string
-		want        string
-		wantErr     error
+		cred egress.Credential
+		want string
 	}{
-		{name: "public origin", origin: pub.URL, get: pub.URL, want: "public"},
-		{name: "redirect from a public origin to a private address", reachOrigin: true, origin: pub.URL, get: pub.URL + "/to-private", wantErr: ErrPrivateAddress},
-		{name: "private address from a public origin", reachOrigin: true, origin: pub.URL, get: priv.URL, wantErr: ErrPrivateAddress},
-		{name: "name that resolves to a private address from a public origin", reachOrigin: true, origin: pub.URL, get: privByName, wantErr: ErrPrivateAddress},
-		{name: "private address before the origin was reached", origin: pub.URL, get: priv.URL, wantErr: ErrPrivateAddress},
-		{name: "private origin", origin: priv.URL, get: priv.URL, want: "private"},
+		{name: "unknown provider", cred: egress.ModelKey{Provider: "acme", Key: "k"}, want: "unknown model provider"},
+		{name: "IP address", cred: egress.Header{Host: "10.0.0.1", Name: "X-Key", Value: "v"}, want: "IP address"},
+		{name: "reserved header", cred: egress.Header{Host: "api.test", Name: "Host", Value: "v"}, want: "can't set the header Host"},
+		{name: "line break", cred: egress.Header{Host: "api.test", Name: "X-Key", Value: "a\nb"}, want: "can't carry"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tr := newTransport(tc.origin, isPublic)
-			t.Cleanup(tr.CloseIdleConnections)
-			c := &http.Client{Transport: tr}
-			if tc.reachOrigin {
-				if _, err := get(t, c, tc.origin); err != nil {
-					t.Fatalf("Get(%s) error = %v", tc.origin, err)
-				}
-			}
-
-			got, err := get(t, c, tc.get)
-
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("Get(%s) error = %v, want %v", tc.get, err, tc.wantErr)
-			}
-			if got != tc.want {
-				t.Fatalf("Get(%s) = %q, want %q", tc.get, got, tc.want)
+			if _, err := b.Open(tc.name, tc.cred); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Boundary.Open(%+v) error = %v, want one that says %q", tc.cred, err, tc.want)
 			}
 		})
 	}
 }
 
-func TestTransportOfPrivateOriginFollowsRedirectsIntoPrivateNetworks(t *testing.T) {
+func TestPolicyValidate(t *testing.T) {
 	t.Parallel()
-	_, priv, isPublic := servers(t, http.NotFoundHandler())
-	mux := http.NewServeMux()
-	origin := httptest.NewServer(mux)
-	t.Cleanup(origin.Close)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, priv.URL, http.StatusFound)
-	})
-	tr := newTransport(origin.URL, isPublic)
-	t.Cleanup(tr.CloseIdleConnections)
-
-	got, err := get(t, &http.Client{Transport: tr}, origin.URL)
-
-	if err != nil {
-		t.Fatalf("Get(%s) error = %v", origin.URL, err)
-	}
-	if got != "private" {
-		t.Fatalf("Get(%s) = %q, want %q", origin.URL, got, "private")
-	}
-}
-
-func TestCheckRedirect(t *testing.T) {
-	t.Parallel()
-	req := func(u string) *http.Request {
-		t.Helper()
-		parsed, err := url.Parse(u)
-		if err != nil {
-			t.Fatalf("url.Parse(%q) error = %v", u, err)
-		}
-		return &http.Request{URL: parsed}
-	}
 	tests := []struct {
 		name    string
-		via     []string
-		to      string
+		policy  egress.Policy
 		wantErr bool
 	}{
-		{name: "https to https", via: []string{"https://a.example/hook"}, to: "https://b.example/hook"},
-		{name: "http to https", via: []string{"http://a.example/hook"}, to: "https://a.example/hook"},
-		{name: "http to http", via: []string{"http://a.example/hook"}, to: "http://b.example/hook"},
-		{name: "https to http", via: []string{"https://a.example/hook"}, to: "http://a.example/hook", wantErr: true},
-		{name: "https to http after a hop", via: []string{"http://a.example/hook", "https://a.example/hook"}, to: "http://b.example/hook", wantErr: true},
-		{name: "too many redirects", via: strings.Split(strings.Repeat("https://a.example/hook ", 10), " ")[:10], to: "https://a.example/hook", wantErr: true},
+		{name: "empty", policy: egress.Policy{}},
+		{name: "allowlist", policy: egress.Policy{Mode: egress.ModeAllowlist, Allow: []string{"*.github.com:443", "192.168.1.0/24", "nas.lan:22"}}},
+		{name: "unrestricted", policy: egress.Policy{Mode: egress.ModeUnrestricted}},
+		{name: "unknown mode", policy: egress.Policy{Mode: "open"}, wantErr: true},
+		{name: "bad rule", policy: egress.Policy{Allow: []string{"nas.lan:http"}}, wantErr: true},
+		{name: "tailnet range", policy: egress.Policy{Allow: []string{"100.64.0.0/10"}}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var via []*http.Request
-			for _, u := range tc.via {
-				via = append(via, req(u))
-			}
-			if err := CheckRedirect(req(tc.to), via); (err != nil) != tc.wantErr {
-				t.Fatalf("CheckRedirect(%s) error = %v, want error %v", tc.to, err, tc.wantErr)
+			if err := tc.policy.Validate(); (err != nil) != tc.wantErr {
+				t.Fatalf("Policy.Validate() error = %v, want error %v", err, tc.wantErr)
 			}
 		})
 	}
 }
 
-func TestLimitResponses(t *testing.T) {
+func TestNewRefusesInvalidPolicy(t *testing.T) {
 	t.Parallel()
-	const limit = 1 << 10
-	tests := []struct {
-		name        string
-		contentType string
-		size        int
-		chunked     bool
-		wantErr     error
-	}{
-		{name: "at the limit", contentType: "application/json", size: limit},
-		{name: "over the limit", contentType: "application/json", size: limit + 1, wantErr: ErrResponseTooLarge},
-		{name: "over the limit without a length", contentType: "application/json", size: limit + 1, chunked: true, wantErr: ErrResponseTooLarge},
-		{name: "event stream over the limit", contentType: "text/event-stream; charset=utf-8", size: 4 * limit, chunked: true},
+	if _, err := egress.New(egress.Config{Policy: func() egress.Policy { return egress.Policy{Mode: "open"} }}); err == nil {
+		t.Fatal("egress.New() with an unknown mode error = nil, want one")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", tc.contentType)
-				body := strings.Repeat("x", tc.size)
-				if tc.chunked {
-					if _, err := io.WriteString(w, body[:1]); err != nil {
-						t.Errorf("writing the response: %v", err)
-					}
-					w.(http.Flusher).Flush()
-					body = body[1:]
-				}
-				if _, err := io.WriteString(w, body); err != nil {
-					t.Errorf("writing the response: %v", err)
-				}
-			}))
-			t.Cleanup(srv.Close)
-			c := &http.Client{Transport: LimitResponses(srv.Client().Transport, limit)}
+	if _, err := egress.New(egress.Config{}); err == nil {
+		t.Fatal("egress.New() without a policy error = nil, want one")
+	}
+}
 
-			got, err := get(t, c, srv.URL)
-
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("Get() error = %v, want %v", err, tc.wantErr)
-			}
-			if tc.wantErr == nil && len(got) != tc.size {
-				t.Fatalf("Get() read %d bytes, want %d", len(got), tc.size)
-			}
-		})
+func TestModesMatchTheRules(t *testing.T) {
+	t.Parallel()
+	got := []string{string(egress.ModeInternet), string(egress.ModeAllowlist), string(egress.ModeUnrestricted)}
+	if diff := cmp.Diff(egress.EngineModes, got); diff != "" {
+		t.Fatalf("egress modes wrong result (-want +got) diff = %s", diff)
 	}
 }

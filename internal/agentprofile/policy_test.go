@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 )
 
 func TestWritePolicy(t *testing.T) {
@@ -130,10 +130,10 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 
 			p, err := Prepare(context.Background(), Spec{
 				Profile:   tc.profile,
-				Base:      sandbox.Spec{Name: "a2a-test", Image: "img:1"},
+				Base:      sandboxrt.Spec{Name: "a2a-test", Image: "img:1"},
 				Mounts:    []Mount{{Src: ws, Dst: ws}},
 				Home:      t.TempDir(),
-				Backend:   sandbox.NewDocker(t.TempDir(), nil),
+				Backend:   sandboxrt.NewDocker(t.TempDir(), nil),
 				PolicyDir: policy,
 			})
 			if err != nil {
@@ -159,10 +159,10 @@ func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
 
 	_, err := Prepare(context.Background(), Spec{
 		Profile:   claude{},
-		Base:      sandbox.Spec{Name: "a2a-test"},
+		Base:      sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:    []Mount{{Src: ws, Dst: ws}},
 		Home:      t.TempDir(),
-		Backend:   sandbox.NewDocker(t.TempDir(), nil),
+		Backend:   sandboxrt.NewDocker(t.TempDir(), nil),
 		PolicyDir: policy,
 	})
 

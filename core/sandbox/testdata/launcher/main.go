@@ -13,50 +13,20 @@
 // limitations under the License.
 
 // Command launcher runs as PID 1 of the containers in the tests of the
-// sandbox package, as a2a-serve sandbox-init does for agents.
+// sandbox package, as a binary that embeds the sandbox does.
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"strconv"
 
-	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:]))
-}
-
-func run(args []string) int {
-	if len(args) == 0 || args[0] != "sandbox-init" {
-		fmt.Fprintln(os.Stderr, "launcher: want sandbox-init")
-		return 2
+	if code, ok := sandbox.Main(os.Args[1:]); ok {
+		os.Exit(code)
 	}
-	args = args[1:]
-	check := len(args) > 0 && args[0] == "--check"
-	if check {
-		args = args[1:]
-	}
-	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "launcher: want <socket> <uid> <gid>")
-		return 2
-	}
-	uid, uerr := strconv.Atoi(args[1])
-	gid, gerr := strconv.Atoi(args[2])
-	if uerr != nil || gerr != nil {
-		fmt.Fprintln(os.Stderr, "launcher: invalid uid or gid")
-		return 2
-	}
-	code, err := boundary.Launch(boundary.LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: os.Environ(), Check: check})
-	if setupErr, ok := errors.AsType[*boundary.SetupError](err); ok {
-		fmt.Fprintf(os.Stderr, "a2a-init: setting up the sandbox's network: %v\n", setupErr)
-		return boundary.SetupFailedExit
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "launcher:", err)
-		return 1
-	}
-	return code
+	fmt.Fprintln(os.Stderr, "launcher: want sandbox-init or sandbox-relay")
+	os.Exit(2)
 }

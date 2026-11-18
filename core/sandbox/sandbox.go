@@ -12,128 +12,121 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package sandbox runs a command in a sandbox: on the host, or in a Docker
-// container with its mounts, limits and egress boundary. It knows nothing
-// about agents or agent directories.
+// Package sandbox runs a command in isolation: with its own filesystem
+// view and home, and with all of its network through an egress endpoint.
 package sandbox
 
 import (
 	"context"
-	"errors"
 	"io"
-	"os"
-	"os/exec"
-	"slices"
+	"net"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
+
+// Runtime creates sandboxes of one kind.
+type Runtime interface {
+	// Probe checks this machine without creating a sandbox.
+	Probe(ctx context.Context) (Capabilities, error)
+	// Create sets up a sandbox, such as its image and network. A Spec with
+	// an Egress endpoint fails with an error that wraps ErrNoBoundary where
+	// the runtime can't route through it.
+	Create(ctx context.Context, spec Spec) (Sandbox, error)
+}
 
 // Sandbox runs a command, which it can start again after it exits.
 type Sandbox interface {
-	// Start runs the check of the sandbox and starts the command, connected
-	// to its stdio: reads come from its output, writes go to its input, and
-	// Close stops it. The process outlives ctx. The caller may call Start
-	// again after the process exits.
+	// Start starts the command and returns its stdio: reads come from its
+	// output, writes go to its input, and Close stops it. The command
+	// outlives ctx. Start may be called again after the command exits.
 	Start(ctx context.Context) (io.ReadWriteCloser, error)
-	// Close removes what the sandbox set up.
+	// Close removes what Create set up.
 	Close(ctx context.Context) error
-	// Info describes the sandbox.
-	Info() Info
 }
 
-// ErrNoBoundary means that the egress boundary can't work on this host.
-// Errors that wrap it say why.
-var ErrNoBoundary = errors.New("the sandbox can't route its connections through the boundary")
+// ErrNoBoundary means that the sandbox can't route its connections
+// through an egress endpoint on this machine. Errors that wrap it say why.
+var ErrNoBoundary = sandboxrt.ErrNoBoundary
 
-// Options configure a [Sandbox].
-type Options struct {
-	// Stderr receives the stderr of the process. Discarded if nil.
+// Spec describes a sandbox and the command it runs.
+type Spec struct {
+	// Name names the sandbox, such as its container.
+	Name string
+	// Image is the image the sandbox runs; Local ignores it.
+	Image   string
+	Command Command
+	Mounts  []Mount
+	// Hide are host paths that appear as empty directories wherever a
+	// mount exposes them.
+	Hide []string
+	// Home is the host directory mounted as the command's $HOME.
+	Home   string
+	Limits Limits
+	Labels map[string]string
+	// Egress is the endpoint through which the sandbox makes all its
+	// connections, trusting its CA. Nil gives it the runtime's own
+	// network. Add Egress.Env() to Command.Env for its placeholders.
+	Egress *egress.Endpoint
+	// Sockets are host listeners that the command reaches.
+	Sockets []Socket
+	// Stderr receives the stderr of the command. Discarded if nil.
 	Stderr io.Writer
-	// Check runs before every start, which it refuses with its error. Nil
-	// checks nothing.
-	Check func() error
 }
 
-func (o Options) check() error {
-	if o.Check == nil {
-		return nil
-	}
-	return o.Check()
-}
-
-// Command describes a process to start in a sandbox.
+// Command is a process to start in a sandbox.
 type Command struct {
 	Path string
 	Args []string
-	// Dir is the working directory.
+	// Dir is the working directory in the sandbox.
 	Dir string
 	// Env holds NAME=value pairs added to the environment of the process.
 	Env []string
 }
 
-// Mount is a host directory or file visible in the sandbox at Dst.
+// Mount is a host directory or file visible in the sandbox at Path.
 type Mount struct {
-	Src      string
-	Dst      string
+	Host     string
+	Path     string
 	ReadOnly bool
 }
 
-// Mask lays the host file Src over Dst in the sandbox, read-only, or an
-// empty read-only directory when Src is empty.
-type Mask struct {
-	Src string
-	Dst string
+// Socket is a host listener that the command reaches.
+type Socket struct {
+	// Listener is a Unix listener, whose socket a Docker sandbox mounts
+	// with the rest of its directory, or, on Docker Desktop, a TCP
+	// listener.
+	Listener net.Listener
+	// Env names the variable that gives the command the address of the
+	// listener in the sandbox.
+	Env string
 }
 
-// Limits are container resource limits. An empty field gets the value of
-// [DefaultLimits].
+// Limits are resource limits. An empty field gets the runtime's default.
 type Limits struct {
+	// Memory and CPUs take the values of docker run --memory and --cpus.
 	Memory string
 	CPUs   string
 	PIDs   int
 }
 
-// Runner decides where a process runs.
-type Runner interface {
-	// Command returns the process which runs c.
-	Command(ctx context.Context, c Command) (*exec.Cmd, error)
+// Capabilities are what a runtime can do on this machine.
+type Capabilities struct {
+	// Boundary is set when sandboxes can route their connections through
+	// an egress endpoint.
+	Boundary bool
+	// Problem says why Boundary isn't set, or what may still fail.
+	Problem string
 }
 
-// LocalRunner runs the process directly on the host, for trusted setups or
-// when Docker isn't available.
-type LocalRunner struct{}
-
-var _ Runner = LocalRunner{}
-
-// Command implements [Runner].
-func (LocalRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
-	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), c.Env...)
-	return cmd, nil
-}
-
-type local struct {
-	c    Command
-	opts Options
-}
-
-func (l local) Start(ctx context.Context) (io.ReadWriteCloser, error) {
-	if err := l.opts.check(); err != nil {
-		return nil, err
+func mounts(ms []Mount) []sandboxrt.Mount {
+	out := make([]sandboxrt.Mount, len(ms))
+	for i, m := range ms {
+		out[i] = sandboxrt.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly}
 	}
-	mark := NewProcessMark()
-	c := l.c
-	c.Env = append(slices.Clone(c.Env), mark.Env())
-	cmd, err := LocalRunner{}.Command(context.WithoutCancel(ctx), c)
-	if err != nil {
-		return nil, err
-	}
-	rwc, err := startProcess(cmd, l.opts.Stderr)
-	if err != nil {
-		return nil, err
-	}
-	return mark.Watch(rwc), nil
+	return out
 }
 
-func (local) Close(context.Context) error { return nil }
-
-func (local) Info() Info { return Info{Summary: "no sandbox"} }
+func command(c Command) sandboxrt.Command {
+	return sandboxrt.Command{Path: c.Path, Args: c.Args, Dir: c.Dir, Env: c.Env}
+}

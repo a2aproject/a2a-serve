@@ -17,7 +17,7 @@ package agentprofile
 import (
 	"slices"
 
-	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 // Mount is a host directory the agent works on, as a src[:dst][:ro] spec
@@ -67,16 +67,16 @@ func (r InjectRule) Entry() string {
 
 // HeaderRule returns the header rule of r. A model rule adds the key of
 // its provider where the provider takes it.
-func (r InjectRule) HeaderRule() (egress.HeaderRule, error) {
+func (r InjectRule) HeaderRule() (egressrules.HeaderRule, error) {
 	if !r.IsModel() {
-		return egress.ParseHeaderRule(r.Entry())
+		return egressrules.ParseHeaderRule(r.Entry())
 	}
-	p, ok := egress.LookupProvider(r.Model)
+	p, ok := egressrules.LookupProvider(r.Model)
 	if !ok {
-		return egress.HeaderRule{}, egress.UnknownProvider(r.Model)
+		return egressrules.HeaderRule{}, egressrules.UnknownProvider(r.Model)
 	}
 	header, scheme := p.Credential(r.Key)
-	return egress.HeaderRule{Host: p.Host, Port: egress.HTTPSPort, Name: header, Value: scheme + "${" + r.Key + "}"}, nil
+	return egressrules.HeaderRule{Host: p.Host, Port: egressrules.HTTPSPort, Name: header, Value: scheme + "${" + r.Key + "}"}, nil
 }
 
 // Target returns the host the requests of r go to, as host or host:port.
@@ -93,7 +93,7 @@ func (r InjectRule) Secrets() []string {
 	if r.IsModel() {
 		return []string{r.Key}
 	}
-	h, err := egress.ParseHeaderRule(r.Entry())
+	h, err := egressrules.ParseHeaderRule(r.Entry())
 	if err != nil {
 		return nil
 	}
