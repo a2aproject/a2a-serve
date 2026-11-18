@@ -1084,6 +1084,21 @@ func TestFirstSeen(t *testing.T) {
 	}
 }
 
+func TestFirstSeenRecordsKeyWhenContextIsCanceled(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := s.FirstSeen(ctx, "telegram:1:2")
+	if err != nil || !got {
+		t.Fatalf("FirstSeen() = %v, %v, want true, nil", got, err)
+	}
+	if again, err := s.FirstSeen(context.Background(), "telegram:1:2"); err != nil || again {
+		t.Fatalf("FirstSeen() again = %v, %v, want false, nil", again, err)
+	}
+}
+
 func TestQuestionAnsweredOnce(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

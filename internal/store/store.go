@@ -682,8 +682,12 @@ const seenRetention = 7 * 24 * time.Hour
 
 // FirstSeen records key and reports whether it was new. Messengers use it to
 // drop redelivered messages. [Store.Prune] forgets old keys.
+//
+// The insert ignores the cancellation of ctx: the driver can report a
+// canceled context for an insert that committed, which would drop a message
+// that is never seen again.
 func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
-	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, s.now().UnixNano())
+	res, err := s.exec(context.WithoutCancel(ctx), `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, s.now().UnixNano())
 	if err != nil {
 		return false, err
 	}
