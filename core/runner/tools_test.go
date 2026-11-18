@@ -20,7 +20,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 func TestToolDeciderReadsCurrentRules(t *testing.T) {

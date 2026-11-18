@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 func TestPoliciesKeepServersOfEarlierSessions(t *testing.T) {

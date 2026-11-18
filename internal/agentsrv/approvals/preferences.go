@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // SuggestAfter is in how many conversations in a row a person allows the

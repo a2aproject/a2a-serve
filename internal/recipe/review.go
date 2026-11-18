@@ -22,9 +22,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // Line is a line of the review of what a recipe makes the machine run.

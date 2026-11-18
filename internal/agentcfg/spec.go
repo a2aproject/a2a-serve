@@ -18,8 +18,8 @@ import (
 	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // Spec returns what the runner runs for the agent of cfg in d. cli is the
