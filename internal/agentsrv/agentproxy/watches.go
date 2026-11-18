@@ -29,6 +29,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
+
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
@@ -120,7 +122,7 @@ func NewWatches(ctx context.Context, deps WatchesDeps) *Watches {
 // who waits for the turn that called the agent, or else in the user's
 // direct chat, or else in the owner chat, or else on a new task in the
 // conversation.
-func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task *a2a.Task, q *approvals.Question) {
+func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task *a2a.Task, q *question.Question) {
 	user := claims.User.ID
 	if user == "" {
 		user = auth.OwnerID
@@ -344,7 +346,7 @@ func (ws *Watches) check(ctx context.Context, w *store.Watch, claims Claims) (st
 	}
 	ws.noteState(ctx, w, state)
 	if state == a2a.TaskStateInputRequired {
-		if q := approvals.FromStatus(task.Status); q != nil && q.Type == approvals.TypePermission {
+		if q := question.FromStatus(task.Status); q != nil && q.Type == question.TypePermission {
 			ws.relay(ctx, claims, w.Contact, task, q)
 			return ws.checkAge(*w)
 		}

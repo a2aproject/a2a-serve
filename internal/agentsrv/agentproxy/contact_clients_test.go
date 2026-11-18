@@ -35,12 +35,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -589,9 +589,9 @@ func TestContactClientsAnswerRemote(t *testing.T) {
 	task := remote.startTask(t, promptAsk)
 	remote.waitState(t, task.ID, a2a.TaskStateInputRequired)
 	rec := store.Question{Contact: "coder", TaskID: string(task.ID), ContextID: task.ContextID}
-	q := &approvals.Question{ID: "tool1"}
+	q := &question.Question{ID: "tool1"}
 
-	if err := cc.AnswerRemote(ctx, rec, q, approvals.Option{ID: "once"}, auth.Owner()); err != nil {
+	if err := cc.AnswerRemote(ctx, rec, q, question.Option{ID: "once"}, auth.Owner()); err != nil {
 		t.Fatalf("ContactClients.AnswerRemote() error = %v", err)
 	}
 
@@ -599,9 +599,9 @@ func TestContactClientsAnswerRemote(t *testing.T) {
 	if text := a2atext.Result(got); text != fakeContactAnswer {
 		t.Fatalf("remote task result = %q, want %q", text, fakeContactAnswer)
 	}
-	want, err := approvals.AnswerMessage(task.ID, task.ContextID, q, "once", "")
+	want, err := question.AnswerMessage(task.ID, task.ContextID, q, "once", "")
 	if err != nil {
-		t.Fatalf("approvals.AnswerMessage() error = %v", err)
+		t.Fatalf("question.AnswerMessage() error = %v", err)
 	}
 	msgs := remote.receivedMessages()
 	answer := msgs[len(msgs)-1]
@@ -613,12 +613,12 @@ func TestContactClientsAnswerRemote(t *testing.T) {
 func TestContactClientsAnswerRemoteErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	q := &approvals.Question{ID: "tool1"}
+	q := &question.Question{ID: "tool1"}
 	t.Run("unknown contact", func(t *testing.T) {
 		t.Parallel()
 		cc := newTestContactClients(t, openTestStore(t), nil)
 
-		err := cc.AnswerRemote(ctx, store.Question{Contact: "nobody", TaskID: "t1"}, q, approvals.Option{ID: "once"}, auth.Owner())
+		err := cc.AnswerRemote(ctx, store.Question{Contact: "nobody", TaskID: "t1"}, q, question.Option{ID: "once"}, auth.Owner())
 
 		if !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("ContactClients.AnswerRemote() error = %v, want %v", err, store.ErrNotFound)
@@ -635,7 +635,7 @@ func TestContactClientsAnswerRemoteErrors(t *testing.T) {
 			t.Fatalf("ContactClients.contactClient() error = %v", err)
 		}
 
-		err = cc.AnswerRemote(ctx, store.Question{Contact: "coder", TaskID: "gone", ContextID: "c"}, q, approvals.Option{ID: "once"}, auth.Owner())
+		err = cc.AnswerRemote(ctx, store.Question{Contact: "coder", TaskID: "gone", ContextID: "c"}, q, question.Option{ID: "once"}, auth.Owner())
 		if err == nil {
 			t.Fatalf("ContactClients.AnswerRemote() of an unknown task error = nil, want an error")
 		}

@@ -31,6 +31,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -38,8 +40,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -109,7 +109,7 @@ type Env struct {
 	// CheckTUN checks the host's TUN device, as [sandbox.CheckTUN] does.
 	CheckTUN func() error
 	// CheckInternetRoute checks that this host routes to the internet, as
-	// [sandboxnet.CheckInternetRoute] does.
+	// [boundary.CheckInternetRoute] does.
 	CheckInternetRoute func() error
 	// Run runs a command and returns its stdout.
 	Run  func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -147,7 +147,7 @@ func System() (Env, error) {
 		DirWritable:        dirWritable,
 		CheckLauncher:      sandbox.CheckLauncher,
 		CheckTUN:           sandbox.CheckTUN,
-		CheckInternetRoute: sandboxnet.CheckInternetRoute,
+		CheckInternetRoute: boundary.CheckInternetRoute,
 		Run:                runCommand,
 		HTTP:               &http.Client{Timeout: 5 * time.Second},
 		Status: func(ctx context.Context, d agentdir.Dir) (*controlapi.Status, error) {

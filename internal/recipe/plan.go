@@ -18,8 +18,8 @@ import (
 	"os"
 	"slices"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Var is a variable the agent needs a value for: a secret of config.yaml,
@@ -52,7 +52,7 @@ func (r *Recipe) SecretVars() []Var {
 
 // ServerVars returns the variables of the MCP server s that have no default
 // and that provided doesn't have a value for.
-func (r *Recipe) ServerVars(s project.MCPServer, provided func(name string) bool) []Var {
+func (r *Recipe) ServerVars(s workspace.MCPServer, provided func(name string) bool) []Var {
 	_, missing := s.Resolve(func(name string) (string, bool) { return "", provided(name) })
 	out := make([]Var, 0, len(missing))
 	for _, name := range missing {

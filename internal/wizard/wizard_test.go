@@ -23,8 +23,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 func TestRun(t *testing.T) {
@@ -155,7 +155,7 @@ func TestRunAsksForMCPVariables(t *testing.T) {
 		"docs": {"type": "http", "url": "https://docs.example.com/mcp", "headers": {"Authorization": "Bearer ${DOCS_TOKEN}", "X-Region": "${REGION:-eu}"}},
 		"skipped": {"command": "x", "env": {"K": "${SKIPPED_KEY}"}}
 	}}`
-	if err := os.WriteFile(filepath.Join(dir, project.MCPFile), []byte(mcp), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, workspace.MCPFile), []byte(mcp), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills", "deploy"), 0o755); err != nil {

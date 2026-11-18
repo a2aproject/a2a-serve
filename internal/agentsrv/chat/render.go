@@ -25,6 +25,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -423,8 +424,8 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, "The agent needs more input.")
 		return
 	}
-	q := approvals.FromMessage(msg)
-	if q == nil || q.Type != approvals.TypePermission {
+	q := question.FromMessage(msg)
+	if q == nil || q.Type != question.TypePermission {
 		rd.send(ctx, a2atext.Message(msg))
 		return
 	}

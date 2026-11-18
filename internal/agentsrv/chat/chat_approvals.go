@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -234,7 +235,7 @@ func (a *ChatApprovals) Ask(ctx context.Context, to approvals.Chat, header strin
 
 // answerHint tells how to answer a question in a chat without buttons: by
 // typing an option, or on its page when the task's user may answer there.
-func (a *ChatApprovals) answerHint(ctx context.Context, rec store.Question, q *approvals.Question) string {
+func (a *ChatApprovals) answerHint(ctx context.Context, rec store.Question, q *question.Question) string {
 	hint := "\n\nReply " + q.Words()
 	link, err := a.records.PageURL(ctx, rec)
 	switch {

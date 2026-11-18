@@ -33,6 +33,10 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"golang.org/x/sync/singleflight"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -40,12 +44,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"golang.org/x/sync/singleflight"
 )
 
 // ContactClients reaches other agents: contacts, through one cached client
@@ -589,12 +591,12 @@ func destroyClient(c *a2aclient.Client) {
 }
 
 // AnswerRemote forwards an answer to a remote agent's question.
-func (cc *ContactClients) AnswerRemote(ctx context.Context, rec store.Question, q *approvals.Question, opt approvals.Option, by auth.Principal) error {
+func (cc *ContactClients) AnswerRemote(ctx context.Context, rec store.Question, q *question.Question, opt question.Option, by auth.Principal) error {
 	t, err := cc.target(ctx, rec.Contact, by, 0)
 	if err != nil {
 		return err
 	}
-	msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, opt.ID, "")
+	msg, err := question.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, opt.ID, "")
 	if err != nil {
 		return err
 	}

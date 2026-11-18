@@ -20,8 +20,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Recipe is a recipe read from its directory.
@@ -32,8 +32,8 @@ type Recipe struct {
 	ConfigData []byte
 	// Manifest is the recipe's recipe.yaml, empty without one.
 	Manifest *Manifest
-	MCP      []project.MCPServer
-	Skills   []project.Skill
+	MCP      []workspace.MCPServer
+	Skills   []workspace.Skill
 	Files    Files
 }
 
@@ -66,11 +66,11 @@ func Load(dir string) (*Recipe, error) {
 	if err != nil {
 		return nil, err
 	}
-	servers, err := project.LoadMCP(dir)
+	servers, err := workspace.LoadMCP(dir)
 	if err != nil {
 		return nil, err
 	}
-	skills, err := project.Skills(dir)
+	skills, err := workspace.Skills(dir)
 	if err != nil {
 		return nil, err
 	}

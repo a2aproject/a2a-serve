@@ -24,8 +24,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 )
 
 // refusedReplyKey is the part metadata which marks the note of a status
@@ -36,12 +36,12 @@ const refusedReplyKey = "a2a-serve/refused-reply"
 const maxQuotedReply = 60
 
 // pendingApproval returns the permission question a stored task waits on.
-func pendingApproval(task *a2a.Task) *approvals.Question {
+func pendingApproval(task *a2a.Task) *question.Question {
 	if task == nil {
 		return nil
 	}
-	q := approvals.FromStatus(task.Status)
-	if q == nil || q.Type != approvals.TypePermission {
+	q := question.FromStatus(task.Status)
+	if q == nil || q.Type != question.TypePermission {
 		return nil
 	}
 	return q
@@ -49,7 +49,7 @@ func pendingApproval(task *a2a.Task) *approvals.Question {
 
 // answersQuestion reports whether a reply answers q: with structured input,
 // which the agent checks, or with typed words for one of its options.
-func answersQuestion(msg *a2a.Message, q *approvals.Question) bool {
+func answersQuestion(msg *a2a.Message, q *question.Question) bool {
 	if _, ok := replyOption(msg, q); ok {
 		return true
 	}
@@ -61,7 +61,7 @@ func answersQuestion(msg *a2a.Message, q *approvals.Question) bool {
 
 // refuseReply asks the question of the stored task again, after a note that
 // the reply chose none of its options. The question keeps waiting.
-func refuseReply(execCtx *a2asrv.ExecutorContext, q *approvals.Question) iter.Seq2[a2a.Event, error] {
+func refuseReply(execCtx *a2asrv.ExecutorContext, q *question.Question) iter.Seq2[a2a.Event, error] {
 	return askAgain(refusal(execCtx, q))
 }
 
@@ -74,7 +74,7 @@ func askAgain(ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
 }
 
 // refusal is the status update of refuseReply.
-func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskStatusUpdateEvent {
+func refusal(execCtx *a2asrv.ExecutorContext, q *question.Question) *a2a.TaskStatusUpdateEvent {
 	ids := optionIDs(q)
 	// A misheard transcript could approve a tool call, so voice notes aren't
 	// transcribed for these questions.
@@ -99,26 +99,26 @@ func otherQuestionNote(execCtx *a2asrv.ExecutorContext) (string, bool) {
 	if execCtx.StoredTask == nil {
 		return "", false
 	}
-	q := approvals.FromStatus(execCtx.StoredTask.Status)
+	q := question.FromStatus(execCtx.StoredTask.Status)
 	if q == nil {
 		return "", false
 	}
-	ref := approvals.ReplyRef(execCtx.Message)
+	ref := question.ReplyRef(execCtx.Message)
 	replies := "Reply with one of: " + strings.Join(optionIDs(q), ", ") + ".\n"
 	switch q.Check(ref) {
-	case approvals.Earlier:
+	case question.Earlier:
 		return fmt.Sprintf("I couldn't use the reply: it answers question %d of this task, which was already answered. This is question %d, and it still waits for an answer. %s", ref.Seq, q.Seq, replies), true
-	case approvals.Later:
+	case question.Later:
 		return fmt.Sprintf("I couldn't use the reply: it answers question %d of this task, which the task hasn't asked. This is question %d, and it still waits for an answer. %s", ref.Seq, q.Seq, replies), true
-	case approvals.Other:
+	case question.Other:
 		return "I couldn't use the reply: it answers another question, so this question still waits for an answer. " + replies, true
-	case approvals.BadSeq:
+	case question.BadSeq:
 		return "I couldn't use the reply: its \"seq\" isn't a question number, so the question still waits for an answer. " + replies, true
 	}
 	return "", false
 }
 
-func optionIDs(q *approvals.Question) []string {
+func optionIDs(q *question.Question) []string {
 	ids := make([]string, len(q.Options))
 	for i, o := range q.Options {
 		ids[i] = o.ID
@@ -166,10 +166,10 @@ func reask(execCtx *a2asrv.ExecutorContext, text string) *a2a.TaskStatusUpdateEv
 
 // askedBefore reports whether the stored task already asked q, as when a
 // reply was refused and the question asked again.
-func askedBefore(stored *a2a.Task, q *approvals.Question) bool {
+func askedBefore(stored *a2a.Task, q *question.Question) bool {
 	if stored == nil {
 		return false
 	}
-	prev := approvals.FromStatus(stored.Status)
+	prev := question.FromStatus(stored.Status)
 	return prev != nil && prev.ID == q.ID
 }

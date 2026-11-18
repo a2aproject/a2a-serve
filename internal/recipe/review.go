@@ -22,9 +22,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/toolrules"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/project"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // Line is a line of the review of what a recipe makes the machine run.
@@ -50,10 +50,10 @@ var safeKinds = []string{"read", "search", "think"}
 
 // Review lists what the agent of the recipe will run in the agent directory
 // d with cfg, the recipe's agent settings with the owner's flags applied, in
-// the workspace shown as workspace: the agent, sandbox, mounts, environment,
+// the workspace shown as shownWorkspace: the agent, sandbox, mounts, environment,
 // MCP servers, skills, instructions, agent configuration, approvals and
 // limits, and the owner settings of the recipe that aren't taken.
-func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, workspace string) []Line {
+func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, shownWorkspace string) []Line {
 	var out []Line
 	add := func(label string, items ...Item) {
 		if len(items) > 0 {
@@ -74,16 +74,16 @@ func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, workspace string) [
 	} else {
 		add("sandbox", Item{Text: agentdir.SandboxDocker})
 	}
-	add("workspace", Item{Text: workspace + ", read-write"})
+	add("workspace", Item{Text: shownWorkspace + ", read-write"})
 	add("mounts", mountItems(r, d, cfg)...)
 	add("environment", envItems(cfg)...)
 	add("mcp", mcpItems(r, cfg)...)
 	add("skills", skillItems(r.Skills)...)
 	add("instructions", fileItems(r.Files, instructionFiles, "", false)...)
 	if local {
-		add("agent config", fileItems(r.Files, project.AgentConfigFiles, "they can change what the agent runs and approves", true)...)
+		add("agent config", fileItems(r.Files, workspace.AgentConfigFiles, "they can change what the agent runs and approves", true)...)
 	} else {
-		add("agent config", fileItems(r.Files, project.AgentConfigFiles, "the sandbox hides them from the agent", false)...)
+		add("agent config", fileItems(r.Files, workspace.AgentConfigFiles, "the sandbox hides them from the agent", false)...)
 	}
 	add("approvals", approvalItems(cfg.Approvals)...)
 	add("limits", limitItems(cfg.Limits)...)
@@ -154,7 +154,7 @@ func mcpItems(r *Recipe, cfg *agentdir.Config) []Item {
 	return out
 }
 
-func skillItems(skills []project.Skill) []Item {
+func skillItems(skills []workspace.Skill) []Item {
 	if len(skills) == 0 {
 		return nil
 	}

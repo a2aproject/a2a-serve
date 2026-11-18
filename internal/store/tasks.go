@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 )
 
@@ -766,7 +767,7 @@ func decodePageToken(tok string) (int64, string, error) {
 
 // InterruptedKey is the status message metadata that marks a task which
 // failed because the server stopped or restarted before it finished.
-const InterruptedKey = "a2a-serve/interrupted"
+const InterruptedKey = runner.InterruptedKey
 
 // Interrupted reports whether the server stopped or restarted before task
 // finished.

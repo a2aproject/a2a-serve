@@ -27,13 +27,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
@@ -116,17 +116,17 @@ stopped, once its first start picked its port.`,
 // printStopped prints the status of the stopped agent in d, whose
 // config.yaml doesn't load if problem is set.
 func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
-	name, agent := d.NameOrDefault(), ""
+	name, kind := d.NameOrDefault(), ""
 	if conf, err := d.ReadConfig(); err == nil {
-		agent = conf.Harness
+		kind = conf.Harness
 	}
 	if cfg.IsJSON() {
-		return cfg.PrintJSON(statusJSON{Name: name, Harness: agent, Dir: d.Root, Recipe: recipeOf(d), ConfigError: problem})
+		return cfg.PrintJSON(statusJSON{Name: name, Harness: kind, Dir: d.Root, Recipe: recipeOf(d), ConfigError: problem})
 	}
 	var sb strings.Builder
 	sb.WriteString(name)
-	if agent != "" {
-		fmt.Fprintf(&sb, " (%s)", agent)
+	if kind != "" {
+		fmt.Fprintf(&sb, " (%s)", kind)
 	}
 	if lifecycle.ServerRunning(d) {
 		fmt.Fprintf(&sb, " in %s is starting or stopping; check again in a moment, or see `a2a-serve logs`\n", d.Root)
@@ -136,7 +136,7 @@ func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
 	}
 	start := "start it with `a2a-serve start --detach`"
 	if !d.Exists() {
-		start = "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"
+		start = "start it with `a2a-serve start <agent>` (" + strings.Join(agent.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"
 	}
 	fmt.Fprintf(&sb, " in %s is not running; %s\n", d.Root, start)
 	writeConfigProblem(&sb, problem)

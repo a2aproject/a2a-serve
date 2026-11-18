@@ -23,6 +23,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
@@ -55,7 +57,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 			errs = append(errs, fmt.Errorf("looking up who started task %s: %w", t.ID, err))
 			continue
 		}
-		dec, ok, err := s.decider.decide(ctx, t.ContextID, user, s.decider.call(q.Kind, q.ToolTitle, q.ToolInput))
+		dec, ok, err := s.decideWithRules(ctx, t.ContextID, user, s.runner.Call(q.Kind, q.ToolTitle, q.ToolInput))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("deciding the approval of task %s: %w", t.ID, err))
 			continue
@@ -67,7 +69,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		for i, o := range q.Options {
 			ids[i] = o.ID
 		}
-		ans, ok := ruleAnswer(ids, dec.allow)
+		ans, ok := runner.RuleAnswer(ids, dec.Allow)
 		if !ok {
 			continue
 		}
@@ -77,9 +79,9 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		}
 		by, who := rulesPrincipal, rulesPrincipal.ID
 		switch {
-		case dec.by != byRule:
-			by, who = allowedPrincipal, approvals.AlwaysLabel(dec.entry)
-		case !dec.allow:
+		case dec.By != runner.ByRule:
+			by, who = allowedPrincipal, question.AlwaysLabel(dec.Entry)
+		case !dec.Allow:
 			by, who = denyPrincipal, denyPrincipal.ID
 		}
 		// Another answer, such as one of a concurrent run, may come first;
@@ -90,7 +92,7 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 			continue
 		}
 		if out == approvals.Answered {
-			slog.Info("approval answered by a "+dec.by, dec.logAttrs(t.ID, q.Kind, opt.ID)...)
+			slog.Info("approval answered by a "+dec.By, dec.LogAttrs(t.ID, q.Kind, opt.ID)...)
 		}
 	}
 	return errors.Join(errs...)

@@ -16,29 +16,22 @@ package agentdir
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 )
 
 // InjectRule is a header the server adds to the Docker sandbox's HTTPS
 // requests to a host. The secrets it carries are the agent's secrets, which
 // the sandbox rules grant as they grant the environment; the agent's
 // environment doesn't get them.
-type InjectRule struct {
-	// Host and Header add a header to the requests to host[:port], as
-	// "Name: value", where $NAME stands for the secret NAME.
-	Host   string `yaml:"host,omitempty" json:"host,omitempty"`
-	Header string `yaml:"header,omitempty" json:"header,omitempty"`
-	// Model and Key add the secret Key as the API key of the model
-	// provider Model. The agent's environment gets a placeholder as Key.
-	Model string `yaml:"model,omitempty" json:"model,omitempty"`
-	Key   string `yaml:"key,omitempty" json:"key,omitempty"`
-}
+type InjectRule = agent.InjectRule
 
 // Settings of the inject rules.
 const (
@@ -46,73 +39,23 @@ const (
 	InjectModelKeySetting = "inject-model-key"
 )
 
-// IsModel reports whether r sets the key of a model provider.
-func (r InjectRule) IsModel() bool { return r.Model != "" }
+// UnknownProviderText says that the model provider name is unknown, and how
+// to inject a header for another host.
+func UnknownProviderText(name string) string {
+	return egress.UnknownProvider(name).Error() + "; use --inject-header for another host"
+}
 
-// Setting names the flag that sets r.
-func (r InjectRule) Setting() string {
+// InjectSetting names the flag that sets r.
+func InjectSetting(r InjectRule) string {
 	if r.IsModel() {
 		return InjectModelKeySetting
 	}
 	return InjectHeaderSetting
 }
 
-// Entry returns r as its flag takes it.
-func (r InjectRule) Entry() string {
-	if r.IsModel() {
-		return r.Model + "=" + r.Key
-	}
-	return r.Host + "=" + r.Header
-}
-
-// HeaderRule returns the header rule of r. A model rule adds the key of
-// its provider where the provider takes it.
-func (r InjectRule) HeaderRule() (egress.HeaderRule, error) {
-	if !r.IsModel() {
-		return egress.ParseHeaderRule(r.Entry())
-	}
-	p, ok := egress.LookupProvider(r.Model)
-	if !ok {
-		return egress.HeaderRule{}, egress.UnknownProvider(r.Model)
-	}
-	header, scheme := p.Credential(r.Key)
-	return egress.HeaderRule{Host: p.Host, Port: egress.HTTPSPort, Name: header, Value: scheme + "${" + r.Key + "}"}, nil
-}
-
-// Target returns the host the requests of r go to, as host or host:port.
-func (r InjectRule) Target() string {
-	h, err := r.HeaderRule()
-	if err != nil {
-		return r.Host
-	}
-	return h.Target()
-}
-
-// Secrets returns the names of the secrets r adds.
-func (r InjectRule) Secrets() []string {
-	if r.IsModel() {
-		return []string{r.Key}
-	}
-	h, err := egress.ParseHeaderRule(r.Entry())
-	if err != nil {
-		return nil
-	}
-	return h.Secrets()
-}
-
 // InjectedSecrets returns the names of the secrets the inject rules of c
 // add, in the order of the rules.
-func (c *Config) InjectedSecrets() []string {
-	var out []string
-	for _, r := range c.Inject {
-		for _, name := range r.Secrets() {
-			if !slices.Contains(out, name) {
-				out = append(out, name)
-			}
-		}
-	}
-	return out
-}
+func (c *Config) InjectedSecrets() []string { return agent.InjectedSecrets(c.Inject) }
 
 // injectKey is the key of an entry of --inject-header or --inject-model-key,
 // or of an argument that names one: the target of a header rule and the
@@ -229,7 +172,7 @@ func parseInjectEntry(model bool, e string) (InjectRule, error) {
 		return InjectRule{}, fmt.Errorf("invalid model key for %q: want provider=NAME, such as openrouter=OPENROUTER_API_KEY, with the name of an environment variable after =", provider)
 	}
 	if _, ok := egress.LookupProvider(provider); !ok {
-		return InjectRule{}, egress.UnknownProvider(provider)
+		return InjectRule{}, errors.New(UnknownProviderText(provider))
 	}
 	return InjectRule{Model: provider, Key: key}, nil
 }
@@ -241,7 +184,7 @@ func (c *Config) validateInject() []error {
 	targets := map[string]InjectRule{}
 	for _, r := range c.Inject {
 		invalid := func(format string, args ...any) {
-			errs = append(errs, &FieldError{Flag: r.Setting(), Entry: r.Entry(), Reason: fmt.Sprintf(format, args...)})
+			errs = append(errs, &FieldError{Flag: InjectSetting(r), Entry: r.Entry(), Reason: fmt.Sprintf(format, args...)})
 		}
 		if r.IsModel() == (r.Host != "" || r.Header != "") || r.IsModel() == (r.Key == "") {
 			errs = append(errs, fmt.Errorf("inject: a rule has either host and header, or model and key"))
@@ -253,12 +196,12 @@ func (c *Config) validateInject() []error {
 			continue
 		}
 		if prev, dup := targets[parsed.Target()]; dup {
-			invalid("%s already gets a header from %s %s; a host takes one rule", parsed.Target(), prev.Setting(), prev.Entry())
+			invalid("%s already gets a header from %s %s; a host takes one rule", parsed.Target(), InjectSetting(prev), prev.Entry())
 		}
 		targets[parsed.Target()] = r
 		for _, name := range parsed.Secrets() {
 			if !slices.Contains(c.Secrets, name) {
-				invalid("secret %s is not one of the agent's secrets; store it with `a2a-serve config set --secret %s`, or remove the rule with `a2a-serve config unset %s %s`", name, name, r.Setting(), injectKey(r.IsModel())(r.Entry()))
+				invalid("secret %s is not one of the agent's secrets; store it with `a2a-serve config set --secret %s`, or remove the rule with `a2a-serve config unset %s %s`", name, name, InjectSetting(r), injectKey(r.IsModel())(r.Entry()))
 			}
 		}
 	}
@@ -277,9 +220,9 @@ func (c *Config) validateInject() []error {
 	}
 	switch {
 	case c.Sandbox == SandboxLocal:
-		errs = append(errs, fmt.Errorf("--%s needs the Docker sandbox: with --sandbox local, the agent can read the secrets in .a2a/state/secrets; use --sandbox docker, or remove the rules with `a2a-serve config unset %s`", c.Inject[0].Setting(), c.Inject[0].Setting()))
+		errs = append(errs, fmt.Errorf("--%s needs the Docker sandbox: with --sandbox local, the agent can read the secrets in .a2a/state/secrets; use --sandbox docker, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
 	case c.Egress.Mode == egress.ModeUnrestricted:
-		errs = append(errs, fmt.Errorf("--%s needs the server to see the sandbox's connections, which --egress unrestricted turns off; use --egress internet, or remove the rules with `a2a-serve config unset %s`", c.Inject[0].Setting(), c.Inject[0].Setting()))
+		errs = append(errs, fmt.Errorf("--%s needs the server to see the sandbox's connections, which --egress unrestricted turns off; use --egress internet, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
 	}
 	return errs
 }
@@ -290,7 +233,7 @@ func (c *Config) checkInjectUnused(names []string) error {
 	for _, r := range c.Inject {
 		for _, name := range r.Secrets() {
 			if slices.Contains(names, name) {
-				return clierr.UsageNoHint(fmt.Sprintf("%s is used by --%s %s; run `a2a-serve config unset %s %s` first", name, r.Setting(), injectKey(r.IsModel())(r.Entry()), r.Setting(), injectKey(r.IsModel())(r.Entry())))
+				return clierr.UsageNoHint(fmt.Sprintf("%s is used by --%s %s; run `a2a-serve config unset %s %s` first", name, InjectSetting(r), injectKey(r.IsModel())(r.Entry()), InjectSetting(r), injectKey(r.IsModel())(r.Entry())))
 			}
 		}
 	}

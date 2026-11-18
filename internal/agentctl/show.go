@@ -18,11 +18,11 @@ import (
 	"context"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 // Secret states of a [View].
@@ -115,7 +115,7 @@ func defaults(d agentdir.Dir, cfg *agentdir.Config) *agentdir.Config {
 	if cfg.Egress.Mode == "" && cfg.Sandbox != agentdir.SandboxLocal {
 		out.Egress.Mode = egress.ModeInternet
 	}
-	if p, err := harness.Lookup(cfg.Harness, cfg.Command); err == nil && cfg.Image == "" {
+	if p, err := agentcfg.Profile(cfg); err == nil && cfg.Image == "" {
 		out.Image = p.Image()
 	}
 	if cfg.Limits.Memory == "" {

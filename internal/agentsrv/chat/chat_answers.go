@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
@@ -99,21 +100,21 @@ const (
 // The question is the one whose message it replies to, or else the only
 // one open in its conversation. Questions whose tasks no longer wait for
 // them are closed, and the message goes to the agent.
-func (c *ChatTurns) typedAnswer(ctx context.Context, in messenger.Inbound, buttons bool) (store.Question, *approvals.Question, approvals.Option, typedReply) {
+func (c *ChatTurns) typedAnswer(ctx context.Context, in messenger.Inbound, buttons bool) (store.Question, *question.Question, question.Option, typedReply) {
 	recs := c.unanswered(ctx, c.addressedQuestions(ctx, in))
 	if !slices.ContainsFunc(recs, func(rec store.Question) bool {
 		_, kind := matchTyped(approvals.FromRecord(rec), in.Text, buttons)
 		return kind != notAnAnswer
 	}) {
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+		return store.Question{}, nil, question.Option{}, notAnAnswer
 	}
 	recs = c.waiting(ctx, recs)
 	switch len(recs) {
 	case 0:
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+		return store.Question{}, nil, question.Option{}, notAnAnswer
 	case 1:
 	default:
-		return store.Question{}, nil, approvals.Option{}, unaddressedAnswer
+		return store.Question{}, nil, question.Option{}, unaddressedAnswer
 	}
 	q := approvals.FromRecord(recs[0])
 	opt, kind := matchTyped(q, in.Text, buttons)
@@ -122,15 +123,15 @@ func (c *ChatTurns) typedAnswer(ctx context.Context, in messenger.Inbound, butto
 
 // matchTyped returns the option a typed message selects, and whether it is
 // an answer.
-func matchTyped(q *approvals.Question, text string, buttons bool) (approvals.Option, typedReply) {
+func matchTyped(q *question.Question, text string, buttons bool) (question.Option, typedReply) {
 	if opt, ok := q.Match(text); ok {
 		return opt, answer
 	}
 	first, rest, _ := strings.Cut(strings.TrimSpace(text), "\n")
 	if _, ok := q.Match(first); !ok || buttons || strings.TrimSpace(rest) == "" {
-		return approvals.Option{}, notAnAnswer
+		return question.Option{}, notAnAnswer
 	}
-	return approvals.Option{}, ambiguousAnswer
+	return question.Option{}, ambiguousAnswer
 }
 
 // addressedQuestions returns the IDs of the questions a message may answer:
@@ -195,8 +196,8 @@ func (c *ChatTurns) waiting(ctx context.Context, recs []store.Question) []store.
 
 // answerIn answers a question from a conversation. If the question belongs
 // to the task of this conversation, the rest of the task is rendered here.
-func (c *ChatTurns) answerIn(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, p auth.Principal, rec store.Question, q *approvals.Question, opt approvals.Option) {
-	if q.Type == approvals.TypePermission && !approvals.MayAnswer(p, rec.User) {
+func (c *ChatTurns) answerIn(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, p auth.Principal, rec store.Question, q *question.Question, opt question.Option) {
+	if q.Type == question.TypePermission && !approvals.MayAnswer(p, rec.User) {
 		c.reply(ctx, ch, in, "Only the person who started the task or an owner can answer this.")
 		return
 	}

@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
+	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
 )
 
 // envRelayKey holds the key a relay sends with each egress connection.
@@ -46,13 +46,13 @@ the egress socket is in $` + envRelayKey + `.`,
 			if key == "" {
 				return errors.New(envRelayKey + " is not set")
 			}
-			pairs := []sandboxnet.RelayPair{{Listen: egressListen, Target: egressTo, Key: key}}
+			pairs := []boundary.RelayPair{{Listen: egressListen, Target: egressTo, Key: key}}
 			if serverListen != "" {
-				pairs = append(pairs, sandboxnet.RelayPair{Listen: serverListen, Target: serverTo})
+				pairs = append(pairs, boundary.RelayPair{Listen: serverListen, Target: serverTo})
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
 			defer stop()
-			return sandboxnet.Relay(ctx, pairs, cmd.OutOrStdout())
+			return boundary.Relay(ctx, pairs, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&egressListen, "egress-listen", "", "path of the egress socket")

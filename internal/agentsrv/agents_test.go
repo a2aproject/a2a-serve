@@ -17,34 +17,29 @@ package agentsrv
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
-
-	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -202,8 +197,11 @@ func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 					t.Fatalf("Chtimes() error = %v", err)
 				}
 				if tc.running {
-					a := coder.srv.users.get(agentkey.CallerKey(id, caller))
-					coder.srv.users.started(a, io.NopCloser(nil), access.Sandbox{})
+					release, ok, err := coder.srv.runner.HoldIdle(context.Background(), agentkey.CallerKey(id, caller))
+					if err != nil || !ok {
+						t.Fatalf("Runner.HoldIdle() = %v, %v, want the process held as if it ran", ok, err)
+					}
+					t.Cleanup(release)
 				}
 			}
 			ctx := a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {"1"}, auth.HeaderCaller: {"new-person"}})
@@ -360,8 +358,8 @@ func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
 
 			task := send(t, c, userText(tc.prompt, "", ""))
 			for range tc.wantQuestions {
-				q := approvals.FromStatus(task.Status)
-				if q == nil || q.Type != approvals.TypePermission || !strings.Contains(q.Text, "coder wants to run git push") {
+				q := question.FromStatus(task.Status)
+				if q == nil || q.Type != question.TypePermission || !strings.Contains(q.Text, "coder wants to run git push") {
 					t.Fatalf("task status = %s (%s), want coder's permission question", task.Status.State, a2atext.Message(task.Status.Message))
 				}
 				task = send(t, c, userText("approve", string(task.ID), task.ContextID))
@@ -388,7 +386,7 @@ func TestRepeatedAnswerToRemoteApprovalOnTheCallersTask(t *testing.T) {
 	send(t, c, numberedAnswer(task, "once", 1))
 	repeated := send(t, c, numberedAnswer(task, "once", 1))
 
-	q := approvals.FromStatus(repeated.Status)
+	q := question.FromStatus(repeated.Status)
 	if q == nil || q.Seq != 2 || !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("task status = %s (%s), want coder's second question to wait", repeated.Status.State, a2atext.Message(repeated.Status.Message))
 	}
@@ -446,7 +444,7 @@ func TestStopDoesNotWaitForRemoteResult(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("SendMessage() of the approval error = %v", got.err)
 	}
-	if task, ok := got.res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateFailed || a2atext.Message(task.Status.Message) != stoppedMessage {
+	if task, ok := got.res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateFailed || a2atext.Message(task.Status.Message) != runner.StoppedMessage {
 		t.Fatalf("SendMessage() of the approval = %#v, want a failed task that says the server stopped", got.res)
 	}
 }
@@ -497,7 +495,7 @@ func TestRemoteApprovalOnTheCallersTaskKeepsUnclearReply(t *testing.T) {
 
 	task := send(t, c, userText("call coder ask", "", ""))
 	again := send(t, c, userText("maybe later", string(task.ID), task.ContextID))
-	if q := approvals.FromStatus(again.Status); q == nil || !strings.Contains(q.Text, "coder wants to run git push") {
+	if q := question.FromStatus(again.Status); q == nil || !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("task status = %s (%s), want coder's question asked again", again.Status.State, a2atext.Message(again.Status.Message))
 	}
 
@@ -514,7 +512,7 @@ func TestRemoteApprovalOnTheCallersTaskSurvivesRestart(t *testing.T) {
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	token := assistant.pair("me", auth.RoleOwner)
 	task := send(t, assistant.client(token), userText("call coder ask", "", ""))
-	if q := approvals.FromStatus(task.Status); q == nil {
+	if q := question.FromStatus(task.Status); q == nil {
 		t.Fatalf("task status = %s (%s), want coder's question", task.Status.State, a2atext.Message(task.Status.Message))
 	}
 	root := assistant.dir.Root
@@ -602,7 +600,7 @@ func waitQuestionTask(t *testing.T, c *a2aclient.Client, contextID, want string)
 			t.Fatalf("ListTasks() error = %v", err)
 		}
 		for _, task := range res.Tasks {
-			if q := approvals.FromStatus(task.Status); q != nil && asksCallerQuestion(task) && strings.Contains(q.Text, want) {
+			if q := question.FromStatus(task.Status); q != nil && asksCallerQuestion(task) && strings.Contains(q.Text, want) {
 				return task
 			}
 		}
@@ -737,7 +735,7 @@ func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Princip
 // harnessClient returns a client which reaches ts the way the owner's
 // agent process does.
 func harnessClient(ts *testServer) *http.Client {
-	return socketClient(ts.srv.bridge.socket)
+	return socketClient(ts.srv.runner.Bridge().Socket)
 }
 
 // socketClient returns a client which sends every request through the Unix
@@ -834,91 +832,48 @@ func TestAgentsProxyServesOnlyTheConversationsOfItsProcess(t *testing.T) {
 	addNode(t, ts, "grok", 0)
 	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	annaContext := send(t, anna, userText("hello", "", "")).ContextID
-	annaURL := turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleMember})
-	ownerURL := turnURL(t, ts, "c1")
-	annaSocket, err := ts.srv.harness.open(agentkey.User("pair:anna"))
-	if err != nil {
-		t.Fatalf("harnessListeners.open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := annaSocket.close(); err != nil {
-			t.Errorf("harnessEndpoint.close() error = %v", err)
-		}
-	})
-	tests := []struct {
-		name    string
-		socket  string
-		url     string
-		wantErr bool
-	}{
-		{name: "owner's socket and conversation", socket: ts.srv.bridge.socket, url: ownerURL},
-		{name: "anna's socket and conversation", socket: annaSocket.socket, url: annaURL},
-		{name: "owner's socket and anna's conversation", socket: ts.srv.bridge.socket, url: annaURL, wantErr: true},
-		{name: "anna's socket and owner's conversation", socket: annaSocket.socket, url: ownerURL, wantErr: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			task, err := callAgent(t, socketClient(tc.socket), tc.url+"/grok", "hi")
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("callAgent() error = %v, want error %v", err, tc.wantErr)
-			}
-			if err == nil && a2atext.Result(task) != "grok says: hi" {
-				t.Fatalf("task result = %q, want %q", a2atext.Result(task), "grok says: hi")
-			}
-		})
-	}
-}
-
-func TestHarnessEndpointsOverTCP(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant"})
-	addNode(t, ts, "grok", 0)
-	anna := ts.client(ts.pair("anna", auth.RoleMember))
-	annaContext := send(t, anna, userText("hello", "", "")).ContextID
 	annaHandle := strings.TrimPrefix(turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleMember}), socketHost+"/")
 	ownerHandle := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
-	hl, err := listenHarnessTCP("127.0.0.1", "127.0.0.1")
-	if err != nil {
-		t.Fatalf("listenHarnessTCP() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := hl.close(context.Background()); err != nil {
-			t.Errorf("harnessListeners.close() error = %v", err)
+	const processHeader = "X-Test-Process"
+	hs := httptest.NewServer(ts.srv.proxy.Routes(func(r *http.Request) (string, bool) {
+		key, ok := r.Header[processHeader]
+		if !ok {
+			return "", false
 		}
-	})
-	shutdown := hl.serve(context.Background(), ts.srv.proxy.Routes(hl.processOf), make(chan error, 1))
-	t.Cleanup(func() {
-		if err := shutdown(context.Background()); err != nil {
-			t.Errorf("shutting down the harness listener: %v", err)
-		}
-	})
-	owner, annaKey := hl.openKey(""), hl.openKey(agentkey.User("pair:anna"))
-	closed := hl.openKey("")
-	if err := closed.close(); err != nil {
-		t.Fatalf("harnessEndpoint.close() error = %v", err)
-	}
+		return key[0], true
+	}))
+	t.Cleanup(hs.Close)
+	owner, annaKey := "", agentkey.User("pair:anna")
 	tests := []struct {
-		name   string
-		key    string
-		handle string
-		want   int
+		name    string
+		process *string
+		handle  string
+		want    int
 	}{
-		{name: "owner's key and conversation", key: owner.key, handle: ownerHandle, want: http.StatusOK},
-		{name: "anna's key and conversation", key: annaKey.key, handle: annaHandle, want: http.StatusOK},
-		{name: "owner's key and anna's conversation", key: owner.key, handle: annaHandle, want: http.StatusNotFound},
-		{name: "anna's key and owner's conversation", key: annaKey.key, handle: ownerHandle, want: http.StatusNotFound},
-		{name: "closed key", key: closed.key, handle: ownerHandle, want: http.StatusUnauthorized},
-		{name: "no key", handle: ownerHandle, want: http.StatusUnauthorized},
+		{name: "owner's process and conversation", process: &owner, handle: ownerHandle, want: http.StatusOK},
+		{name: "anna's process and conversation", process: &annaKey, handle: annaHandle, want: http.StatusOK},
+		{name: "owner's process and anna's conversation", process: &owner, handle: annaHandle, want: http.StatusNotFound},
+		{name: "anna's process and owner's conversation", process: &annaKey, handle: ownerHandle, want: http.StatusNotFound},
+		{name: "no process", handle: ownerHandle, want: http.StatusUnauthorized},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			header := ""
-			if tc.key != "" {
-				header = "Bearer " + tc.key
+			req, err := http.NewRequest(http.MethodGet, hs.URL+"/"+tc.handle+"/grok/.well-known/agent-card.json", nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			got := getURL(t, hl.url+"/"+tc.handle+"/grok/.well-known/agent-card.json", header)
-			if got.Status != tc.want {
-				t.Fatalf("GET agent card status = %d (%s), want %d", got.Status, got.Error, tc.want)
+			if tc.process != nil {
+				req.Header.Set(processHeader, *tc.process)
+			}
+			resp, err := testHTTP.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.want {
+				t.Fatalf("GET agent card status = %d, want %d", resp.StatusCode, tc.want)
 			}
 		})
 	}
@@ -991,50 +946,6 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 				t.Fatalf("GET card status = %d, want %d", resp.StatusCode, tc.want)
 			}
 		})
-	}
-}
-
-func TestWriteHarnessHelper(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("the helper is a POSIX shell script")
-	}
-	home := t.TempDir()
-	env, err := writeHarnessHelper(home, "host.docker.internal", "k3y")
-	if err != nil {
-		t.Fatalf("writeHarnessHelper() error = %v", err)
-	}
-	if want := "A2ACLI_CREDENTIAL_HELPER=host.docker.internal=/home/agent/" + harnessHelperPath; env != want {
-		t.Fatalf("writeHarnessHelper() = %q, want %q", env, want)
-	}
-	out, err := runHelper(filepath.Join(home, filepath.FromSlash(harnessHelperPath)), `{"uri":"http://host.docker.internal:4000/k3/coder"}`)
-	if err != nil {
-		t.Fatalf("credential helper error = %v", err)
-	}
-	var got struct {
-		Headers map[string][]string `json:"headers"`
-	}
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
-	}
-	if diff := cmp.Diff(map[string][]string{"Authorization": {"Bearer k3y"}}, got.Headers); diff != "" {
-		t.Fatalf("credential helper wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-// runHelper runs a just-written executable. A child forked meanwhile by a
-// parallel test holds its write descriptor until exec, failing the run with
-// ETXTBSY (golang.org/issue/22315), so the run is retried.
-func runHelper(path, stdin string) ([]byte, error) {
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		cmd := exec.Command(path, "get")
-		cmd.Stdin = strings.NewReader(stdin)
-		out, err := cmd.Output()
-		if !errors.Is(err, syscall.ETXTBSY) || time.Now().After(deadline) {
-			return out, err
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -1312,7 +1223,7 @@ func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
 
 			answer := userText(tc.answer, string(task.ID), task.ContextID)
 			if tc.answerSeq != 0 {
-				if q := approvals.FromStatus(got.Status); q == nil || q.Seq != tc.answerSeq {
+				if q := question.FromStatus(got.Status); q == nil || q.Seq != tc.answerSeq {
 					t.Fatalf("GetTask() question = %+v, want question %d", q, tc.answerSeq)
 				}
 				answer = numberedAnswer(task, tc.answer, tc.answerSeq)

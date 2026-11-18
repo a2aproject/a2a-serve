@@ -21,13 +21,12 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -44,7 +43,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	saved.Approvals.OwnerChat = "telegram"
 	saved.Policy.PrivateAllowIncoming = agentdir.AccessPaired
 	saved.MCP.Disabled = []string{"github"}
-	saved.Sandbox = harness.SandboxDocker
+	saved.Sandbox = agent.SandboxDocker
 	if err := ts.dir.SaveConfig(saved); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -61,7 +60,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 		t.Fatalf("Config() error = %v", err)
 	}
 	want := saved.Clone()
-	want.Sandbox = harness.SandboxLocal
+	want.Sandbox = agent.SandboxLocal
 	if diff := cmp.Diff(want, running); diff != "" {
 		t.Fatalf("Config() wrong result (-want +got) diff = %s", diff)
 	}
@@ -77,7 +76,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadConfig() error = %v", err)
 	}
-	if got.Sandbox != harness.SandboxDocker || got.Messengers.Telegram == nil {
+	if got.Sandbox != agent.SandboxDocker || got.Messengers.Telegram == nil {
 		t.Fatalf("config.yaml after AddMessenger = %+v, want the pending sandbox and the messenger", got)
 	}
 }

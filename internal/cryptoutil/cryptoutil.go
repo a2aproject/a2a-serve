@@ -25,6 +25,10 @@ import (
 // Alphanumeric is an alphabet for tokens and IDs.
 const Alphanumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+// Unambiguous is an alphabet for IDs that people read, without characters
+// that are easy to confuse.
+const Unambiguous = "abcdefghijkmnpqrstuvwxyz23456789"
+
 // RandomString returns n random characters from alphabet, which must be
 // shorter than 256 characters.
 func RandomString(n int, alphabet string) string {

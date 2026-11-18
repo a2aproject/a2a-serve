@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
@@ -40,19 +41,14 @@ type SandboxRule struct {
 
 // Storage modes of a sandbox rule.
 const (
-	// StorageShared mounts the workspace and mounts as configured.
-	StorageShared = "shared"
-	// StorageReadOnly mounts the workspace and mounts read-only.
-	StorageReadOnly = "read-only"
-	// StorageOwn mounts a private copy of the workspace, and the mounts
-	// read-only.
-	StorageOwn = "own"
-	// StorageEmpty mounts an empty private workspace, and no mounts.
-	StorageEmpty = "empty"
+	StorageShared   = workspace.StorageShared
+	StorageReadOnly = workspace.StorageReadOnly
+	StorageOwn      = workspace.StorageOwn
+	StorageEmpty    = workspace.StorageEmpty
 )
 
 // StorageModes are the storage modes, from the most access to the least.
-var StorageModes = []string{StorageShared, StorageOwn, StorageReadOnly, StorageEmpty}
+var StorageModes = workspace.StorageModes
 
 // SecretsAll and SecretsNone in the secrets of a rule pass every secret of
 // the agent, or none. Each goes alone.

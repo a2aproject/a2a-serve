@@ -25,17 +25,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // maxRememberedUsers bounds the users whose principal [sandboxes] keeps in
@@ -169,14 +166,21 @@ func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal
 // of returns the sandbox of the container of an agent key. A user whose
 // identity the server hasn't verified gets the least that it could match.
 func (s *sandboxes) of(ctx context.Context, key string) (access.Sandbox, error) {
+	_, sb, err := s.grant(ctx, key)
+	return sb, err
+}
+
+// grant returns whom the sandbox rules match for the container of an agent
+// key, and the sandbox they give it.
+func (s *sandboxes) grant(ctx context.Context, key string) (auth.Principal, access.Sandbox, error) {
 	p, verified, err := s.principalOf(ctx, key)
 	if err != nil {
-		return access.Sandbox{}, err
+		return auth.Principal{}, access.Sandbox{}, err
 	}
 	if !verified {
-		return access.SandboxPolicyOf(s.config()).ResolveUnverified(p), nil
+		return p, access.SandboxPolicyOf(s.config()).ResolveUnverified(p), nil
 	}
-	return s.resolve(p), nil
+	return p, s.resolve(p), nil
 }
 
 // resolve returns the sandbox of the container that p's conversations run
@@ -187,118 +191,59 @@ func (s *sandboxes) resolve(p auth.Principal) access.Sandbox {
 
 // Refusals of turns in agent containers.
 var (
-	errOtherContainer    = errors.New("this conversation runs in the agent container of another user, or of a role you had before; start a new conversation")
-	errSandboxCovers     = errors.New("this conversation runs in the agent container of the user who started it, which gets more storage or secrets than your sandbox rule gives you; start a conversation of your own")
-	errSandboxPrivate    = errors.New("this conversation runs in the private workspace of the user who started it; start a conversation of your own")
-	errSandboxRestarting = errors.New("the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then")
-	errSandboxNarrowed   = errors.New("the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again")
+	errOtherContainer = errors.New("this conversation runs in the agent container of another user, or of a role you had before; start a new conversation")
+	errSandboxCovers  = errors.New("this conversation runs in the agent container of the user who started it, which gets more storage or secrets than your sandbox rule gives you; start a conversation of your own")
+	errSandboxPrivate = errors.New("this conversation runs in the private workspace of the user who started it; start a conversation of your own")
 )
 
-// admitTurn lets the turn of execCtx by the caller in ctx run in the
-// container of an agent key, and counts it there until release:
-//
-//   - only an owner, or someone in a group chat, may write into the
-//     container of another user, such as one of a role the caller had
-//     before. They need a sandbox that covers what this container gets now
-//     and got when it started, and only an owner may write into another
-//     user's private workspace;
-//   - a container whose rules now give less ends its tasks and stops, so
-//     that the turn starts it with the rules in force;
-//   - a container whose rules changed otherwise stops if it is idle. If it
-//     is busy, only answers to its waiting tasks run in it until it
-//     restarts.
-func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
+// admitCaller lets the caller in ctx write into the container of an agent
+// key. It implements the Admit hook of the runner, which then checks the
+// container itself. Only an owner, or someone in a group chat, may write
+// into the container of another user, such as one of a role the caller had
+// before. They need a sandbox that covers what this container gets now and
+// got when it started, and only an owner may write into another user's
+// private workspace.
+func (s *Server) admitCaller(ctx context.Context, key string, _ *a2asrv.ExecutorContext) (func(), error) {
 	caller, ok := auth.Caller(ctx)
 	// A posted turn, such as a schedule run, acts for a user with what the
 	// server stored of them, which it didn't verify now.
 	if ok && !auth.IsPosted(ctx) {
 		s.sandboxes.remember(ctx, caller)
 	}
-	want, err := s.sandboxes.of(ctx, key)
-	if err != nil {
-		return nil, err
-	}
 	if ok && !sameProcessUser(key, agentkey.Of(caller, ok)) {
+		want, err := s.sandboxes.of(ctx, key)
+		if err != nil {
+			return nil, err
+		}
 		// The people in a group chat share its conversation, which runs in
 		// the container of whoever started it.
 		if !caller.IsOwner() && !auth.IsGroupChat(ctx) {
 			return nil, errOtherContainer
 		}
-		if err := s.admitOther(ctx, caller, key, want); err != nil {
+		if err := s.admitOther(caller, key, want); err != nil {
 			return nil, err
 		}
 	}
-	agents := s.agentsOf(key)
-	if agents == nil {
-		return func() {}, nil
-	}
-	answer := answersWaiting(execCtx)
-	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
-		// An answer fails its own task here; sandboxLoop then ends the
-		// others, since stopping the container now would fail the task
-		// without saying why.
-		if answer {
-			return nil, errSandboxNarrowed
-		}
-		var asking a2a.TaskID
-		if execCtx != nil {
-			asking = execCtx.TaskID
-		}
-		if err := s.endNarrowed(ctx, key, asking); err != nil {
-			return nil, err
-		}
-	}
-	counted, err := agents.admit(key, want, answer)
-	if errors.Is(err, errSandboxRestarting) {
-		counted, err = s.admitAfterEndedTurns(ctx, agents, key, want, execCtx)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return func() {
-		counted()
-		s.closeStale(ctx, key)
-	}, nil
+	return func() {}, nil
 }
 
-// turnEndGrace bounds the wait of a turn for the turns of tasks that
-// ended to finish.
-const turnEndGrace = 5 * time.Second
-
-// admitAfterEndedTurns admits a turn that the container of an agent key
-// refused while turns used it, once they end, if none of its tasks is
-// unfinished. A turn ends a moment after its caller saw its task end, so
-// the caller's next message would be refused although no task holds the
-// container.
-func (s *Server) admitAfterEndedTurns(ctx context.Context, agents *userAgents, key string, want access.Sandbox, execCtx *a2asrv.ExecutorContext) (func(), error) {
-	ids, err := s.tasks.UnfinishedIn(ctx, key)
-	if err != nil {
-		return nil, err
+// holdBudget counts a guest's turn against the budget of guests until
+// release. It implements the Hold hook of the runner.
+func (s *Server) holdBudget(ctx context.Context, _ string, _ *a2asrv.ExecutorContext) (func(), error) {
+	if p, ok := auth.Caller(ctx); ok && p.Role == auth.RoleGuest {
+		return s.budget.run(budgetListener(p))
 	}
-	var own a2a.TaskID
-	if execCtx != nil {
-		own = execCtx.TaskID
-	}
-	if slices.ContainsFunc(ids, func(id a2a.TaskID) bool { return id != own }) || !agents.waitIdle(ctx, key, turnEndGrace) {
-		return nil, errSandboxRestarting
-	}
-	return agents.admit(key, want, false)
+	return func() {}, nil
 }
 
 // admitOther checks a caller's turn in the container of another agent key,
 // which gets want under the rules in force.
-func (s *Server) admitOther(ctx context.Context, caller auth.Principal, key string, want access.Sandbox) error {
+func (s *Server) admitOther(caller auth.Principal, key string, want access.Sandbox) error {
 	mine := s.sandboxes.resolve(caller)
 	if !mine.Covers(want) {
 		return errSandboxCovers
 	}
-	running, ok := access.Sandbox{}, false
-	if agents := s.agentsOf(key); agents != nil {
-		running, ok = agents.sandboxOf(key)
-	} else if started := s.mainSandbox.Load(); started != nil {
-		running, ok = *started, true
-	}
-	if ok && !mine.Covers(running) {
+	if running, ok := s.runner.Started(key); ok && !mine.Covers(access.Sandbox(running)) {
 		return errSandboxCovers
 	}
 	if !caller.IsOwner() && (want.Storage == agentdir.StorageOwn || want.Storage == agentdir.StorageEmpty) {
@@ -319,151 +264,13 @@ func sameProcessUser(a, b string) bool {
 	return oka && okb && ida == idb
 }
 
-// answersWaiting reports whether execCtx answers a task that waits for
-// input, which continues in the container that asked.
-func answersWaiting(execCtx *a2asrv.ExecutorContext) bool {
-	return execCtx != nil && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired
-}
-
-// endNarrowed cancels the unfinished tasks of the container of an agent
-// key, but the task of the turn that asks, and stops it, if its rules now
-// give less than it got: its tasks would keep the access they got.
-func (s *Server) endNarrowed(ctx context.Context, key string, asking a2a.TaskID) error {
-	agents := s.agentsOf(key)
-	want, err := s.sandboxes.of(ctx, key)
-	if err != nil {
-		return err
-	}
-	if running, ok := agents.sandboxOf(key); !ok || want.Covers(running) {
-		return nil
-	}
-	ids, err := s.tasks.UnfinishedIn(ctx, key)
-	if err != nil {
-		return err
-	}
-	// An agent can take long to stop a task, or never; the container closes
-	// after the grace whatever the cancels report, which ends them.
-	canceled := make(chan struct{})
-	go func() {
-		defer close(canceled)
-		as := auth.InProcess(context.WithoutCancel(ctx), auth.Owner())
-		for _, t := range ids {
-			if t == asking {
-				continue
-			}
-			if _, err := s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: t}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
-				slog.Warn("canceling a task of an agent process whose sandbox rules now give less", "task", t, "error", err)
-			}
-		}
-	}()
-	select {
-	case <-canceled:
-	case <-time.After(s.timings.NarrowedCancelGrace):
-	}
-	stopped, err := agents.closeNarrowed(key, want)
-	if stopped {
-		slog.Info("stopped an agent process whose sandbox rules now give less", "key", key, "canceled", len(ids))
-	}
-	return err
-}
-
-// closeStale stops the container of an agent key if no turn uses it and
-// the sandbox rules changed what it gets. The owner's container keeps its
-// sandbox until the server restarts.
-func (s *Server) closeStale(ctx context.Context, key string) {
-	agents := s.agentsOf(key)
-	if agents == nil {
-		return
-	}
-	want, err := s.sandboxes.of(ctx, key)
-	if err != nil {
-		slog.Warn("looking up the sandbox of an agent process", "key", key, "error", err)
-		return
-	}
-	stopped, err := agents.closeStale(key, want)
-	if err != nil {
-		slog.Warn("stopping an agent process whose sandbox changed", "key", key, "error", err)
-	}
-	if stopped {
-		slog.Info("stopped an agent process whose sandbox changed; its next turn starts it again", "key", key)
-	}
-}
-
-// agentsOf returns the processes that the agent key runs in, or nil for the
-// owner's.
-func (s *Server) agentsOf(key string) *userAgents {
-	if key == agentkey.Guest {
-		return &s.guests
-	}
-	if _, ok := agentkey.UserOf(key); ok {
-		return &s.users
-	}
-	return nil
-}
-
-// sandboxLoop applies changes of the sandbox rules to the containers that
-// no turn starts: an idle one stops, and a busy one whose rules now give
-// less ends its tasks, so that a removed secret doesn't wait for them.
-func (s *Server) sandboxLoop(ctx context.Context) {
-	t := time.NewTicker(s.timings.SandboxCheckInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		var wg sync.WaitGroup
-		for _, agents := range []*userAgents{&s.guests, &s.users} {
-			for _, key := range agents.runningKeys() {
-				wg.Go(func() { s.applySandboxChange(ctx, agents, key) })
-			}
-		}
-		wg.Wait()
-	}
-}
-
-func (s *Server) applySandboxChange(ctx context.Context, agents *userAgents, key string) {
-	want, err := s.sandboxes.of(ctx, key)
-	if err != nil {
-		slog.Warn("looking up the sandbox of an agent process", "key", key, "error", err)
-		return
-	}
-	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
-		if err := s.endNarrowed(ctx, key, ""); err != nil {
-			slog.Warn("stopping an agent process whose sandbox rules now give less", "key", key, "error", err)
-		}
-		return
-	}
-	s.closeStale(ctx, key)
-}
-
 // sandboxNotes returns notes with one added when the owner's container
 // runs with another sandbox than the rule of self gives now.
 func (s *Server) sandboxNotes(notes []string) []string {
-	if started := s.mainSandbox.Load(); started != nil && !started.Equal(s.sandboxes.resolve(auth.Owner())) {
+	if started, ok := s.runner.Started(""); ok && !access.Sandbox(started).Equal(s.sandboxes.resolve(auth.Owner())) {
 		notes = append(slices.Clone(notes), "your agent container applies the changed sandbox rule of self after `a2a-serve restart`")
 	}
 	return notes
-}
-
-// sandboxMounts returns the mounts of a container with storage: as they are
-// for shared, read-only for read-only and own, and only the workspace for
-// empty. Own and empty mount a private workspace in place of the workspace.
-func sandboxMounts(storage string, mounts []agentdir.Mount) []agentdir.Mount {
-	switch storage {
-	case agentdir.StorageShared:
-		return mounts
-	case agentdir.StorageEmpty:
-		ws := mounts[0]
-		ws.ReadOnly = false
-		return []agentdir.Mount{ws}
-	}
-	out := slices.Clone(mounts)
-	for i := range out {
-		out[i].ReadOnly = storage != agentdir.StorageOwn || i > 0
-	}
-	return out
 }
 
 // workspaceName names the private workspaces of the container of an agent
@@ -476,46 +283,6 @@ func workspaceName(key string) string {
 		return userProcessName(key)
 	}
 	return key
-}
-
-// applySandbox gives spec the storage and secrets of sb, for the container of
-// an agent key, and returns the headers its boundary adds. Without the
-// Docker sandbox, only the secrets apply.
-func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key string, sb access.Sandbox) ([]sandboxnet.Injection, error) {
-	values, inject, missing, err := secretEnv(s.rt.Config(), sb, s.rt.Secrets())
-	if err != nil {
-		return nil, err
-	}
-	if len(missing) > 0 {
-		hint := fmt.Sprintf("secret %s is not set; pass --secret %s again with the variable set", missing[0], missing[0])
-		if key == "" {
-			return nil, errors.New(hint)
-		}
-		slog.Warn("an agent process of a caller can't start: "+hint, "key", key)
-		return nil, fmt.Errorf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", missing[0])
-	}
-	spec.Env = append(spec.Env, values...)
-	if spec.Sandbox == harness.SandboxLocal {
-		return inject, nil
-	}
-	ws := spec.Mounts[0].Src
-	spec.Mounts = sandboxMounts(sb.Storage, spec.Mounts)
-	if sb.Storage != agentdir.StorageOwn && sb.Storage != agentdir.StorageEmpty {
-		return inject, nil
-	}
-	p, _, err := s.sandboxes.principalOf(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), p.ID, sb.Storage, ws)
-	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
-		return nil, errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
-	}
-	if err != nil {
-		return nil, err
-	}
-	spec.WorkspaceSrc = dir
-	return inject, nil
 }
 
 // storageNote tells the agent what its storage is and how to return work.
@@ -562,7 +329,7 @@ const unusedWorkspaceTTL = 30 * 24 * time.Hour
 // their storage. `pair rm` deletes those of pairings. The sandbox of a
 // user's container depends on how they call, so it isn't checked here.
 func (s *Server) pruneWorkspaces(ctx context.Context) {
-	entries, err := s.workspaces.List()
+	entries, err := s.runner.Copies().List()
 	if err != nil {
 		slog.Warn("listing the private workspaces", "error", err)
 		return
@@ -577,16 +344,16 @@ func (s *Server) pruneWorkspaces(ctx context.Context) {
 	}
 }
 
-func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
+func (s *Server) pruneWorkspace(ctx context.Context, e workspace.Entry) error {
 	switch e.Name {
 	case workspaceName(""):
-		if started := s.mainSandbox.Load(); started != nil {
+		if started, ok := s.runner.Started(""); ok {
 			return s.removeStorageBut(e, started.Storage)
 		}
 		return nil
 	case workspaceName(agentkey.Guest):
-		release, err := s.guests.stopIdle(agentkey.Guest)
-		if err != nil || release == nil {
+		release, ok, err := s.runner.HoldIdle(ctx, agentkey.Guest)
+		if err != nil || !ok {
 			return err
 		}
 		defer release()
@@ -600,24 +367,24 @@ func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 	if e.Principal == "" || workspaceName(key) != e.Name || pairing || time.Since(e.Used) < unusedWorkspaceTTL {
 		return nil
 	}
-	release, err := s.users.stopIdle(key)
-	if err != nil || release == nil {
+	release, ok, err := s.runner.HoldIdle(ctx, key)
+	if err != nil || !ok {
 		return err
 	}
 	defer release()
 	// The user may have started a turn since the list was read.
-	if used, err := s.workspaces.Used(e.Name); err != nil || time.Since(used) < unusedWorkspaceTTL {
+	if used, err := s.runner.Copies().Used(e.Name); err != nil || time.Since(used) < unusedWorkspaceTTL {
 		return err
 	}
-	return s.workspaces.Remove(e.Name)
+	return s.runner.Copies().Remove(e.Name)
 }
 
 // removeStorageBut deletes the workspaces of e but the one of storage.
-func (s *Server) removeStorageBut(e workspaces.Entry, storage string) error {
+func (s *Server) removeStorageBut(e workspace.Entry, storage string) error {
 	var errs []error
 	for _, st := range e.Storage {
 		if st != storage {
-			errs = append(errs, s.workspaces.RemoveStorage(e.Name, st))
+			errs = append(errs, s.runner.Copies().RemoveStorage(e.Name, st))
 		}
 	}
 	return errors.Join(errs...)

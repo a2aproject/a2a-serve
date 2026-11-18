@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/speech"
 )
@@ -77,7 +78,7 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 			textCtx, transcript, err := v.transcribeUntilStop(ctx, execCtx)
 			if err != nil {
 				if v.stopping.Err() != nil {
-					for ev, err := range failStopped(execCtx, true) {
+					for ev, err := range runner.FailStopped(execCtx, true) {
 						if !yield(ev, err) {
 							return
 						}
@@ -100,7 +101,7 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 			agentCtx = textCtx
 		}
 		// An answer to a question is read as the answer alone.
-		if speak && !v.noSpeech.Load() && !answersWaiting(execCtx) {
+		if speak && !v.noSpeech.Load() && !runner.AnswersWaiting(execCtx) {
 			agentCtx = withSpeakLine(agentCtx)
 		}
 		var reply speakReply
@@ -176,7 +177,7 @@ func (v *voiceTurns) transcribeUntilStop(ctx context.Context, execCtx *a2asrv.Ex
 // agent, which waits for the answer, still gets one.
 func transcriptionFailed(execCtx *a2asrv.ExecutorContext, err error) a2a.Event {
 	text := "I couldn't transcribe the voice note: " + speech.Reason(err) + "."
-	if answersWaiting(execCtx) && execCtx.StoredTask.Status.Message != nil {
+	if runner.AnswersWaiting(execCtx) && execCtx.StoredTask.Status.Message != nil {
 		return reask(execCtx, text+" The question still waits for an answer; send it again or type it.\n")
 	}
 	return a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(text+" Send it again or type it.")))

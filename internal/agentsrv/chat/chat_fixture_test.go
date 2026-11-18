@@ -25,6 +25,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -277,7 +278,7 @@ func (fx *chatFixture) endExecution(t *testing.T, id a2a.TaskID, contextID strin
 // newQuestion stores the question of permissionMessage that user may answer.
 func (fx *chatFixture) newQuestion(t *testing.T, taskID a2a.TaskID, contextID, user string) store.Question {
 	t.Helper()
-	rec, err := fx.records.NewRecord(fx.ctx, taskID, contextID, "", user, approvals.FromMessage(permissionMessage(t)))
+	rec, err := fx.records.NewRecord(fx.ctx, taskID, contextID, "", user, question.FromMessage(permissionMessage(t)))
 	if err != nil {
 		t.Fatalf("NewRecord() error = %v", err)
 	}

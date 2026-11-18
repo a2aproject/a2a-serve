@@ -19,50 +19,27 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
-// Sandbox is what the agent container of a caller gets.
-type Sandbox struct {
-	// Storage is one of the agentdir.Storage* modes.
-	Storage string
-	// Secrets are the variables the agent gets, in the order of the agent's
-	// secrets.
-	Secrets []SecretGrant
-}
+// Sandbox is what the agent container of a caller gets: the grant of the
+// runner, with how the frontend describes and resolves it.
+type Sandbox runner.Grant
 
 // SecretGrant passes the stored secret From to the agent as Name.
-type SecretGrant struct {
-	Name, From string
-}
+type SecretGrant = runner.SecretGrant
 
 // Equal reports whether s and o give the same storage and secrets.
-func (s Sandbox) Equal(o Sandbox) bool {
-	return s.Storage == o.Storage && slices.Equal(s.Secrets, o.Secrets)
-}
+func (s Sandbox) Equal(o Sandbox) bool { return runner.Grant(s).Equal(runner.Grant(o)) }
 
 // Covers reports whether s gives at least what o gives: storage with as much
 // access, and every secret of o.
-func (s Sandbox) Covers(o Sandbox) bool {
-	if storageRank(s.Storage) > storageRank(o.Storage) {
-		return false
-	}
-	for _, g := range o.Secrets {
-		if !slices.Contains(s.Secrets, g) {
-			return false
-		}
-	}
-	return true
-}
+func (s Sandbox) Covers(o Sandbox) bool { return runner.Grant(s).Covers(runner.Grant(o)) }
 
-func storageRank(storage string) int {
-	if i := slices.Index(agentdir.StorageModes, storage); i >= 0 {
-		return i
-	}
-	return len(agentdir.StorageModes)
-}
+func storageRank(storage string) int { return runner.StorageRank(storage) }
 
 // Describe says what s gives, such as "read-only workspace, no secrets".
 func (s Sandbox) Describe() string { return s.describe(false) }

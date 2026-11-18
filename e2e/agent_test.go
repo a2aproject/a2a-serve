@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 )
 
 func TestOwnerServesAndCallsAgent(t *testing.T) {
@@ -213,14 +213,14 @@ func TestRepeatedAnswerDoesNotAnswerTheNextQuestion(t *testing.T) {
 		return owner.mustSend(coder.url, "--task-id", string(task.ID), "--data-part", fmt.Sprintf(`{"option":%q,"seq":%d}`, option, seq))
 	}
 	task := owner.mustSend(coder.url, "ask twice")
-	if q := approvals.FromStatus(task.Status); q == nil || q.Seq != 1 {
+	if q := question.FromStatus(task.Status); q == nil || q.Seq != 1 {
 		t.Fatalf("a2a send ask twice status = %s (%v), want question 1", task.Status.State, task.Status.Message)
 	}
 
 	answer(task, "once", 1)
 	repeated := answer(task, "once", 1)
 
-	if q := approvals.FromStatus(repeated.Status); q == nil || q.Seq != 2 {
+	if q := question.FromStatus(repeated.Status); q == nil || q.Seq != 2 {
 		t.Fatalf("repeated answer status = %s (%v), want question 2 to wait", repeated.Status.State, repeated.Status.Message)
 	}
 	if text := a2atext.Message(repeated.Status.Message); !strings.Contains(text, "it answers question 1 of this task, which was already answered") {

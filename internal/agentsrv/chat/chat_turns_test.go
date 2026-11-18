@@ -31,6 +31,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -864,7 +865,7 @@ func TestChatTurnsTypedAnswer(t *testing.T) {
 			fx.ch.Write("telegram:1", "dm1", tc.text)
 
 			call := fx.sender.nextStream(t)
-			wantMsg, err := approvals.AnswerMessage("t1", "c1", &approvals.Question{ID: "tool1"}, tc.wantOption, tc.wantLabel+" by telegram:1")
+			wantMsg, err := question.AnswerMessage("t1", "c1", &question.Question{ID: "tool1"}, tc.wantOption, tc.wantLabel+" by telegram:1")
 			if err != nil {
 				t.Fatalf("AnswerMessage() error = %v", err)
 			}
@@ -1009,7 +1010,7 @@ func TestChatTurnsButtonAnswersQuestionOnce(t *testing.T) {
 	fx.ch.Click("telegram:1", "dm1", ref, q.Question, 2)
 
 	call := fx.sender.nextStream(t)
-	wantMsg, err := approvals.AnswerMessage("t1", "c1", &approvals.Question{ID: "tool1"}, "reject", "Deny by owner")
+	wantMsg, err := question.AnswerMessage("t1", "c1", &question.Question{ID: "tool1"}, "reject", "Deny by owner")
 	if err != nil {
 		t.Fatalf("AnswerMessage() error = %v", err)
 	}

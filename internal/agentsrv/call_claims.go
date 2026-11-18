@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -42,7 +43,7 @@ import (
 // what keeps one conversation's calls from acting for another's user.
 type CallClaims struct {
 	store    *store.Store
-	bridge   harnessBridge
+	bridge   func() runner.Bridge
 	chain    *auth.Chain
 	agentKey func(ctx context.Context, contextID string) (string, error)
 	sessions a2aacp.SessionStore
@@ -68,7 +69,7 @@ type CallClaims struct {
 type CallClaimsDeps struct {
 	Store *store.Store
 	// Bridge is how the harness reaches the server, which agents URLs use.
-	Bridge harnessBridge
+	Bridge func() runner.Bridge
 	// Chain resolves the user of an agent process.
 	Chain *auth.Chain
 	// AgentKey returns the agent key of the process a conversation runs in.
@@ -96,8 +97,12 @@ func newCallClaims(deps CallClaimsDeps) *CallClaims {
 	}
 }
 
+// socketHost is the host of agents URLs when the agent reaches the server
+// through a Unix socket; the CLI sends every request through the socket.
+const socketHost = "http://a2a"
+
 // handleAlphabet avoids characters that are easy to confuse.
-const handleAlphabet = "abcdefghijkmnpqrstuvwxyz23456789"
+const handleAlphabet = cryptoutil.Unambiguous
 
 // handleLen is the length of handles. One harness serves every
 // conversation, so a handle must not be guessable from another one.
@@ -346,8 +351,9 @@ func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) agentproxy
 // <agents URL>/<name> is an A2A agent. The handle in the path stands for the
 // conversation; the user and the hop count are those of its running turn.
 func (cl *CallClaims) agentsURL(ctx context.Context, contextID string) (string, error) {
-	base := cl.bridge.url
-	if cl.bridge.socket != "" {
+	bridge := cl.bridge()
+	base := bridge.URL
+	if bridge.Socket != "" {
 		base = socketHost
 	}
 	if base == "" {

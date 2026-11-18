@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
 	"log/slog"
 	"os"
@@ -34,20 +33,20 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
+	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
 
 // turnExecutor cancels like a2aacp: it stops the turn, which ends the
@@ -106,7 +105,7 @@ func testApprovals(t *testing.T) *approvals.Service {
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: testApprovals(t)}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: runner.NewNotes(), approvals: testApprovals(t)}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -130,7 +129,7 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: testApprovals(t)}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: runner.NewNotes(), approvals: testApprovals(t)}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -185,7 +184,7 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
 		ends:      newTaskEnds(bus, ts.srv.approvals, ts.srv.unattended),
-		notes:     newToolNotes(),
+		notes:     runner.NewNotes(),
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
 
@@ -227,65 +226,6 @@ func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	case <-other:
 		t.Fatal("followers of another context were woken")
 	default:
-	}
-}
-
-func TestToolDeciderReadsCurrentConfig(t *testing.T) {
-	t.Parallel()
-	cfg := &agentdir.Config{}
-	rules := &toolDecider{config: func() *agentdir.Config { return cfg }, notes: newToolNotes()}
-	q := a2aacp.Question{Options: []string{a2aacp.OptionOnce, a2aacp.OptionReject}, Tool: &a2aacp.ToolCall{Kind: "read"}}
-
-	if _, ok := rules.AutoAnswer(context.Background(), nil, q); ok {
-		t.Fatalf("AutoAnswer() without rules ok = true, want false")
-	}
-	cfg = &agentdir.Config{Approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}}
-	got, ok := rules.AutoAnswer(context.Background(), nil, q)
-	if !ok || got.Option != a2aacp.OptionOnce {
-		t.Fatalf("AutoAnswer() after allowing read = %+v, %v, want %q", got, ok, a2aacp.OptionOnce)
-	}
-}
-
-func TestToolDeciderAnswers(t *testing.T) {
-	t.Parallel()
-	rules := agentdir.ApprovalsConfig{
-		Allow: []string{"tool:grafana.*", "command:kubectl get *"},
-		Deny:  []string{"execute", "other"},
-	}
-	decider := &toolDecider{
-		config:  func() *agentdir.Config { return &agentdir.Config{Approvals: rules} },
-		servers: func() []string { return []string{"grafana"} },
-		notes:   newToolNotes(),
-	}
-	options := []string{a2aacp.OptionAlways, a2aacp.OptionOnce, a2aacp.OptionReject}
-	tests := []struct {
-		name    string
-		options []string
-		tool    a2aacp.ToolCall
-		want    string
-		wantOK  bool
-	}{
-		{name: "allowed MCP tool of claude", tool: a2aacp.ToolCall{Kind: "other", Title: "mcp__grafana__query"}, want: a2aacp.OptionOnce, wantOK: true},
-		{name: "allowed MCP tool of opencode", tool: a2aacp.ToolCall{Kind: "other", Title: "grafana_query"}, want: a2aacp.OptionOnce, wantOK: true},
-		{name: "denied MCP tool", tool: a2aacp.ToolCall{Kind: "other", Title: "mcp__gmail__send"}, want: a2aacp.OptionReject, wantOK: true},
-		{name: "allowed command", tool: a2aacp.ToolCall{Kind: "execute", Title: "kubectl get pods", Input: map[string]any{"command": "kubectl get pods"}}, want: a2aacp.OptionOnce, wantOK: true},
-		{name: "denied command", tool: a2aacp.ToolCall{Kind: "execute", Title: "kubectl get pods; rm -rf /", Input: map[string]any{"command": "kubectl get pods; rm -rf /"}}, want: a2aacp.OptionReject, wantOK: true},
-		{name: "allowed without once", options: []string{a2aacp.OptionAlways, a2aacp.OptionReject}, tool: a2aacp.ToolCall{Kind: "other", Title: "grafana_query"}, want: a2aacp.OptionAlways, wantOK: true},
-		{name: "denied without reject", options: []string{a2aacp.OptionOnce}, tool: a2aacp.ToolCall{Kind: "execute"}, want: a2aacp.OptionCancel, wantOK: true},
-		{name: "no rule", tool: a2aacp.ToolCall{Kind: "edit"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			opts := tc.options
-			if opts == nil {
-				opts = options
-			}
-			got, ok := decider.AutoAnswer(context.Background(), nil, a2aacp.Question{Options: opts, Tool: &tc.tool})
-			if ok != tc.wantOK || got.Option != tc.want {
-				t.Fatalf("AutoAnswer() = %q, %v, want %q, %v", got.Option, ok, tc.want, tc.wantOK)
-			}
-		})
 	}
 }
 
@@ -517,7 +457,7 @@ func TestApprovalOfExitedAgentWakesFollowersOfItsContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
-	ts.srv.turns.wait(ctx)
+	ts.srv.turns.Wait(ctx)
 	changed, unsubscribe := ts.srv.bus.SubscribeContext(task.ContextID)
 	defer unsubscribe()
 
@@ -626,7 +566,7 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			unattended.Add("c1")
 			unattended.Add("c2")
 			bus := chat.NewBus()
-			e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, testApprovals(t), unattended), notes: newToolNotes()}
+			e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, testApprovals(t), unattended), notes: runner.NewNotes()}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
@@ -635,63 +575,6 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			}
 			if !unattended.Has("c2") {
 				t.Fatalf("unattended.Has(c2) = false, want true for another context")
-			}
-		})
-	}
-}
-
-func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		key  string
-	}{
-		{name: "owner", key: ""},
-		{name: "guest", key: agentkey.Guest},
-		{name: "user", key: agentkey.User("pair:anna")},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := dir.Init(); err != nil {
-				t.Fatal(err)
-			}
-			pins, err := harness.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
-			if err != nil {
-				t.Fatalf("harness.NewPins() error = %v", err)
-			}
-			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
-			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{})}
-			if err := os.Rename(dir.Root, dir.Root+".old"); err != nil {
-				t.Fatal(err)
-			}
-			if err := dir.Init(); err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = s.prepareHarness(context.Background(), io.Discard, io.Discard, tc.key)
-
-			if err == nil || !strings.Contains(err.Error(), "was replaced") {
-				t.Fatalf("Server.prepareHarness() error = %v, want the agent directory replaced", err)
-			}
-			entries, err := os.ReadDir(dir.StateDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			var names []string
-			for _, e := range entries {
-				names = append(names, e.Name())
-			}
-			if diff := cmp.Diff([]string{"home", "id.json", "run"}, names); diff != "" {
-				t.Fatalf("Server.prepareHarness() wrote into the state directory (-want +got) diff = %s", diff)
-			}
-			home, err := os.ReadDir(dir.HomeDir())
-			if err != nil || len(home) > 0 {
-				t.Fatalf("Server.prepareHarness() wrote %v into the home, error = %v", home, err)
 			}
 		})
 	}
@@ -734,8 +617,8 @@ func TestAlwaysAllowsTheRuleInTheConversation(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	asked := send(t, c, userText("ask", "", ""))
-	q := approvals.FromStatus(asked.Status)
-	want := []approvals.Option{{ID: "once", Label: "Allow once"}, {ID: "always", Label: "Always allow git push *"}, {ID: "reject", Label: "Deny"}}
+	q := question.FromStatus(asked.Status)
+	want := []question.Option{{ID: "once", Label: "Allow once"}, {ID: "always", Label: "Always allow git push *"}, {ID: "reject", Label: "Deny"}}
 	if q == nil || !cmp.Equal(want, q.Options) {
 		t.Fatalf("question = %+v, want the options %v", q, want)
 	}
@@ -786,7 +669,7 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 				task = waitState(t, c, task.ID, a2a.TaskStateInputRequired)
 				ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 				defer cancel()
-				ts.srv.turns.wait(ctx)
+				ts.srv.turns.Wait(ctx)
 				sendAsync(t, c, userText(tc.first, string(task.ID), task.ContextID))
 			}
 
@@ -944,7 +827,7 @@ func TestNumberedAnswerAnswersOnlyItsQuestion(t *testing.T) {
 				task = send(t, c, numberedAnswer(task, a.option, a.seq))
 			}
 
-			q := approvals.FromStatus(task.Status)
+			q := question.FromStatus(task.Status)
 			if q == nil || q.ID != tc.wantQuestion {
 				t.Fatalf("task status = %s (%s), want question %s to wait", task.Status.State, a2atext.Message(task.Status.Message), tc.wantQuestion)
 			}
@@ -968,7 +851,7 @@ func TestQuestionsOfATaskAreNumbered(t *testing.T) {
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	seqOf := func(task *a2a.Task) int {
 		t.Helper()
-		q := approvals.FromStatus(task.Status)
+		q := question.FromStatus(task.Status)
 		if q == nil {
 			t.Fatalf("task status = %s (%s), want a question", task.Status.State, a2atext.Message(task.Status.Message))
 		}
@@ -1006,7 +889,7 @@ func TestConcurrentNumberedAnswersAnswerTheQuestionOnce(t *testing.T) {
 	}
 
 	waiting := waitState(t, c, task.ID, a2a.TaskStateInputRequired)
-	if q := approvals.FromStatus(waiting.Status); q == nil || q.ID != "t3" {
+	if q := question.FromStatus(waiting.Status); q == nil || q.ID != "t3" {
 		t.Fatalf("task status = %s (%s), want the second question to wait", waiting.Status.State, a2atext.Message(waiting.Status.Message))
 	}
 	wantResult(t, send(t, c, numberedAnswer(task, "reject", 2)), a2a.TaskStateCompleted, "Pushed twice (allow, deny).")
@@ -1055,9 +938,9 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 
 func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
 	t.Parallel()
-	turns := &turnCount{}
+	turns := &turncount.Count{}
 	bus, service := chat.NewBus(), testApprovals(t)
-	e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, service, &chat.ContextSet{}), notes: newToolNotes(), approvals: service, turns: turns}
+	e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, service, &chat.ContextSet{}), notes: runner.NewNotes(), approvals: service, turns: turns}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	completed := func(yield func(a2a.Event, error) bool) {
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
@@ -1070,24 +953,24 @@ func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	turns.wait(ctx)
+	turns.Wait(ctx)
 	if ctx.Err() == nil {
-		t.Fatalf("turns.wait() returned after the last event, want it to wait for Cleanup, which a2a-go calls once it stored the event")
+		t.Fatalf("turns.Wait() returned after the last event, want it to wait for Cleanup, which a2a-go calls once it stored the event")
 	}
 
 	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
 	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
 	e.Cleanup(t.Context(), &a2asrv.ExecutorContext{TaskID: "t2", ContextID: "c2"}, nil, errors.New("setup failed"))
-	turns.wait(t.Context())
+	turns.Wait(t.Context())
 
-	turns.add()
+	turns.Add()
 	ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	turns.wait(ctx)
+	turns.Wait(ctx)
 	if ctx.Err() == nil {
-		t.Fatalf("turns.wait() returned while a turn is counted, want extra Cleanup calls to leave the count alone")
+		t.Fatalf("turns.Wait() returned while a turn is counted, want extra Cleanup calls to leave the count alone")
 	}
-	turns.done()
+	turns.Done()
 }
 
 func TestExplainFailure(t *testing.T) {
@@ -1145,27 +1028,5 @@ func TestExplainFailure(t *testing.T) {
 				t.Fatalf("explainFailure(%q) = %q, want %q", tc.reported, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestPruneEnvFilesRemovesLeftoversOfEarlierRun(t *testing.T) {
-	t.Parallel()
-	dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := dir.Init(); err != nil {
-		t.Fatal(err)
-	}
-	leftover := filepath.Join(dir.EnvFilesDir(), "a2a-env-123")
-	if err := os.WriteFile(leftover, []byte("KEY=secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s := &Server{dir: dir}
-
-	s.pruneEnvFiles()
-
-	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("os.Stat(%s) error = %v, want %v after Server.pruneEnvFiles()", leftover, err, os.ErrNotExist)
 	}
 }

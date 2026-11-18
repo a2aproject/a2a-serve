@@ -24,10 +24,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
@@ -45,7 +45,7 @@ type recipeUpdate struct {
 	changes   []recipe.FileChange
 	edits     []string
 	pending   []string
-	servers   []project.MCPServer
+	servers   []workspace.MCPServer
 }
 
 // update updates the agent d to the fetched recipe up, keeping the changes
@@ -143,7 +143,7 @@ func planUpdate(d agentdir.Dir, record *recipe.Record, fetched *recipe.Fetched, 
 	if err != nil {
 		return nil, err
 	}
-	servers, err := project.LoadMCP(d.Root)
+	servers, err := workspace.LoadMCP(d.Root)
 	if err != nil {
 		slog.Warn("reading the agent's MCP servers to compare them with the recipe's", "error", err)
 	}
@@ -224,7 +224,7 @@ func (r *recipeRun) printUpdate(u *recipeUpdate, changes []agentdir.Change) erro
 		}
 	}
 	if applied := slices.ContainsFunc(u.changes, func(c recipe.FileChange) bool {
-		return c.Path == project.MCPFile && c.Action != recipe.FileConflict && c.Action != recipe.FileKeepRemoved && c.Action != recipe.FileKeepChanged
+		return c.Path == workspace.MCPFile && c.Action != recipe.FileConflict && c.Action != recipe.FileKeepRemoved && c.Action != recipe.FileKeepChanged
 	}); applied {
 		for _, item := range mcpChanges(u.servers, u.up.MCP) {
 			line("mcp", item)
@@ -262,7 +262,7 @@ func writeEdits(sb *strings.Builder, u *recipeUpdate) {
 
 // mcpChanges lists the MCP servers added, changed and removed from the
 // agent's .mcp.json to the recipe's.
-func mcpChanges(old, next []project.MCPServer) []string {
+func mcpChanges(old, next []workspace.MCPServer) []string {
 	before := map[string]string{}
 	for _, s := range old {
 		before[s.Name] = s.Summary()

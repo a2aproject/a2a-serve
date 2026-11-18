@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -78,16 +79,16 @@ func (i *callerInterceptor) evictCallerHome(id string, homes []string) error {
 	for _, home := range homes {
 		caller := strings.TrimPrefix(filepath.Base(home), prefix)
 		key := agentkey.CallerKey(id, caller)
-		release, err := i.users.stopIdle(key)
+		release, ok, err := i.runner.HoldIdle(context.Background(), key)
 		if err != nil {
 			return err
 		}
-		if release == nil {
+		if !ok {
 			continue
 		}
 		i.removeHome(home)
 		err = i.dir.RemoveCallerHome(id, caller)
-		i.users.forget(key)
+		i.runner.Forget(key)
 		release()
 		return err
 	}

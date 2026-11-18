@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aevent"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -52,7 +53,7 @@ func (w waitingTasks) refusal(ctx context.Context, p auth.Principal, contextID s
 		return "", fmt.Errorf("checking conversation %s: %w", contextID, err)
 	}
 	for _, t := range waiting.Tasks {
-		q := approvals.FromStatus(t.Status)
+		q := question.FromStatus(t.Status)
 		if q == nil || asksCallerQuestion(t) {
 			continue
 		}
@@ -241,4 +242,10 @@ func (q *queuedTurns) start(id a2a.TaskID) error {
 	}
 	delete(q.turns, id)
 	return nil
+}
+
+// failed reports whether ev fails its task.
+func failed(ev a2a.Event) bool {
+	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	return ok && up.Status.State == a2a.TaskStateFailed
 }

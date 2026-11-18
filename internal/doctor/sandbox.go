@@ -21,10 +21,11 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // useLocalSandbox is the fix of a missing Docker in an agent, and
@@ -43,7 +44,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
-		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe).Warning; w != "" {
+		if w := agentcfg.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe).Warning; w != "" {
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
 	} else {
@@ -91,7 +92,7 @@ func checkDocker(ctx context.Context, env Env, local string) Result {
 // it can be pulled. It reports nothing when the harness is unknown, which
 // the config check reports.
 func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool) (Result, bool) {
-	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	profile, err := agentcfg.Profile(cfg)
 	if err != nil {
 		return Result{}, false
 	}
@@ -112,10 +113,10 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		r.Status, r.Message = StatusOK, "image "+image+" present"
 		return r, true
 	}
-	_, buildable := harness.Dockerfile(profile.Name())
+	_, buildable := agent.Dockerfile(profile.Name())
 	buildable = buildable && image == profile.Image()
 	if buildable {
-		if local := harness.LocalImage(profile.Name()); present(local) {
+		if local := agent.LocalImage(profile.Name()); present(local) {
 			r.Status, r.Message = StatusOK, "image "+local+" present"
 			return r, true
 		}
@@ -137,11 +138,11 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 }
 
 func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
-	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	profile, err := agentcfg.Profile(cfg)
 	if err != nil {
 		return Result{}, false
 	}
-	name := profile.Command(harness.Workspace{Dir: dir.Root, Home: dir.HomeDir()}).Path
+	name := profile.Command(agent.Workspace{Dir: dir.Root, Home: dir.HomeDir()}).Path
 	path, err := env.LookPath(name)
 	if err != nil {
 		return Result{
@@ -163,7 +164,7 @@ func firstLine(s string) string {
 // server.
 func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config) Result {
 	r := Result{ID: "egress", Status: StatusOK}
-	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe)
+	d := agentcfg.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe)
 	if dir != nil && env.Status != nil {
 		if st, err := env.Status(ctx, *dir); err == nil && st.Egress != nil && st.Egress.Problem != "" {
 			d.Warning = st.Egress.Problem
@@ -171,9 +172,9 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	}
 	switch {
 	case cfg.Egress.Mode == egress.ModeUnrestricted:
-		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect
+		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+agentcfg.UnrestrictedEffect
 		r.Fix = "a2a-serve config unset egress --restart"
-	case d.Problem != "" && harness.StrictEgress(cfg):
+	case d.Problem != "" && agentcfg.StrictEgress(cfg):
 		r.Status, r.Message = StatusFail, d.Warning
 	case d.Warning != "":
 		r.Status, r.Message = StatusWarn, d.Warning
@@ -185,7 +186,7 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	return r
 }
 
-// egressEnv is how [harness.DecideEgress] probes the machine of env:
+// egressEnv is how [agentcfg.DecideEgress] probes the machine of env:
 // its a2a-serve, its TUN device, and the architecture of the agent's
 // image when docker has it.
 func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) sandbox.EgressEnv {
@@ -216,11 +217,11 @@ func imageArch(ctx context.Context, env Env, cfg *agentdir.Config) string {
 	if cfg.Sandbox == agentdir.SandboxLocal {
 		return ""
 	}
-	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	profile, err := agentcfg.Profile(cfg)
 	if err != nil {
 		return ""
 	}
-	for _, image := range []string{cfg.Image, profile.Image(), harness.LocalImage(profile.Name())} {
+	for _, image := range []string{cfg.Image, profile.Image(), agent.LocalImage(profile.Name())} {
 		if image == "" {
 			continue
 		}

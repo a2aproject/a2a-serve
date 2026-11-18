@@ -29,9 +29,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 )
@@ -78,14 +78,14 @@ func TestConformanceToolProgress(t *testing.T) {
 
 func TestConformanceApprovals(t *testing.T) {
 	t.Parallel()
-	typed := func(reply string) func(*testing.T, *a2a.Task, *approvals.Question) *a2a.Message {
-		return func(_ *testing.T, task *a2a.Task, _ *approvals.Question) *a2a.Message {
+	typed := func(reply string) func(*testing.T, *a2a.Task, *question.Question) *a2a.Message {
+		return func(_ *testing.T, task *a2a.Task, _ *question.Question) *a2a.Message {
 			return userText(reply, string(task.ID), task.ContextID)
 		}
 	}
 	tests := []struct {
 		name   string
-		answer func(*testing.T, *a2a.Task, *approvals.Question) *a2a.Message
+		answer func(*testing.T, *a2a.Task, *question.Question) *a2a.Message
 		want   string
 	}{
 		{name: "approve", answer: typed("approve"), want: "Pushed (allow)."},
@@ -93,10 +93,10 @@ func TestConformanceApprovals(t *testing.T) {
 		{name: "deny", answer: typed("deny"), want: "Push denied."},
 		{
 			name: "structured input",
-			answer: func(t *testing.T, task *a2a.Task, q *approvals.Question) *a2a.Message {
-				msg, err := approvals.AnswerMessage(task.ID, task.ContextID, q, "once", "")
+			answer: func(t *testing.T, task *a2a.Task, q *question.Question) *a2a.Message {
+				msg, err := question.AnswerMessage(task.ID, task.ContextID, q, "once", "")
 				if err != nil {
-					t.Fatalf("approvals.AnswerMessage() error = %v", err)
+					t.Fatalf("question.AnswerMessage() error = %v", err)
 				}
 				return msg
 			},
@@ -111,8 +111,8 @@ func TestConformanceApprovals(t *testing.T) {
 			if task.Status.State != a2a.TaskStateInputRequired {
 				t.Fatalf("task state = %s, want input-required", task.Status.State)
 			}
-			q := approvals.FromStatus(task.Status)
-			if q == nil || q.Type != approvals.TypePermission || len(q.Options) != 3 {
+			q := question.FromStatus(task.Status)
+			if q == nil || q.Type != question.TypePermission || len(q.Options) != 3 {
 				t.Fatalf("question = %+v, want a permission question with 3 options", q)
 			}
 			wantResult(t, send(t, c, tc.answer(t, task, q)), a2a.TaskStateCompleted, tc.want)
@@ -125,14 +125,14 @@ func TestUnknownApprovalReplyKeepsQuestionPending(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	task := send(t, c, userText("ask", "", ""))
-	asked := approvals.FromStatus(task.Status)
+	asked := question.FromStatus(task.Status)
 	if asked == nil {
 		t.Fatalf("task status = %+v, want a question", task.Status)
 	}
 
 	for range 2 {
 		got := send(t, c, userText("aprove", string(task.ID), task.ContextID))
-		q := approvals.FromStatus(got.Status)
+		q := question.FromStatus(got.Status)
 		if q == nil || q.ID != asked.ID {
 			t.Fatalf("send(aprove) status = %+v, want question %s asked again", got.Status, asked.ID)
 		}
@@ -414,9 +414,9 @@ func TestConformanceAnswerFollowsQuestionInHistory(t *testing.T) {
 	for _, m := range done.History {
 		got = append(got, string(m.Role)+": "+a2atext.Message(m))
 	}
-	question := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == task.Status.Message.ID })
+	asked := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == task.Status.Message.ID })
 	answered := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == answer.ID })
-	if question < 0 || answered < 0 || question > answered {
+	if asked < 0 || answered < 0 || asked > answered {
 		t.Fatalf("task history = %q, want the question before the answer", got)
 	}
 	if n := len(slices.Compact(slices.Clone(got))); n != len(got) {

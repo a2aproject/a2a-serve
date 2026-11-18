@@ -17,11 +17,11 @@ package agentsrv
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -49,8 +50,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
-	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
@@ -236,7 +235,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &agentdir.Config{Name: o.name, Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: freePort(t)}
+	cfg := &agentdir.Config{Name: o.name, Harness: "fake", Command: []string{fakeACP}, Sandbox: agent.SandboxLocal, Port: freePort(t)}
 	fresh := !dir.Exists()
 	if !fresh {
 		if cfg, err = dir.LoadConfig(); err != nil {
@@ -503,6 +502,17 @@ func wantResult(t *testing.T, task *a2a.Task, state a2a.TaskState, text string) 
 // waitTimeout bounds how long tests wait for something to happen.
 const waitTimeout = 10 * time.Second
 
+// eventsOf yields evs without errors.
+func eventsOf(evs ...a2a.Event) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		for _, ev := range evs {
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(waitTimeout)
@@ -524,38 +534,4 @@ func harnessKeyCaller(key string) agentproxy.Caller {
 		tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
 		return "", ok && tok == key
 	}
-}
-
-type proxyResponse struct {
-	Status int
-	Error  string
-	Body   []byte
-}
-
-func getURL(t *testing.T, u, authorization string) proxyResponse {
-	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
-	if err != nil {
-		t.Fatalf("http.NewRequestWithContext() error = %v", err)
-	}
-	if authorization != "" {
-		req.Header.Set("Authorization", authorization)
-	}
-	resp, err := testHTTP.Do(req)
-	if err != nil {
-		t.Fatalf("GET %s error = %v", u, err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("reading the response body error = %v", err)
-	}
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("closing the response body error = %v", err)
-	}
-	out := proxyResponse{Status: resp.StatusCode, Body: body}
-	var apiErr jsonhttp.APIError
-	if json.Unmarshal(body, &apiErr) == nil {
-		out.Error = apiErr.Error
-	}
-	return out
 }

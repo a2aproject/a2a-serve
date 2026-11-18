@@ -1,0 +1,1352 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/sandbox/boundary"
+	"github.com/a2aproject/a2a-serve/core/sandbox/sandboxtest"
+	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
+)
+
+func TestPrepareLocal(t *testing.T) {
+	t.Parallel()
+	ws, home := t.TempDir(), t.TempDir()
+	command := printCommand(t, "--flag")
+	profile, err := Lookup("opencode", command)
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+	p, err := Prepare(context.Background(), Spec{
+		Profile: profile,
+		Sandbox: SandboxLocal,
+		Mounts:  []Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Backend: sandbox.Local{},
+		Env:     []string{"API_KEY=k"},
+		Server:  sandbox.Socket{Path: "/run/agent/a2a.sock"},
+		CLI:     "/opt/a2a/bin/a2a",
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	out := output(t, p)
+	if !slices.Equal(out[:2], command) {
+		t.Fatalf("Prepared.Start() ran %v, want the custom command %v", out[:2], command)
+	}
+	for _, want := range []string{"API_KEY=k", EnvUnixSocket + "=/run/agent/a2a.sock", "PATH=/opt/a2a/bin" + string(os.PathListSeparator)} {
+		if !slices.ContainsFunc(out, func(kv string) bool { return strings.HasPrefix(kv, want) }) {
+			t.Fatalf("Prepared.Start() env is missing %q", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); err != nil {
+		t.Fatalf("Prepare() did not bootstrap the harness home: %v", err)
+	}
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatalf("Prepared.Close() error = %v", err)
+	}
+}
+
+func TestPrepareLocalChecksCommand(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	agent := filepath.Join(ws, "bin", "agent")
+	if err := os.MkdirAll(filepath.Dir(agent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteExecutable(t, agent, []byte("#!/bin/sh\n"))
+	const notInstalled = " is not installed"
+	tests := []struct {
+		name    string
+		command string
+		wantErr string
+	}{
+		{name: "absolute path", command: agent},
+		{name: "path in the workspace", command: "./bin/agent"},
+		{name: "missing", command: "a2a-serve-missing-agent", wantErr: "a2a-serve-missing-agent" + notInstalled},
+		{name: "missing path", command: "./bin/missing", wantErr: "./bin/missing" + notInstalled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			profile, err := Lookup("opencode", []string{tc.command})
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{Profile: profile, Sandbox: SandboxLocal, Backend: sandbox.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}, Home: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			err = startErr(t, p)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("Prepared.Start() error = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr) {
+				t.Fatalf("Prepared.Start() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPrepareModel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		model string
+		want  []string
+	}{
+		{name: "opencode", model: "openrouter/a/b", want: []string{
+			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true},"model":"openrouter/a/b"}`,
+		}},
+		{name: "opencode", want: []string{
+			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true}}`,
+		}},
+		{name: "claude", model: "sonnet", want: []string{"ANTHROPIC_MODEL=sonnet"}},
+		{name: "claude"},
+		{name: "gemini", model: "m"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+tc.model, func(t *testing.T) {
+			t.Parallel()
+			ws := t.TempDir()
+			profile, err := Lookup(tc.name, printCommand(t))
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: profile,
+				Sandbox: SandboxLocal,
+				Mounts:  []Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				Backend: sandbox.Local{},
+				Model:   tc.model,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			var got []string
+			for _, kv := range output(t, p) {
+				if strings.HasPrefix(kv, "ANTHROPIC_MODEL=") || strings.Contains(kv, "_CONFIG_CONTENT=") {
+					got = append(got, kv)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prepare() model env wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrepareProviderKeyAliases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		agent string
+		env   []string
+		want  []string
+	}{
+		{name: "gemini key for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
+		{name: "google key for opencode", agent: "opencode", env: []string{"GOOGLE_API_KEY=k"}, want: []string{"GOOGLE_API_KEY=k", "GOOGLE_GENERATIVE_AI_API_KEY=k"}},
+		{name: "both keys for opencode", agent: "opencode", env: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}, want: []string{"GEMINI_API_KEY=a", "GOOGLE_GENERATIVE_AI_API_KEY=b"}},
+		{name: "gemini key for claude", agent: "claude", env: []string{"GEMINI_API_KEY=k"}, want: []string{"GEMINI_API_KEY=k"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := t.TempDir()
+			profile, err := Lookup(tc.agent, printCommand(t))
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: profile,
+				Sandbox: SandboxLocal,
+				Mounts:  []Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				Backend: sandbox.Local{},
+				Env:     tc.env,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			var got []string
+			for _, kv := range output(t, p) {
+				if name, _, _ := strings.Cut(kv, "="); slices.Contains([]string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"}, name) {
+					got = append(got, kv)
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prepare() key env wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+// runningDocker runs rootful, has every image and removes any container.
+// docker run prints its arguments, one per line.
+const runningDocker = `case "$1" in
+info) echo "[name=seccomp,profile=builtin]" ;;
+image|rm) ;;
+run) shift; printf '%s\n' "$@" ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+
+func TestPrepareDocker(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Base:    sandbox.Spec{Name: "a2a-test"},
+		Mounts:  []Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+		Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+		CLI:     "/opt/a2a/bin/a2a",
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
+		}
+	})
+	var mounts []string
+	var envFile string
+	for i := 0; i+1 < len(output(t, p)); i++ {
+		switch output(t, p)[i] {
+		case "-v":
+			mounts = append(mounts, output(t, p)[i+1])
+		case "--env-file":
+			envFile = output(t, p)[i+1]
+		}
+	}
+	wantMounts := []string{ws + ":" + ws, sockDir + ":/run/a2a:ro", home + ":" + ContainerHome}
+	if diff := cmp.Diff(wantMounts, mounts); diff != "" {
+		t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+	}
+	env, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if want := EnvUnixSocket + "=/run/a2a/a2a.sock"; !slices.Contains(strings.Split(string(env), "\n"), want) {
+		t.Fatalf("Prepare() env = %q, want it to contain %q", env, want)
+	}
+}
+
+// noRelayImageDocker has the agent's image but not the egress container's,
+// which it can't pull.
+const noRelayImageDocker = `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") case "$*" in *example.com/egress*) exit 1 ;; esac; echo "amd64 null" ;;
+"rm "*) ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+
+func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
+	log := sandboxtest.FakeDocker(t, noRelayImageDocker)
+	t.Setenv(sandbox.EnvForceRelay, "1")
+	t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Base:    sandbox.Spec{Name: "a2a-test"},
+		Mounts:  []Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+		Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+		CLI:     "/opt/a2a/bin/a2a",
+		OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+			return sandbox.EgressEndpoint{}, errors.New("unexpected boundary")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
+		}
+	})
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if want := "pull example.com/egress:test"; !strings.Contains(string(calls), want) {
+		t.Fatalf("Prepare() docker calls = %q, want them to contain %q", calls, want)
+	}
+	if want := "the egress container's image isn't available"; !strings.Contains(p.NoBoundary(), want) {
+		t.Fatalf("Prepare().NoBoundary() = %q, want it to contain %q", p.NoBoundary(), want)
+	}
+}
+
+func TestPrepareCLITimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{name: "default", want: EnvTimeout + "=5m0s"},
+		{name: "configured", env: []string{EnvTimeout + "=1h"}, want: EnvTimeout + "=1h"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := t.TempDir()
+			profile, err := Lookup("claude", printCommand(t))
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: profile,
+				Sandbox: SandboxLocal,
+				Mounts:  []Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				Backend: sandbox.Local{},
+				Env:     tc.env,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			var got []string
+			for _, kv := range output(t, p) {
+				if strings.HasPrefix(kv, EnvTimeout+"=") {
+					got = append(got, kv)
+				}
+			}
+			if diff := cmp.Diff([]string{tc.want}, got); diff != "" {
+				t.Fatalf("Prepare() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrepareRejectsInvalidSpecs(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	tests := []struct {
+		name    string
+		spec    Spec
+		wantErr string
+	}{
+		{name: "no workspace", spec: Spec{Sandbox: SandboxLocal}, wantErr: "no workspace"},
+		{name: "moved workspace", spec: Spec{Sandbox: SandboxLocal, Mounts: []Mount{{Src: ws, Dst: "/work"}}}, wantErr: "must keep its path"},
+		{name: "unknown sandbox", spec: Spec{Sandbox: "vm", Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "unknown sandbox"},
+		{name: "no backend", spec: Spec{Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
+		{name: "local backend for docker", spec: Spec{Backend: sandbox.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
+		{name: "docker backend for local", spec: Spec{Sandbox: SandboxLocal, Backend: sandbox.NewDocker(t.TempDir(), nil), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the local sandbox"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.spec.Profile = claude{}
+			tc.spec.Home = t.TempDir()
+			if _, err := Prepare(context.Background(), tc.spec); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Prepare() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// output starts p and returns the lines its process printed until it exited.
+func output(t *testing.T, p *Prepared) []string {
+	t.Helper()
+	rwc, err := p.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Prepared.Start() error = %v", err)
+	}
+	data, err := io.ReadAll(rwc)
+	if err != nil {
+		t.Fatalf("reading the agent process error = %v", err)
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the agent process error = %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+// startErr starts p, waits for its process to exit, and returns the error
+// of the start.
+func startErr(t *testing.T, p *Prepared) error {
+	t.Helper()
+	rwc, err := p.Start(context.Background())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, rwc); err != nil {
+		t.Fatalf("reading the agent process error = %v", err)
+	}
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("closing the agent process error = %v", err)
+	}
+	return nil
+}
+
+// printCommand writes a command that prints its path and arguments, then
+// its environment, one per line, and returns it with args.
+func printCommand(t *testing.T, args ...string) []string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "print-acp")
+	testutil.WriteExecutable(t, path, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\nenv\n"))
+	return append([]string{path}, args...)
+}
+
+func tmpfsMounts(args []string) []string {
+	var out []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--mount" {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func TestPrepareDockerHidesNestedAgents(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws, docs := t.TempDir(), t.TempDir()
+	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+	mkdir(t, filepath.Join(ws, "sub", "deeper", workspace.AgentDir, "state"))
+	mkdir(t, filepath.Join(docs, "x", workspace.AgentDir))
+
+	p, err := startDocker(t, Spec{
+		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
+		Hidden:  []string{own},
+		Home:    t.TempDir(),
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{
+		"type=tmpfs,dst=" + own + ",readonly",
+		"type=tmpfs,dst=" + filepath.Join(ws, "sub", "deeper", workspace.AgentDir) + ",readonly",
+		"type=tmpfs,dst=/docs/x/" + workspace.AgentDir + ",readonly",
+	}
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+	wantWarnings := []error{&NestedAgentsWarning{Roots: []string{filepath.Join(ws, "sub", "deeper"), filepath.Join(docs, "x")}}}
+	if diff := cmp.Diff(wantWarnings, p.Warnings); diff != "" {
+		t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s", diff)
+	}
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() error = %v, want nil", err)
+	}
+	mkdir(t, filepath.Join(ws, "later", workspace.AgentDir))
+	if _, ok := errors.AsType[*NestedAgentsError](startErr(t, p)); !ok {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the agent created later", startErr(t, p))
+	}
+}
+
+func TestPrepareDockerHidesLeftoverRestores(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws := t.TempDir()
+	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+	leftover := mkdir(t, filepath.Join(ws, workspace.RestorePrefix+"123", "state"))
+
+	p, err := startDocker(t, Spec{
+		Mounts:  []Mount{{Src: ws, Dst: ws}},
+		Hidden:  []string{own},
+		Home:    t.TempDir(),
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{"type=tmpfs,dst=" + own + ",readonly", "type=tmpfs,dst=" + filepath.Dir(leftover) + ",readonly"}
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+	mkdir(t, filepath.Join(ws, "sub", workspace.RestorePrefix+"456"))
+	if _, ok := errors.AsType[*NestedAgentsError](startErr(t, p)); !ok {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the restore started later", startErr(t, p))
+	}
+}
+
+func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws := t.TempDir()
+	own := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+
+	p, err := startDocker(t, Spec{
+		Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: "/", Dst: "/host", ReadOnly: true}},
+		Hidden:  []string{own},
+		Home:    t.TempDir(),
+		Backend: sandbox.NewDocker(t.TempDir(), nil),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{"type=tmpfs,dst=" + own + ",readonly", "type=tmpfs,dst=" + filepath.Join("/host", own) + ",readonly"}
+	if diff := cmp.Diff(want, tmpfsMounts(output(t, p))); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	mkdir(t, filepath.Join(ws, "sub", workspace.AgentDir))
+
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Sandbox: SandboxLocal,
+		Mounts:  []Mount{{Src: ws, Dst: ws}},
+		Home:    t.TempDir(),
+		Backend: sandbox.Local{},
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []error{&NestedAgentsWarning{Roots: []string{filepath.Join(ws, "sub")}, Exposed: true}}
+	if diff := cmp.Diff(want, p.Warnings); diff != "" {
+		t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPrepareDockerMasksMCP(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	tests := []struct {
+		name     string
+		existing string
+		want     string
+	}{
+		{name: "existing .mcp.json", existing: `{"mcpServers": {"github": {"command": "gh-mcp"}}}`, want: `{"mcpServers": {"github": {"command": "gh-mcp"}}}`},
+		{name: "no .mcp.json", want: emptyMCP},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home, state := t.TempDir(), t.TempDir(), t.TempDir()
+			mcpFile := filepath.Join(ws, workspace.MCPFile)
+			if tc.existing != "" {
+				if err := os.WriteFile(mcpFile, []byte(tc.existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mask := filepath.Join(state, "mcp-mask.json")
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Base:    sandbox.Spec{Name: "a2a-test"},
+				Mounts:  []Mount{{Src: ws, Dst: ws}, {Src: ws, Dst: "/copy", ReadOnly: true}},
+				Home:    home,
+				Backend: sandbox.NewDocker(t.TempDir(), nil),
+				MCPMask: mask,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+			var mounts []string
+			for i := 0; i+1 < len(output(t, p)); i++ {
+				if output(t, p)[i] == "-v" {
+					mounts = append(mounts, output(t, p)[i+1])
+				}
+			}
+			wantMounts := []string{ws + ":" + ws, ws + ":/copy:ro", mask + ":" + mcpFile + ":ro", mask + ":/copy/" + workspace.MCPFile + ":ro", home + ":" + ContainerHome}
+			if diff := cmp.Diff(wantMounts, mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			got, err := os.ReadFile(mcpFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, string(got)); diff != "" {
+				t.Fatalf("Prepare() changed %s (-want +got) diff = %s", workspace.MCPFile, diff)
+			}
+			gotMask, err := os.ReadFile(mask)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(emptyMCP, string(gotMask)); diff != "" {
+				t.Fatalf("Prepare() wrong mask (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerMasksAgentConfig(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	tests := []struct {
+		name    string
+		profile Profile
+		copy    bool
+		// want returns the mounts, tmpfs mounts and files the workspace
+		// gets, of the workspace ws, the read-only mount docs and the
+		// private copy of the workspace.
+		want func(ws, docs, copyDir, mask string) (mounts, tmpfs, created []string)
+		// wantWarnings are the files of ws named in warnings.
+		wantWarnings []string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			want: func(ws, docs, _, mask string) ([]string, []string, []string) {
+				return []string{
+						ws + ":" + ws,
+						docs + ":/docs:ro",
+						mask + ":" + filepath.Join(ws, "opencode.json") + ":ro",
+						mask + ":" + filepath.Join(ws, "opencode.jsonc") + ":ro",
+						mask + ":/docs/opencode.json:ro",
+						filepath.Join(ws, ".opencode", "skills") + ":" + filepath.Join(ws, ".opencode", "skills"),
+					},
+					[]string{"type=tmpfs,dst=" + filepath.Join(ws, ".opencode")},
+					[]string{filepath.Join(ws, "opencode.jsonc")}
+			},
+			wantWarnings: []string{"opencode.json"},
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			want: func(ws, docs, _, mask string) ([]string, []string, []string) {
+				return []string{
+						ws + ":" + ws,
+						docs + ":/docs:ro",
+						mask + ":" + filepath.Join(ws, ".claude", "settings.json") + ":ro",
+						mask + ":" + filepath.Join(ws, ".claude", "settings.local.json") + ":ro",
+						mask + ":/docs/.claude/settings.json:ro",
+						filepath.Join(ws, ".claude") + ":" + filepath.Join(ws, ".claude"),
+						filepath.Join(docs, ".claude") + ":/docs/.claude:ro",
+					},
+					nil,
+					[]string{filepath.Join(ws, ".claude", "settings.json"), filepath.Join(ws, ".claude", "settings.local.json")}
+			},
+		},
+		{
+			name:    "claude with a private copy of the workspace",
+			profile: claude{},
+			copy:    true,
+			want: func(ws, docs, copyDir, mask string) ([]string, []string, []string) {
+				return []string{
+						copyDir + ":" + ws,
+						docs + ":/docs:ro",
+						mask + ":" + filepath.Join(ws, ".claude", "settings.json") + ":ro",
+						mask + ":" + filepath.Join(ws, ".claude", "settings.local.json") + ":ro",
+						mask + ":/docs/.claude/settings.json:ro",
+						filepath.Join(copyDir, ".claude") + ":" + filepath.Join(ws, ".claude"),
+						filepath.Join(docs, ".claude") + ":/docs/.claude:ro",
+					},
+					nil,
+					[]string{filepath.Join(copyDir, ".claude", "settings.json")}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, docs, state := t.TempDir(), t.TempDir(), t.TempDir()
+			hidden := mkdir(t, filepath.Join(ws, workspace.AgentDir))
+			copyDir := mkdir(t, filepath.Join(hidden, "state", "workspaces", "ben"))
+			mask := filepath.Join(state, "config-mask.json")
+			writeTestFile(t, filepath.Join(ws, "opencode.json"), `{"permission": {"bash": "allow"}}`)
+			mkdir(t, filepath.Join(ws, ".opencode", "skills", "triage"))
+			writeTestFile(t, filepath.Join(docs, ".claude", "settings.json"), `{"permissions": {"allow": ["Bash"]}}`)
+			writeTestFile(t, filepath.Join(docs, "opencode.json"), `{}`)
+			spec := Spec{
+				Profile:    tc.profile,
+				Base:       sandbox.Spec{Name: "a2a-test"},
+				Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
+				Hidden:     []string{hidden},
+				Home:       t.TempDir(),
+				Backend:    sandbox.NewDocker(t.TempDir(), nil),
+				ConfigMask: mask,
+			}
+			if tc.copy {
+				spec.WorkspaceSrc = copyDir
+			}
+
+			p, err := Prepare(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+
+			wantMounts, wantTmpfs, wantCreated := tc.want(ws, docs, copyDir, mask)
+			var mounts []string
+			for _, m := range bindMounts(output(t, p)) {
+				if !strings.HasSuffix(m, ":"+ContainerHome) {
+					mounts = append(mounts, m)
+				}
+			}
+			// Docker mounts deeper destinations last, whatever their order.
+			if diff := cmp.Diff(wantMounts, mounts, cmpopts.SortSlices(strings.Compare)); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			wantTmpfs = append([]string{"type=tmpfs,dst=" + hidden + ",readonly"}, wantTmpfs...)
+			if diff := cmp.Diff(wantTmpfs, tmpfsMounts(output(t, p))); diff != "" {
+				t.Fatalf("Prepare() tmpfs mounts wrong result (-want +got) diff = %s", diff)
+			}
+			for _, file := range wantCreated {
+				if got, err := os.ReadFile(file); err != nil || string(got) != emptyConfig {
+					t.Fatalf("Prepare() created %s = %q, %v, want %q", file, got, err, emptyConfig)
+				}
+			}
+			var warned []string
+			for _, w := range p.Warnings {
+				for _, name := range []string{"opencode.json", filepath.Join(".claude", "settings.json")} {
+					if strings.Contains(w.Error(), filepath.Join(ws, name)+" ") {
+						warned = append(warned, name)
+					}
+				}
+			}
+			if diff := cmp.Diff(tc.wantWarnings, warned); diff != "" {
+				t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s, warnings %q", diff, p.Warnings)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	repo, state := t.TempDir(), t.TempDir()
+	ws := mkdir(t, filepath.Join(repo, "services", "app"))
+	mask := filepath.Join(state, "config-mask.json")
+	writeTestFile(t, filepath.Join(repo, "services", "opencode.json"), `{"permission": {"bash": "allow"}}`)
+
+	p, err := Prepare(context.Background(), Spec{
+		Profile:    opencode{},
+		Base:       sandbox.Spec{Name: "a2a-test"},
+		Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: repo, Dst: repo}},
+		Home:       t.TempDir(),
+		Backend:    sandbox.NewDocker(t.TempDir(), nil),
+		ConfigMask: mask,
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
+		}
+	})
+
+	if want := mask + ":" + filepath.Join(repo, "services", "opencode.json") + ":ro"; !slices.Contains(bindMounts(output(t, p)), want) {
+		t.Fatalf("Prepare() mounts = %q, want %q", bindMounts(output(t, p)), want)
+	}
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() error = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "opencode.json")); !os.IsNotExist(err) {
+		t.Fatalf("Prepare() created opencode.json above the workspace: %v", err)
+	}
+	writeTestFile(t, filepath.Join(repo, "opencode.json"), `{"permission": {"bash": "allow"}}`)
+	if _, ok := errors.AsType[*AppearedError](startErr(t, p)); !ok {
+		t.Fatalf("Prepared.Start() error = %v, want a restart for the opencode.json created later", startErr(t, p))
+	}
+}
+
+func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	repo, dotfiles := t.TempDir(), t.TempDir()
+	ws := mkdir(t, filepath.Join(repo, "app"))
+	mkdir(t, filepath.Join(dotfiles, "claude"))
+	symlink(t, "claude", filepath.Join(dotfiles, ".claude"))
+	spec := Spec{
+		Profile:    claude{},
+		Base:       sandbox.Spec{Name: "a2a-test"},
+		Mounts:     []Mount{{Src: ws, Dst: ws}, {Src: dotfiles, Dst: "/dotfiles"}},
+		Home:       t.TempDir(),
+		Backend:    sandbox.NewDocker(t.TempDir(), nil),
+		ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
+	}
+
+	p, err := Prepare(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Prepare() with a symlinked .claude in a mount error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
+		}
+	})
+	writeTestFile(t, filepath.Join(dotfiles, "claude", "settings.json"), `{}`)
+	if err := startErr(t, p); err != nil {
+		t.Fatalf("Prepared.Start() after a file appeared in a mount error = %v, want nil", err)
+	}
+
+	symlink(t, filepath.Join(dotfiles, ".claude"), filepath.Join(repo, ".claude"))
+	symlink(t, filepath.Join(dotfiles, "claude"), filepath.Join(repo, ".opencode"))
+	spec.Mounts = append(spec.Mounts, Mount{Src: repo, Dst: repo})
+	above, err := Prepare(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Prepare() for Claude Code with a symlinked .claude above the workspace error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := above.Close(context.Background()); err != nil {
+			t.Errorf("Prepared.Close() error = %v", err)
+		}
+	})
+	spec.Profile = opencode{}
+	_, err = Prepare(context.Background(), spec)
+	if want := filepath.Join(repo, ".opencode") + " is a symlink, in a folder above the workspace"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() for opencode with a symlinked .opencode above the workspace error = %v, want it to contain %q", err, want)
+	}
+}
+
+func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	tests := []struct {
+		name    string
+		profile Profile
+		setup   func(t *testing.T, ws, outside string)
+		want    string
+	}{
+		{
+			name:    "file symlink out of the workspace",
+			profile: opencode{},
+			setup: func(t *testing.T, ws, outside string) {
+				symlink(t, filepath.Join(outside, "x.json"), filepath.Join(ws, "opencode.json"))
+			},
+			want: "opencode.json is a symlink; the agent could use it to change its own permissions, so remove it",
+		},
+		{
+			name:    "folder symlink in the workspace",
+			profile: claude{},
+			setup: func(t *testing.T, ws, _ string) {
+				mkdir(t, filepath.Join(ws, "cfg"))
+				symlink(t, "cfg", filepath.Join(ws, ".claude"))
+			},
+			want: ".claude is a symlink",
+		},
+		{
+			name:    "folder in place of a file",
+			profile: opencode{},
+			setup:   func(t *testing.T, ws, _ string) { mkdir(t, filepath.Join(ws, "opencode.jsonc")) },
+			want:    "opencode.jsonc isn't a file",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, outside := t.TempDir(), t.TempDir()
+			tc.setup(t, ws, outside)
+
+			_, err := Prepare(context.Background(), Spec{
+				Profile:    tc.profile,
+				Base:       sandbox.Spec{Name: "a2a-test"},
+				Mounts:     []Mount{{Src: ws, Dst: ws}},
+				Home:       t.TempDir(),
+				Backend:    sandbox.NewDocker(t.TempDir(), nil),
+				ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
+			})
+
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Prepare() error = %v, want it to contain %q", err, tc.want)
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) > 0 {
+				t.Fatalf("Prepare() wrote %s out of the workspace", entries[0].Name())
+			}
+		})
+	}
+}
+
+func TestPrepareDockerLocksHomeConfig(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	claudeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".claude") + ":" + filepath.Join(ContainerHome, ".claude"),
+			filepath.Join(home, ".claude", "settings.json") + ":" + filepath.Join(ContainerHome, ".claude", "settings.json") + ":ro",
+			filepath.Join(home, ".claude", "agents") + ":" + filepath.Join(ContainerHome, ".claude", "agents") + ":ro",
+			filepath.Join(home, ".claude", "commands") + ":" + filepath.Join(ContainerHome, ".claude", "commands") + ":ro",
+			filepath.Join(home, ".claude", "skills") + ":" + filepath.Join(ContainerHome, ".claude", "skills") + ":ro",
+		}
+	}
+	opencodeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".config") + ":" + filepath.Join(ContainerHome, ".config"),
+			filepath.Join(home, ".config", "opencode") + ":" + filepath.Join(ContainerHome, ".config", "opencode") + ":ro",
+			filepath.Join(home, ".opencode") + ":" + filepath.Join(ContainerHome, ".opencode") + ":ro",
+			filepath.Join(home, ".local") + ":" + filepath.Join(ContainerHome, ".local"),
+			filepath.Join(home, ".local", "share") + ":" + filepath.Join(ContainerHome, ".local", "share"),
+			filepath.Join(home, ".local", "share", "opencode") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode"),
+			filepath.Join(home, ".local", "share", "opencode", "auth.json") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode", "auth.json") + ":ro",
+		}
+	}
+	tests := []struct {
+		name    string
+		profile Profile
+		lock    bool
+		want    func(home string) []string
+		// wantCreated are the files the home gets, relative to it.
+		wantCreated []string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			lock:    true,
+			want:    opencodeWant,
+			wantCreated: []string{
+				filepath.Join(".config", "opencode", ".gitignore"),
+				filepath.Join(".opencode", ".gitignore"),
+				filepath.Join(".local", "share", "opencode", "auth.json"),
+			},
+		},
+		{
+			name:        "claude",
+			profile:     claude{},
+			lock:        true,
+			want:        claudeWant,
+			wantCreated: []string{filepath.Join(".claude", "agents"), filepath.Join(".claude", "commands"), filepath.Join(".claude", "skills")},
+		},
+		{
+			name:    "agent of unknown kind",
+			profile: custom{name: "acp", argv: []string{"fakeacp"}},
+			lock:    true,
+			want: func(home string) []string {
+				return append(claudeWant(home), opencodeWant(home)...)
+			},
+			wantCreated: []string{filepath.Join(".claude", "settings.json"), filepath.Join(".opencode", ".gitignore")},
+		},
+		{
+			name:    "owner's home",
+			profile: claude{},
+			want:    func(string) []string { return nil },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			spec := Spec{
+				Profile:  tc.profile,
+				Base:     sandbox.Spec{Name: "a2a-test", Image: "img:1"},
+				Mounts:   []Mount{{Src: ws, Dst: ws}},
+				Home:     home,
+				Backend:  sandbox.NewDocker(t.TempDir(), nil),
+				LockHome: tc.lock,
+			}
+
+			p, err := Prepare(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+
+			var mounts []string
+			for _, m := range bindMounts(output(t, p)) {
+				if m != ws+":"+ws && m != home+":"+ContainerHome {
+					mounts = append(mounts, m)
+				}
+			}
+			if diff := cmp.Diff(tc.want(home), mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			for _, name := range tc.wantCreated {
+				if _, err := os.Lstat(filepath.Join(home, name)); err != nil {
+					t.Fatalf("Prepare() didn't create %s in the home: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	tests := []struct {
+		name    string
+		profile Profile
+		file    string
+		content string
+		key     string
+		want    string
+		kept    string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: `{"permission": {"*": "ask", "bash": "allow"}, "provider": {"stub": {}}}`,
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
+			name:    "opencode with comments",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: "{\n  // the stub model\n  \"provider\": {\"stub\": {}},\n  \"permission\": {\"bash\": \"allow\"},\n}",
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			file:    filepath.Join(".claude", "settings.json"),
+			content: `{"permissions": {"defaultMode": "acceptEdits", "allow": ["Bash"]}, "model": "opus"}`,
+			key:     "permissions",
+			want:    `{"defaultMode": "default"}`,
+			kept:    "model",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			writeTestFile(t, filepath.Join(home, tc.file), tc.content)
+
+			p, err := Prepare(context.Background(), Spec{
+				Profile:  tc.profile,
+				Base:     sandbox.Spec{Name: "a2a-test"},
+				Mounts:   []Mount{{Src: ws, Dst: ws}},
+				Home:     home,
+				Backend:  sandbox.NewDocker(t.TempDir(), nil),
+				LockHome: true,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+
+			data, err := os.ReadFile(filepath.Join(home, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("json.Unmarshal(%s) error = %v", tc.file, err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, got[tc.key]); diff != "" {
+				t.Fatalf("Prepare() %s of %s wrong result (-want +got) diff = %s", tc.key, tc.file, diff)
+			}
+			if _, ok := got[tc.kept]; !ok {
+				t.Fatalf("Prepare() left %s = %s, want %s kept", tc.file, data, tc.kept)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
+	sandboxtest.FakeDocker(t, runningDocker)
+	ws, home := t.TempDir(), t.TempDir()
+	mkdir(t, filepath.Join(home, "agents"))
+	mkdir(t, filepath.Join(home, ".claude"))
+	symlink(t, filepath.Join("..", "agents"), filepath.Join(home, ".claude", "agents"))
+
+	_, err := Prepare(context.Background(), Spec{
+		Profile:  claude{},
+		Base:     sandbox.Spec{Name: "a2a-test"},
+		Mounts:   []Mount{{Src: ws, Dst: ws}},
+		Home:     home,
+		Backend:  sandbox.NewDocker(t.TempDir(), nil),
+		LockHome: true,
+	})
+
+	if want := filepath.Join(home, ".claude", "agents") + " is a symlink"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() error = %v, want it to contain %q", err, want)
+	}
+}
+
+func bindMounts(args []string) []string {
+	var out []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-v" {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	mkdir(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// relayDocker runs the egress container, and runs the check with check.
+func relayDocker(check string) string {
+	return `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") echo "amd64 null" ;;
+"rm "*|"run -d") ;;
+"logs "*) echo "` + boundary.RelayReady + `" ;;
+"inspect "*) echo "true 0 0" ;;
+"run --name") ` + check + ` ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+}
+
+func TestPrepareDockerEgressCheck(t *testing.T) {
+	tests := []struct {
+		name        string
+		check       string
+		wantEgress  bool
+		wantProblem string
+		wantErr     string
+	}{
+		{name: "check passes", check: "exit 0", wantEgress: true},
+		{name: "launcher can't set up the network", check: sandboxtest.LauncherNoTUN, wantProblem: "the agent's container can't set up its network: no tun"},
+		{name: "daemon error", check: sandboxtest.DaemonError, wantErr: "failed to create task for container: EOF"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxtest.FakeDocker(t, relayDocker(tc.check))
+			t.Setenv(sandbox.EnvForceRelay, "1")
+			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+			var closed atomic.Bool
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Base:    sandbox.Spec{Name: "a2a-test"},
+				Mounts:  []Mount{{Src: ws, Dst: ws}},
+				Home:    home,
+				Backend: sandbox.NewDocker(t.TempDir(), nil),
+				Server:  sandbox.Socket{Path: filepath.Join(sockDir, "a2a.sock")},
+				CLI:     "/opt/a2a/bin/a2a",
+				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
+						closed.Store(true)
+						return nil
+					}}, nil
+				},
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Prepare() error = %v, want %q", err, tc.wantErr)
+				}
+				if !closed.Load() {
+					t.Fatalf("Prepare() error = %v left the egress boundary open", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+			if p.Egress != tc.wantEgress || !strings.HasPrefix(p.NoBoundary(), tc.wantProblem) || (tc.wantProblem == "") != (p.NoBoundary() == "") {
+				t.Fatalf("Prepare() = egress %v, problem %q, want egress %v, problem %q", p.Egress, p.NoBoundary(), tc.wantEgress, tc.wantProblem)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerFallsBackAtStart(t *testing.T) {
+	tests := []struct {
+		name string
+		// checks are what the checks do: the first at Prepare, the next at
+		// the starts.
+		checks      []string
+		wantRuns    []string
+		wantErr     []bool
+		wantProblem string
+		wantStderr  string
+	}{
+		{name: "check passes", checks: []string{"exit 0", "exit 0", "exit 0"}, wantRuns: []string{"check", "check", "boundary", "check", "boundary"}, wantErr: []bool{false, false}},
+		{
+			name: "launcher can't set up the network", checks: []string{"exit 0", sandboxtest.LauncherNoTUN},
+			wantRuns: []string{"check", "check", "open", "open"}, wantErr: []bool{false, false},
+			wantProblem: "the agent's container can't set up its network: no tun",
+			wantStderr:  "a2a-serve: egress control is off, as the container can't set up its network: no tun\n",
+		},
+		{
+			name: "daemon error", checks: []string{"exit 0", sandboxtest.DaemonError, "exit 0"},
+			wantRuns: []string{"check", "check", "check", "boundary"}, wantErr: []bool{true, false},
+			wantStderr: "a2a-serve: checking the network setup of the container: exit status 125: docker: Error response from daemon: failed to create task for container: EOF\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := filepath.Join(t.TempDir(), "calls")
+			var checks strings.Builder
+			for i, c := range tc.checks {
+				fmt.Fprintf(&checks, "%d) %s;;\n", i+1, c)
+			}
+			sandboxtest.FakeDocker(t, `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") echo "amd64 null" ;;
+"rm "*|"run -d") ;;
+"logs "*) echo "`+boundary.RelayReady+`" ;;
+"inspect "*) case "$*" in *RestartCount*) echo "true 0 0" ;; *) echo true ;; esac ;;
+"run --name") case "$*" in
+  *--check*) echo check >>`+calls+`
+    case $(grep -c check `+calls+`) in
+`+checks.String()+`    esac ;;
+  *"--network none"*) echo boundary >>`+calls+` ;;
+  *) echo open >>`+calls+` ;;
+  esac ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`)
+			t.Setenv(sandbox.EnvForceRelay, "1")
+			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			ws := t.TempDir()
+			var stderr strings.Builder
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Base:    sandbox.Spec{Name: "a2a-test", Stderr: &stderr},
+				Mounts:  []Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				Backend: sandbox.NewDocker(t.TempDir(), nil),
+				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+			for i, wantErr := range tc.wantErr {
+				if err := startErr(t, p); (err != nil) != wantErr || errors.Is(err, sandbox.ErrNoBoundary) {
+					t.Fatalf("start %d Prepared.Start() error = %v, want error %v", i+1, err, wantErr)
+				}
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantRuns, strings.Fields(string(data))); diff != "" {
+				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
+			}
+			if got := p.NoBoundary(); !strings.HasPrefix(got, tc.wantProblem) || (tc.wantProblem == "") != (got == "") {
+				t.Fatalf("Prepared.NoBoundary() = %q, want %q", got, tc.wantProblem)
+			}
+			if got := stderr.String(); got != tc.wantStderr {
+				t.Fatalf("Prepared.Start() stderr = %q, want %q", got, tc.wantStderr)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerResolvesImageOnce(t *testing.T) {
+	const built = "docker: built a2a-harness-claude:" + ImageTag + " (claude:" + ImageTag + " is not published)"
+	tests := []struct {
+		name        string
+		relay       string
+		launcher    string
+		mode        string
+		wantSummary string
+		wantProblem bool
+	}{
+		{name: "boundary can't work", launcher: "missing", wantSummary: built, wantProblem: true},
+		{name: "boundary with fallback", relay: "1", wantSummary: built + "; egress internet through the server (egress container)"},
+		{name: "strict boundary", relay: "1", mode: "allowlist", wantSummary: built + "; egress allowlist through the server (egress container)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.launcher != "" && runtime.GOOS != "linux" {
+				t.Skip("other systems get an egress container, which needs no launcher")
+			}
+			builtMark := filepath.Join(t.TempDir(), "built")
+			log := sandboxtest.FakeDocker(t, `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") case "$*" in
+  *ghcr.io/a2aproject/harness-*) exit 1 ;;
+  *a2a-harness-*) [ -f `+builtMark+` ] || exit 1 ;;
+  esac; echo "amd64 null" ;;
+"pull "*) echo "fake docker: pull failed" >&2; exit 1 ;;
+"build "*) cat >/dev/null; touch `+builtMark+` ;;
+"rm "*|"run -d"|"run --name") ;;
+"logs "*) echo "`+boundary.RelayReady+`" ;;
+"inspect "*) echo "true 0 0" ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`)
+			t.Setenv(sandbox.EnvForceRelay, tc.relay)
+			t.Setenv(sandbox.EnvRelayImage, "example.com/egress:test")
+			var launcher func() string
+			if tc.launcher != "" {
+				launcher = func() string { return filepath.Join(t.TempDir(), tc.launcher) }
+			}
+			ws := t.TempDir()
+			p, err := Prepare(context.Background(), Spec{
+				Profile:     claude{},
+				Base:        sandbox.Spec{Name: "a2a-test"},
+				Backend:     sandbox.NewDocker(t.TempDir(), launcher),
+				Mounts:      []Mount{{Src: ws, Dst: ws}},
+				Home:        t.TempDir(),
+				EgressMode:  tc.mode,
+				EgressAllow: []string{"example.com"},
+				OpenEgress: func(sandbox.HostGatewayFunc, bool) (sandbox.EgressEndpoint, error) {
+					return sandbox.EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error { return nil }}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Close(context.Background()); err != nil {
+					t.Errorf("Prepared.Close() error = %v", err)
+				}
+			})
+			calls, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(string(calls), "\npull "); n != 1 {
+				t.Fatalf("Prepare() ran docker pull %d times, want once", n)
+			}
+			if p.Summary != tc.wantSummary {
+				t.Fatalf("Prepare().Summary = %q, want %q", p.Summary, tc.wantSummary)
+			}
+			if got := p.NoBoundary() != ""; got != tc.wantProblem {
+				t.Fatalf("Prepare().NoBoundary() = %q, want a problem %v", p.NoBoundary(), tc.wantProblem)
+			}
+		})
+	}
+}

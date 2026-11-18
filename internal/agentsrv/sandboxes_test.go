@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -38,30 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
-
-func TestSandboxMounts(t *testing.T) {
-	t.Parallel()
-	mounts := []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
-	tests := []struct {
-		storage string
-		want    []agentdir.Mount
-	}{
-		{storage: agentdir.StorageShared, want: mounts},
-		{storage: agentdir.StorageReadOnly, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: agentdir.StorageOwn, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
-		{storage: agentdir.StorageEmpty, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.storage, func(t *testing.T) {
-			t.Parallel()
-			if diff := cmp.Diff(tt.want, sandboxMounts(tt.storage, mounts)); diff != "" {
-				t.Fatalf("sandboxMounts() wrong result (-want +got) diff = %s", diff)
-			}
-		})
-	}
-}
 
 func sandboxServer(t *testing.T, rules ...agentdir.SandboxRule) *testServer {
 	t.Helper()
@@ -211,6 +189,7 @@ func TestRefusedAnswerEndsTheWaitingTurnOfTheAgent(t *testing.T) {
 func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
 	t.Parallel()
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, openStore(t))}
+	s.runner = newTestRunner(t, s)
 	member := func(name string) auth.Principal {
 		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
 	}
@@ -243,9 +222,9 @@ func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
 			if tt.via != nil {
 				ctx = tt.via(ctx)
 			}
-			release, err := s.admitTurn(auth.InProcess(ctx, tt.caller), tt.key, nil)
+			release, err := s.admitCaller(auth.InProcess(ctx, tt.caller), tt.key, nil)
 			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("admitTurn() error = %v, want %v", err, tt.wantErr)
+				t.Fatalf("admitCaller() error = %v, want %v", err, tt.wantErr)
 			}
 			if err == nil {
 				release()
@@ -430,6 +409,7 @@ func TestAdmitOther(t *testing.T) {
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config {
 		return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
 	}, openStore(t))}
+	s.runner = newTestRunner(t, s)
 	user := func(name string) auth.Principal {
 		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
 	}
@@ -453,7 +433,7 @@ func TestAdmitOther(t *testing.T) {
 			if err != nil {
 				t.Fatalf("of() error = %v", err)
 			}
-			if err := s.admitOther(context.Background(), tt.caller, key, want); !errors.Is(err, tt.wantErr) {
+			if err := s.admitOther(tt.caller, key, want); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("admitOther() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -465,11 +445,11 @@ func TestPruneWorkspaces(t *testing.T) {
 	ctx := context.Background()
 	src := t.TempDir()
 	s := &Server{
-		workspaces: workspaces.New(filepath.Join(t.TempDir(), "w")),
 		sandboxes: newSandboxes(func() *agentdir.Config {
 			return &agentdir.Config{Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"guests"}, Storage: agentdir.StorageEmpty}}}}
 		}, openStore(t)),
 	}
+	s.runner = newTestRunner(t, s)
 	old := time.Now().Add(-2 * unusedWorkspaceTTL)
 	for _, w := range []struct {
 		key, storage string
@@ -485,17 +465,17 @@ func TestPruneWorkspaces(t *testing.T) {
 	} {
 		id, _ := agentkey.UserOf(w.key)
 		name := workspaceName(w.key)
-		if _, err := s.workspaces.Prepare(ctx, name, id, w.storage, src); err != nil {
+		if _, err := s.runner.Copies().Prepare(ctx, name, id, w.storage, src); err != nil {
 			t.Fatalf("Prepare() error = %v", err)
 		}
-		if err := os.Chtimes(filepath.Join(s.workspaces.Root, name, "used"), w.used, w.used); err != nil {
+		if err := os.Chtimes(filepath.Join(s.runner.Copies().Root, name, "used"), w.used, w.used); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	s.pruneWorkspaces(ctx)
 
-	entries, err := s.workspaces.List()
+	entries, err := s.runner.Copies().List()
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -621,9 +601,9 @@ func TestPostedTurnsDontSaveTheIdentityOfTheirUser(t *testing.T) {
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
 	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.Identity{Network: network.ListenerPrivate}}
 
-	release, err := s.admitTurn(auth.InProcess(auth.Posted(ctx), ann), agentkey.User(ann.ID), nil)
+	release, err := s.admitCaller(auth.InProcess(auth.Posted(ctx), ann), agentkey.User(ann.ID), nil)
 	if err != nil {
-		t.Fatalf("admitTurn() error = %v", err)
+		t.Fatalf("admitCaller() error = %v", err)
 	}
 	release()
 
@@ -639,9 +619,9 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
 	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.Identity{Network: network.ListenerPrivate}}
 
-	release, err := s.admitTurn(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
+	release, err := s.admitCaller(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
 	if err != nil {
-		t.Fatalf("admitTurn() error = %v", err)
+		t.Fatalf("admitCaller() error = %v", err)
 	}
 	release()
 
@@ -650,30 +630,27 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 	}
 }
 
-func TestTurnRightAfterTheLastTaskEndedRestartsTheContainer(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	st := openStore(t)
-	rules := []agentdir.SandboxRule{{Match: []string{"pairing:ann"}, Secrets: []string{"KEY"}}}
-	s := &Server{
-		sandboxes: newSandboxes(func() *agentdir.Config {
-			return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
-		}, st),
-		tasks: st.Tasks("", func(context.Context) (string, bool, error) { return "", true, nil }),
+// newTestRunner returns a runner of the processes of s that starts none.
+func newTestRunner(t *testing.T, s *Server) *runner.Runner {
+	t.Helper()
+	sockets := t.TempDir()
+	if err := os.Chmod(sockets, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	ann := auth.Principal{ID: auth.PairPrincipal("ann"), Role: auth.RoleMember, Identity: auth.Identity{Pairing: "ann"}}
-	key := agentkey.User(ann.ID)
-	proc := &countingCloser{}
-	s.users.started(s.users.get(key), proc, access.Sandbox{Storage: s.sandboxes.resolve(ann).Storage})
-	time.AfterFunc(50*time.Millisecond, s.users.turn(key))
-
-	release, err := s.admitTurn(auth.InProcess(ctx, ann), key, nil)
-
+	r, err := runner.New(runner.Config{
+		Dirs:      runner.Dirs{Sockets: filepath.Join(sockets, "s"), Workspaces: filepath.Join(t.TempDir(), "w")},
+		Spec:      func() (runner.Spec, error) { return runner.Spec{}, nil },
+		Secrets:   func() map[string]string { return nil },
+		Processes: processes{s},
+		Pools:     []runner.Pool{{Name: guestPool}, {Name: usersPool, MaxAgents: maxUserAgents}},
+	})
 	if err != nil {
-		t.Fatalf("admitTurn() while the turn of an ended task finishes error = %v, want nil", err)
+		t.Fatalf("runner.New() error = %v", err)
 	}
-	release()
-	if proc.closed != 1 {
-		t.Fatalf("admitTurn() closed the container %d times, want 1", proc.closed)
-	}
+	t.Cleanup(func() {
+		if err := r.Release(context.Background()); err != nil {
+			t.Errorf("Runner.Release() error = %v", err)
+		}
+	})
+	return r
 }

@@ -18,7 +18,6 @@
 package agentsrv
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -30,7 +29,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,6 +36,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -58,15 +58,13 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/workspaces"
+	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
 
 // Options configure [Run].
@@ -142,21 +140,11 @@ type Server struct {
 	public         network.Provider
 	resolveNetwork func(ctx context.Context, spec string) (netinstall.Provider, error)
 	newNetwork     func(network.ExternalConfig) (network.Provider, error)
-	// harness has the endpoints through which agent processes reach the
-	// server, and mainHarness is the one of the owner's process.
-	harness     *harnessListeners
-	mainHarness *harnessEndpoint
-	bridge      harnessBridge
+	// runner runs the agent processes, the owner's and those of callers.
+	runner *runner.Runner
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
-	pins *harness.Pins
-	// policies writes the settings that the agent processes in containers
-	// can't override.
-	policies *policies
-	// egress opens the egress sockets of containers.
-	egress *egressSockets
-	// docker runs the agent processes with --sandbox docker.
-	docker *sandbox.Docker
+	pins *agent.Pins
 	// existed is set when the agent's database existed before this start,
 	// for an agent created by an earlier version.
 	existed bool
@@ -193,20 +181,17 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector.Inspector
-	// split runs the conversations of guests and of each member in their
-	// own agent processes, which keys tell, and budget limits the tasks of
-	// guests.
-	split  *splitExecutor
-	keys   *agentKeys
+	// budget limits the tasks of guests.
 	budget *guestBudget
 	// notes are the notes on tool calls for the results of tasks.
-	notes *toolNotes
+	notes *runner.Notes
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
 	// queued are the new tasks that wait for their turn in a conversation.
 	queued *queuedTurns
-	// decider answers tool permissions without asking.
+	// decider answers tool permissions by the preferences and grants of
+	// people.
 	decider *toolDecider
 	// prefs are the tool calls people allowed in all their conversations.
 	prefs *approvals.Preferences
@@ -220,33 +205,19 @@ type Server struct {
 	unattended *chat.ContextSet
 	// ends does what follows the end of a task's execution.
 	ends *taskEnds
-	// users are the agent processes of members that run now, and guests
-	// the one of guests.
-	users  userAgents
-	guests userAgents
-	// sandboxes tell what the container of each agent key gets, and
-	// mainSandbox what the owner's container got when it started.
-	sandboxes   *sandboxes
-	mainSandbox atomic.Pointer[access.Sandbox]
-	// workspaces are the private workspaces of containers with their own
-	// storage.
-	workspaces *workspaces.Store
+	// sandboxes tell what the container of each agent key gets.
+	sandboxes *sandboxes
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 	// turns counts the executions of the A2A handler, until a2a-go consumed
 	// their last events.
-	turns turnCount
+	turns turncount.Count
 
 	// instructionsMu serializes rewrites of the harness instruction files,
 	// and guards storageNotes, the note on the storage of each agent home.
 	instructionsMu sync.Mutex
 	storageNotes   map[string]string
 	timings        Timings
-	// maxAgentMessage bounds a message from the agent.
-	maxAgentMessage int
-	// stalls fails the turns of the ACP executors in which the agent stopped
-	// sending updates.
-	stalls *stallGuard
 	// lockFile is the lock file of the state directory the server opened.
 	lockFile os.FileInfo
 }
@@ -312,17 +283,11 @@ func Run(ctx context.Context, opts Options) error {
 		resolveNetwork:    opts.ResolveNetwork,
 		newNetwork:        opts.NewNetwork,
 
-		timings:         opts.Timings.withDefaults(),
-		maxAgentMessage: cmp.Or(opts.MaxAgentMessage, maxAgentMessage),
+		timings: opts.Timings.withDefaults(),
 
 		peerCards:          newPeerCards(),
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
-	s.stalls = newStallGuard(s.timings.TurnStallTimeout, s.timings.ToolStallTimeout)
-	s.policies = newPolicies(s.dir)
-	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
-	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
-	s.docker = sandbox.NewDocker(s.dir.EnvFilesDir(), s.egress.boundaries.Launcher)
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {
 		s.existed = true
 	}
@@ -331,9 +296,7 @@ func Run(ctx context.Context, opts Options) error {
 		cancel()
 		closers.close()
 	}()
-	closers.push(s.egress.boundaries.Close)
-
-	if err := s.open(ctx, &closers, opts.Executor == nil); err != nil {
+	if err := s.open(ctx, &closers, opts); err != nil {
 		return startupError(ctx, err)
 	}
 	if err := s.build(ctx, &closers, opts); err != nil {
@@ -374,8 +337,9 @@ func startupError(ctx context.Context, err error) error {
 }
 
 // open locks the agent directory and opens its database, the network
-// providers and the listeners agent processes reach the server through.
-func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error {
+// providers and the runner with the listeners agent processes reach the
+// server through.
+func (s *Server) open(ctx context.Context, closers *stack, opts Options) error {
 	if err := s.dir.Init(); err != nil {
 		return err
 	}
@@ -401,7 +365,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if err := backup.RemoveLeftoverRestores(s.dir); err != nil {
 		s.logf("! removing what an interrupted restore left: %v", err)
 	}
-	if s.pins, err = harness.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
+	if s.pins, err = agent.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
 		return err
 	}
 	st, err := store.Open(s.dir.DBPath())
@@ -425,17 +389,13 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if err := s.joinNetwork(ctx); err != nil {
 		return err
 	}
-	hl, err := s.listenHarness(sandboxed)
+	s.sessions = s.store.Sessions().In(s.workspace)
+	r, err := s.newRunner(opts)
 	if err != nil {
 		return err
 	}
-	closers.push(hl.close)
-	main, err := hl.open("")
-	if err != nil {
-		return err
-	}
-	closers.push(func(context.Context) error { return main.close() })
-	s.harness, s.mainHarness, s.bridge = hl, main, hl.bridge(main)
+	closers.push(r.Release)
+	s.runner = r
 	return nil
 }
 
@@ -487,20 +447,18 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config, CallerKey: callerKey})
 	closers.push(s.clients.Close)
 	s.contacts = contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions}
-	s.keys = newAgentKeys(s.store.Sessions())
-	s.notes = newToolNotes()
+	s.notes = runner.NewNotes()
 	s.allowed = newAllowedAnswers()
 	s.prefs = approvals.NewPreferences(s.store, func(ctx context.Context) { s.answerAllowed(ctx, "") })
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	waiting := waitingTasks{tasks: s.tasks, records: records}
 	s.queued = newQueuedTurns(waiting)
-	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes, store: s.store, taskUser: records.TaskUser}
-	s.sessions = s.store.Sessions().In(s.workspace)
+	s.decider = &toolDecider{store: s.store, taskUser: records.TaskUser}
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
-		Bridge:   s.bridge,
+		Bridge:   s.runner.Bridge,
 		Chain:    s.chain,
-		AgentKey: s.keys.of,
+		AgentKey: s.runner.KeyOf,
 		Sessions: s.sessions,
 		Peers:    s.callablePeers,
 	})
@@ -519,7 +477,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Supervisor: s.supervisor,
 		Bus:        s.bus,
 		Config:     s.rt.Config,
-		Guest:      s.keys.guest,
+		Guest:      s.guestConversation,
 		Timings:    s.timings.chat(),
 	})
 	s.unattended = &chat.ContextSet{}
@@ -531,9 +489,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Notifier:     s.chatApprovals,
 			Remote:       s.clients,
 			Unattended:   s.unattended.Has,
-			Guest:        s.keys.guest,
+			Guest:        s.guestConversation,
 			GuestTimeout: s.timings.GuestQuestionTimeout,
-			User:         s.keys.user,
+			User:         s.userConversation,
 			UserTimeout:  s.timings.UserQuestionTimeout,
 			Config:       s.rt.Config,
 		})
@@ -546,7 +504,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Mailbox:   s.nodes.Mailbox,
 			Forget:    s.nodes.Forget,
 			Changed:   s.refreshInstructions,
-			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted, sandboxes: s.sandboxes},
+			Users:     stopUsers{tasks: s.tasks, sender: sender, runner: s.runner, posted: posted, sandboxes: s.sandboxes},
 			Homes:     userHomes{s},
 			Limiter:   pairings.NewLimiter(opts.Now),
 		})
@@ -577,10 +535,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued},
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.runner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, call: s.runner.Call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued},
 			a2asrv.WithTaskStore(s.tasks.CutLists()),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, keys: s.keys, users: &s.users, dir: s.dir, removeHome: s.forgetHome}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, runner: s.runner, dir: s.dir, removeHome: s.forgetHome}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),
@@ -621,47 +579,22 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	return nil
 }
 
-// buildExecutor starts the harness, and the executor which runs guests'
-// conversations in their own agent process.
-func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options) error {
-	exec := opts.Executor
-	if exec == nil {
-		progress := opts.ImageProgress
-		if progress == nil {
-			progress = opts.HarnessLog
-		}
-		acp, closeACP, err := s.newExecutor(ctx, opts.HarnessLog, progress)
-		if err != nil {
-			return err
-		}
-		closers.push(closeACP)
-		exec = acp
-	}
+// buildExecutor starts the owner's agent process. The processes of guests
+// and members start on their first turn.
+func (s *Server) buildExecutor(ctx context.Context, closers *stack, _ Options) error {
 	s.budget = newGuestBudget()
-	var start startPool
-	if opts.Executor == nil {
-		start = s.poolStarter(opts.HarnessLog)
+	if err := s.runner.Start(ctx); err != nil {
+		return startError(err)
 	}
+	closers.push(s.runner.Close)
 	// The stopped turns end with a final event, which a2a-go stores after
 	// the turn returns; the task store must stay open until it did.
 	closers.push(func(ctx context.Context) error {
-		s.turns.wait(ctx)
+		s.turns.Wait(ctx)
 		return nil
 	})
-	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start, Admit: s.admitTurn})
-	closers.push(s.split.close)
+	closers.push(s.runner.Shutdown)
 	return nil
-}
-
-// poolStarter starts the agent processes of guests in one pool,
-// and those of members in another.
-func (s *Server) poolStarter(harnessLog io.Writer) startPool {
-	return func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-		if pool == guestPool {
-			return s.newGuestExecutor(ctx, harnessLog)
-		}
-		return s.newUsersExecutor(ctx, harnessLog)
-	}
 }
 
 // serve starts the chat turns, serves every listener and the control socket,
@@ -674,7 +607,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	// how the stop ended them.
 	closers.push(s.supervisor.StopAll)
 	closers.push(s.chatTurns.Wait)
-	closers.push(s.harness.serve(ctx, s.proxy.Routes(s.harness.processOf), errc))
+	closers.push(s.runner.Serve(ctx, func(err error) { reportFatal(errc, err) }))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}
@@ -704,7 +637,6 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	s.watches.Resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
 	s.background.Go(func() { s.watchState(ctx) })
-	s.background.Go(func() { s.sandboxLoop(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.background.Go(func() { s.allowed.run(ctx, s.answerWaiting) })
@@ -715,13 +647,6 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 
 // Stop shuts the server down.
 func (s *Server) Stop() { s.cancel() }
-
-func closeListener(ln net.Listener) error {
-	if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		return err
-	}
-	return nil
-}
 
 func (s *Server) logf(format string, args ...any) {
 	if _, err := fmt.Fprintf(s.out, format+"\n", args...); err != nil {
@@ -775,7 +700,7 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 		go func() {
 			turnsCtx, cancel := context.WithTimeout(ctx, turnsGrace)
 			defer cancel()
-			s.turns.wait(turnsCtx)
+			s.turns.Wait(turnsCtx)
 			select {
 			case <-time.After(requestGrace):
 				cancelRequests()
@@ -947,7 +872,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 // by others than you: their conversations run in separate processes, but
 // on the host as you, so they can read each other's files and yours.
 func localSandboxWarning(kind string, a *access.Description) string {
-	if kind != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
+	if kind != agent.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
 		return ""
 	}
 	return "the agent runs without a sandbox, so everyone who may call it can read your files and the conversations of others; use --sandbox docker unless you trust them all"

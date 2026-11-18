@@ -21,11 +21,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -96,7 +96,7 @@ alters who may call the agent, it prints who may call afterwards.
 // creates the agent.
 func withCreateHint(err error) error {
 	ce := clierr.NoAgent(err)
-	ce.Hint = "add --agent <agent> (" + strings.Join(harness.ProfileNames(), ", ") + ") to create one here"
+	ce.Hint = "add --agent <agent> (" + strings.Join(agent.ProfileNames(), ", ") + ") to create one here"
 	return ce
 }
 
@@ -121,9 +121,9 @@ func configSetOnlyHint(cmd *cobra.Command, msg string) string {
 	if err != nil || d.Exists() {
 		return fmt.Sprintf("--%s is a setting of `%s`: run `%s --%s <value>%s`, then `%s%s`", name, set.CommandPath(), set.CommandPath(), name, dirFlag, cmd.CommandPath(), dirFlag)
 	}
-	agent := "<agent>"
+	kind := "<agent>"
 	if cmd.Name() != "start" {
-		agent = cmd.Name()
+		kind = cmd.Name()
 	}
-	return fmt.Sprintf("--%s is a setting of `%s`: run `%s --agent %s --%s <value>%s` to create the agent, then `%s%s`", name, set.CommandPath(), set.CommandPath(), agent, name, dirFlag, cmd.CommandPath(), dirFlag)
+	return fmt.Sprintf("--%s is a setting of `%s`: run `%s --agent %s --%s <value>%s` to create the agent, then `%s%s`", name, set.CommandPath(), set.CommandPath(), kind, name, dirFlag, cmd.CommandPath(), dirFlag)
 }

@@ -28,11 +28,12 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/testutil"
 	"github.com/google/go-cmp/cmp"
+
+	coreagent "github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/question"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 const rejected = "The user rejected permission to use this specific tool call."
@@ -175,7 +176,7 @@ func TestHarnessOpencodeToolApprovals(t *testing.T) {
 			task := owner.mustSend(coder.url, "Use the tools.")
 			var asked []string
 			for task.Status.State == a2a.TaskStateInputRequired && len(asked) < len(tc.answers) {
-				q := approvals.FromStatus(task.Status)
+				q := question.FromStatus(task.Status)
 				if q == nil {
 					t.Fatalf("a2a send state = %v without a question", task.Status.State)
 				}
@@ -268,14 +269,14 @@ func (a *agent) addStubProvider(baseURL, apiKey string) {
 	t.Helper()
 	home := filepath.Join(a.dir, ".a2a", "state", "home")
 	path := filepath.Join(home, ".config", "opencode", "opencode.json")
-	profile, err := harness.Lookup("opencode", nil)
+	profile, err := coreagent.Lookup("opencode", nil)
 	if err != nil {
-		t.Fatalf("harness.Lookup() error = %v", err)
+		t.Fatalf("coreagent.Lookup() error = %v", err)
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("os.MkdirAll() error = %v", err)
 	}
-	if err := profile.Bootstrap(harness.Workspace{Dir: a.dir, Home: home}); err != nil {
+	if err := profile.Bootstrap(coreagent.Workspace{Dir: a.dir, Home: home}); err != nil {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
 	data, err := os.ReadFile(path)

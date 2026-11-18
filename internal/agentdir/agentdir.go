@@ -29,6 +29,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
@@ -36,7 +38,12 @@ import (
 )
 
 // Name is the name of the directory which marks an agent.
-const Name = ".a2a"
+const Name = workspace.AgentDir
+
+// RestorePrefix starts the names of the directories next to .a2a that
+// `backup restore` extracts a snapshot into. Until the restore renames one
+// to .a2a, it holds the agent's secrets.
+const RestorePrefix = workspace.RestorePrefix
 
 // ErrNotFound is returned by [Find] when no agent directory is found.
 var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a-serve start <agent>` or pass --dir"})
@@ -297,15 +304,10 @@ func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask
 // over the agent's own configuration files in the workspace.
 func (d Dir) ConfigMaskPath() string { return filepath.Join(d.StateDir(), "config-mask.json") }
 
-// PolicyDir is the folder of the settings that the agent processes in
-// containers can't override: those of members and guests with callers,
-// whose homes are locked, or the owner's.
-func (d Dir) PolicyDir(callers bool) string {
-	if callers {
-		return filepath.Join(d.StateDir(), "policy", "callers")
-	}
-	return filepath.Join(d.StateDir(), "policy", "owner")
-}
+// PoliciesDir holds the folders of the settings that the agent processes
+// in containers can't override: the owner's, and those of members and
+// guests, whose homes are locked.
+func (d Dir) PoliciesDir() string { return filepath.Join(d.StateDir(), "policy") }
 
 // RecipeLockPath returns the path of the record of the recipe the agent
 // was created from.
@@ -495,7 +497,7 @@ func (d Dir) controlRecord() (controlRecord, bool) {
 
 // HarnessSocketIDLen is the length of the names of the directories in
 // [Dir.HarnessSocketDir].
-const HarnessSocketIDLen = 12
+const HarnessSocketIDLen = sandbox.SocketIDLen
 
 // HarnessSocketDir returns the directory that holds a directory per agent
 // process, of [HarnessSocketIDLen] characters, with the a2a.sock through

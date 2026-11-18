@@ -25,12 +25,12 @@ import (
 
 	"github.com/google/shlex"
 
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/toolrules"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/shellquote"
 	"github.com/a2aproject/a2a-serve/internal/speech"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // placement is the command whose flags change a setting.

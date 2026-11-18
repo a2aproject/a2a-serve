@@ -29,8 +29,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 )
 
 // Config is the agent definition in .a2a/config.yaml. It holds no secrets:
@@ -1047,11 +1048,7 @@ func (c *Config) Clone() *Config {
 }
 
 // Mount is a parsed src[:dst][:ro] spec.
-type Mount struct {
-	Src      string
-	Dst      string
-	ReadOnly bool
-}
+type Mount = agent.Mount
 
 // ParseMount parses a src[:dst][:ro] spec. A missing dst mirrors src; a
 // relative src is relative to the current directory.
@@ -1103,18 +1100,6 @@ func parseMount(spec, base string) (Mount, error) {
 	}
 	m.Dst = filepath.Clean(m.Dst)
 	return m, nil
-}
-
-// String formats m as a spec.
-func (m Mount) String() string {
-	s := m.Src
-	if m.Dst != m.Src {
-		s += ":" + m.Dst
-	}
-	if m.ReadOnly {
-		s += ":ro"
-	}
-	return s
 }
 
 // WorkspaceMount returns the parsed workspace of the agent, by default the

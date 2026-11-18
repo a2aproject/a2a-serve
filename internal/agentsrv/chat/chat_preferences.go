@@ -25,6 +25,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/core/question"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -53,7 +54,7 @@ const allowedHint = "/allowed shows what you allowed, and removes it."
 // conversations, after p allowed it always on a question of their own
 // task, in SuggestAfter conversations in a row. Only chats with buttons get
 // the offer, and only its buttons answer it.
-func (c *ChatTurns) offerPreference(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, p auth.Principal, rec store.Question, q *approvals.Question, opt approvals.Option) {
+func (c *ChatTurns) offerPreference(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, p auth.Principal, rec store.Question, q *question.Question, opt question.Option) {
 	if c.prefs == nil || opt.ID != a2aacp.OptionAlways || q.Rule == "" || rec.Contact != "" || rec.User != p.ID || !ch.Caps().Buttons {
 		return
 	}
@@ -71,7 +72,7 @@ func (c *ChatTurns) offerPreference(ctx context.Context, ch messenger.Messenger,
 		slog.Warn("storing an offer of a preference", "user", p.ID, "error", err)
 		return
 	}
-	text := fmt.Sprintf("You allowed %s in %d conversations in a row.\nAllow it in all your conversations?", approvals.RuleText(q.Rule), approvals.SuggestAfter)
+	text := fmt.Sprintf("You allowed %s in %d conversations in a row.\nAllow it in all your conversations?", question.RuleText(q.Rule), approvals.SuggestAfter)
 	out := messenger.Outbound{Conv: in.Conv, Text: text, Literal: true, Question: &messenger.Question{ID: sg.ID, Options: []string{"Allow for me", "Not now"}}}
 	if _, err := ch.Send(ctx, out); err != nil {
 		slog.Warn("sending an offer of a preference", "messenger", ch.Name(), "error", err)
@@ -99,7 +100,7 @@ func (c *ChatTurns) handleSuggestion(ctx context.Context, ch messenger.Messenger
 		c.reply(ctx, ch, in, "Couldn't save the answer. Try again.")
 		return
 	}
-	rule := approvals.RuleText(sg.Rule)
+	rule := question.RuleText(sg.Rule)
 	if in.Action.Option != suggestionAllow {
 		c.prefs.Decline(ctx, p.ID, sg.Rule)
 		c.edit(ctx, ch, in, fmt.Sprintf("You allowed %s in %d conversations in a row.\n\nNot now. I ask again after you allow it in %d more.", rule, approvals.SuggestAfter, approvals.SuggestAfter))
@@ -161,7 +162,7 @@ func (c *ChatTurns) allowedList(ctx context.Context, p auth.Principal, buttons b
 	var b strings.Builder
 	b.WriteString("These run without asking in your conversations:")
 	for _, r := range rules[shown:] {
-		fmt.Fprintf(&b, "\n- %s", approvals.RuleText(r))
+		fmt.Fprintf(&b, "\n- %s", question.RuleText(r))
 	}
 	if shown < len(rules) {
 		b.WriteString("\nTo remove one, send: /allowed remove <one of them>")
@@ -171,7 +172,7 @@ func (c *ChatTurns) allowedList(ctx context.Context, p auth.Principal, buttons b
 	}
 	q := &messenger.Question{ID: allowedID(p.ID, rules)}
 	for _, r := range rules[:shown] {
-		q.Options = append(q.Options, "Remove "+approvals.RuleText(r))
+		q.Options = append(q.Options, "Remove "+question.RuleText(r))
 	}
 	return b.String(), q, nil
 }
@@ -208,7 +209,7 @@ func (c *ChatTurns) handleRemove(ctx context.Context, ch messenger.Messenger, in
 		slog.Error("listing preferences", "user", p.ID, "error", err)
 		return
 	}
-	text = fmt.Sprintf("✓ Removed %s.\n\n%s", approvals.RuleText(rules[in.Action.Option]), text)
+	text = fmt.Sprintf("✓ Removed %s.\n\n%s", question.RuleText(rules[in.Action.Option]), text)
 	if ch.Caps().Edit && in.ReplyTo.ID != "" {
 		if err := ch.Edit(ctx, in.ReplyTo, messenger.Outbound{Conv: in.Conv, Text: text, Literal: true, Question: q}); err == nil {
 			return
@@ -229,7 +230,7 @@ func (c *ChatTurns) removeTyped(ctx context.Context, ch messenger.Messenger, in 
 		return
 	}
 	for _, r := range rules {
-		if r != name && approvals.RuleText(r) != name {
+		if r != name && question.RuleText(r) != name {
 			continue
 		}
 		if err := c.prefs.Remove(ctx, p.ID, r); err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -237,7 +238,7 @@ func (c *ChatTurns) removeTyped(ctx context.Context, ch messenger.Messenger, in 
 			c.reply(ctx, ch, in, "Couldn't remove it. Try again.")
 			return
 		}
-		c.reply(ctx, ch, in, fmt.Sprintf("✓ Removed %s. It asks again in your conversations.", approvals.RuleText(r)))
+		c.reply(ctx, ch, in, fmt.Sprintf("✓ Removed %s. It asks again in your conversations.", question.RuleText(r)))
 		return
 	}
 	c.reply(ctx, ch, in, fmt.Sprintf("You didn't allow %q. Send /allowed to see what you allowed.", name))

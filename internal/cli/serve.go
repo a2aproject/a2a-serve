@@ -30,13 +30,14 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
-	"github.com/a2aproject/a2a-serve/internal/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
@@ -186,7 +187,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			e := clierr.NoAgent(errors.New("no agent here"))
-			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
+			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(agent.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
 			return e
 		}
 		return runWizard(cmd, cfg, m)
@@ -209,9 +210,9 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, m runMode) error {
 	_, dockerErr := sandbox.CheckDocker(cmd.Context())
 	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
 		DefaultName: d.DefaultName(),
-		Harnesses:   harness.ProfileNames(),
+		Harnesses:   agent.ProfileNames(),
 		Getenv:      os.Getenv,
-		DockerErr:   dockerErr,
+		DockerErr:   agentcfg.Explain(dockerErr),
 		ReadSecret:  cfg.secretReader(cfg.Out).Read,
 		Workspace:   d.Root,
 		Mode:        m.wizardMode(),
@@ -318,7 +319,7 @@ func printAgentLine(out io.Writer, d agentdir.Dir, created bool) error {
 	for _, k := range keys {
 		writeWarnings(&sb, []string{k.String()})
 	}
-	writeWarnings(&sb, harness.Warnings(conf))
+	writeWarnings(&sb, agentcfg.Warnings(conf))
 	_, err = fmt.Fprint(out, sb.String())
 	return err
 }

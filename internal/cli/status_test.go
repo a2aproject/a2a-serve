@@ -25,10 +25,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -389,7 +389,7 @@ func TestStatusAfterConfigDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a-serve status error = %v", err)
 	}
-	want := "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml\n"
+	want := "start it with `a2a-serve start <agent>` (" + strings.Join(agent.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml\n"
 	if !strings.Contains(out, want) || strings.Contains(out, "start --detach") {
 		t.Fatalf("a2a-serve status = %q, want %q", out, want)
 	}
