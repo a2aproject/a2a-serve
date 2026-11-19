@@ -106,7 +106,7 @@ func TestEndpointDecidesByPolicy(t *testing.T) {
 	b := newBoundary(t, func() egress.Policy {
 		return egress.Policy{Mode: egress.ModeAllowlist, Allow: []string{"127.0.0.1"}}
 	}, nil)
-	ep, err := b.Open("test")
+	ep, err := b.Open("test", "")
 	if err != nil {
 		t.Fatalf("Boundary.Open() error = %v", err)
 	}
@@ -141,7 +141,7 @@ func TestEndpointDecidesByPolicy(t *testing.T) {
 func TestEndpointReportsUnresolvedNames(t *testing.T) {
 	t.Parallel()
 	b := newBoundary(t, func() egress.Policy { return egress.Policy{} }, nil)
-	ep, err := b.Open("test")
+	ep, err := b.Open("test", "")
 	if err != nil {
 		t.Fatalf("Boundary.Open() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestEndpointAppliesPolicyChanges(t *testing.T) {
 		defer mu.Unlock()
 		return policy
 	}, nil)
-	ep, err := b.Open("test")
+	ep, err := b.Open("test", "")
 	if err != nil {
 		t.Fatalf("Boundary.Open() error = %v", err)
 	}
@@ -203,7 +203,7 @@ func TestEndpointAddsHeader(t *testing.T) {
 	b := newBoundary(t, func() egress.Policy {
 		return egress.Policy{Mode: egress.ModeAllowlist, Allow: []string{"127.0.0.1"}}
 	}, roots)
-	ep, err := b.Open("test", egress.Header{Host: host, Name: "Authorization", Value: "Bearer secret"})
+	ep, err := b.Open("test", "", egress.Header{Host: host, Name: "Authorization", Value: "Bearer secret"})
 	if err != nil {
 		t.Fatalf("Boundary.Open() error = %v", err)
 	}
@@ -262,7 +262,7 @@ func TestEndpointEnv(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ep, err := b.Open(tc.name, tc.creds...)
+			ep, err := b.Open(tc.name, "", tc.creds...)
 			if err != nil {
 				t.Fatalf("Boundary.Open() error = %v", err)
 			}
@@ -297,7 +297,7 @@ func TestOpenRefusesInvalidCredentials(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := b.Open(tc.name, tc.cred); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := b.Open(tc.name, "", tc.cred); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Boundary.Open(%+v) error = %v, want one that says %q", tc.cred, err, tc.want)
 			}
 		})

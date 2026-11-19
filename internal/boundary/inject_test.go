@@ -116,10 +116,9 @@ func injectBoundary(t *testing.T, inj Injection, roots *x509.CertPool, logs *log
 		t.Fatalf("NewCA() error = %v", err)
 	}
 	b, sock := listen(t, BoundaryConfig{
-		Policy:        func() egressrules.Policy { return mustPolicy(t, "", injectHost, "127.0.0.1") },
+		Router:        PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", injectHost, "127.0.0.1") }, []Injection{inj}),
 		Resolver:      fakeResolver{injectHost: addrs("127.0.0.1")},
 		Log:           slog.New(logs),
-		Inject:        []Injection{inj},
 		CA:            ca,
 		UpstreamRoots: roots,
 	})
@@ -473,20 +472,6 @@ func TestCAConstrainsNames(t *testing.T) {
 	}
 	if _, err := other.Verify(x509.VerifyOptions{DNSName: "bank.example", Roots: roots}); err == nil {
 		t.Fatalf("Verify(bank.example) error = nil, want a name constraint error")
-	}
-}
-
-func TestNewRefusesInjectionWithoutCA(t *testing.T) {
-	t.Parallel()
-	ca, err := NewCA([]string{"a.test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []*CA{nil, ca} {
-		_, err := New(BoundaryConfig{Policy: func() egressrules.Policy { return egressrules.Policy{} }, Inject: []Injection{{Host: injectHost, Port: 443}}, CA: c})
-		if err == nil {
-			t.Fatalf("New() with a CA that doesn't cover %s error = nil, want an error", injectHost)
-		}
 	}
 }
 

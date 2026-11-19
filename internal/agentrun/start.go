@@ -362,7 +362,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 			spec.CLI = r.cfg.Options.CLI
 		}
 	}
-	closeEgress, err := r.egressSandbox(&spec, &custom, env)
+	closeEgress, err := r.egressSandbox(&spec, &custom, key, env)
 	if err != nil {
 		return nil, err
 	}
@@ -427,15 +427,15 @@ func workspaceMounts(att Attachment, extra []sandbox.Mount) ([]agentprofile.Moun
 }
 
 // egressSandbox gives spec the egress settings and an endpoint of the
-// boundary, with the credentials of env, and returns the function that
-// closes the endpoint.
-func (r *Runner) egressSandbox(spec *agentprofile.Spec, custom *sandbox.Spec, env Environment) (func() error, error) {
+// boundary for the process of key, with the credentials of env, and
+// returns the function that closes the endpoint.
+func (r *Runner) egressSandbox(spec *agentprofile.Spec, custom *sandbox.Spec, key string, env Environment) (func() error, error) {
 	eg := r.egressSettings()
 	spec.EgressMode, spec.EgressAllow, spec.Inject = eg.Mode, eg.Allow, eg.Inject
 	if r.cfg.Egress == nil {
 		return func() error { return nil }, nil
 	}
-	ep, err := r.cfg.Egress.Open(env.Name, env.Credentials...)
+	ep, err := r.cfg.Egress.Open(env.Name, key, env.Credentials...)
 	if err != nil {
 		return nil, err
 	}
@@ -450,6 +450,9 @@ func (r *Runner) egressSandbox(spec *agentprofile.Spec, custom *sandbox.Spec, en
 		for range env.Credentials {
 			spec.Inject = append(spec.Inject, agentprofile.InjectRule{})
 		}
+	}
+	if be.Router {
+		spec.EgressMode, spec.EgressRouter = "", true
 	}
 	spec.EgressCA = be.CA
 	spec.OpenEgress = r.boundaries.OpenerOf(be.Open)

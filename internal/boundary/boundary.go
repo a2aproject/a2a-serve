@@ -16,6 +16,7 @@ package boundary
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/x509"
@@ -24,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"runtime/debug"
 	"slices"
@@ -63,9 +65,9 @@ const (
 type BoundaryConfig struct {
 	// Sandbox names the container in the log.
 	Sandbox string
-	// Policy returns the policy that decides each request, so that a
-	// changed policy applies to the next one.
-	Policy func() egressrules.Policy
+	// Router decides each request, so that a changed decision applies to
+	// the next one.
+	Router Router
 	// HostGateway returns the address that a connection to
 	// [egressrules.HostGateway] on port reaches, or false when the host can't
 	// be reached on port.
@@ -83,11 +85,11 @@ type BoundaryConfig struct {
 	// [DefaultIdleTimeout].
 	MaxTunnels  int
 	IdleTimeout time.Duration
-	// Inject are the headers added to the requests to their hosts, whose
-	// certificates CA signs. The policy decides those requests as others.
-	Inject []Injection
-	CA     *CA
-	// UpstreamRoots verify the hosts of Inject; nil uses the system's.
+	// CA signs the certificates of the hosts whose connections a route
+	// intercepts with TLS; nil intercepts only plain HTTP.
+	CA *CA
+	// UpstreamRoots verify the hosts of intercepted connections; nil uses
+	// the system's.
 	UpstreamRoots *x509.CertPool
 	// OnClose runs at the end of every Close; nil runs nothing.
 	OnClose func()
@@ -117,9 +119,9 @@ type Boundary struct {
 	ln      net.Listener
 	slots   chan struct{}
 	limiter *rate.Limiter
-	// injectSlots bound the open requests to the hosts of cfg.Inject.
-	injectSlots chan struct{}
-	log         *decisionLog
+	// httpSlots bound the open requests of intercepted connections.
+	httpSlots chan struct{}
+	log       *decisionLog
 	// ctx ends when the boundary closes, which ends the requests it decides.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -133,13 +135,8 @@ type Boundary struct {
 // New returns a boundary that serves the connections given to
 // [Boundary.ServeConn].
 func New(cfg BoundaryConfig) (*Boundary, error) {
-	if cfg.Policy == nil {
-		return nil, errors.New("the boundary needs a policy")
-	}
-	for _, inj := range cfg.Inject {
-		if cfg.CA == nil || !cfg.CA.Covers(inj.Host) {
-			return nil, fmt.Errorf("the egress CA doesn't cover %s, which gets a header; restart the server", inj.Host)
-		}
+	if cfg.Router == nil {
+		return nil, errors.New("the boundary needs a router")
 	}
 	cfg.MaxTunnels = cmp.Or(cfg.MaxTunnels, DefaultMaxTunnels)
 	cfg.IdleTimeout = cmp.Or(cfg.IdleTimeout, DefaultIdleTimeout)
@@ -153,12 +150,12 @@ func New(cfg BoundaryConfig) (*Boundary, error) {
 		cfg.Log = slog.Default()
 	}
 	b := &Boundary{
-		cfg:         cfg,
-		slots:       make(chan struct{}, cfg.MaxTunnels),
-		limiter:     rate.NewLimiter(tunnelRate, tunnelBurst),
-		injectSlots: make(chan struct{}, maxInjectRequests),
-		log:         &decisionLog{log: cfg.Log, sandbox: cfg.Sandbox},
-		conns:       map[net.Conn]struct{}{},
+		cfg:       cfg,
+		slots:     make(chan struct{}, cfg.MaxTunnels),
+		limiter:   rate.NewLimiter(tunnelRate, tunnelBurst),
+		httpSlots: make(chan struct{}, maxHTTPRequests),
+		log:       &decisionLog{log: cfg.Log, sandbox: cfg.Sandbox},
+		conns:     map[net.Conn]struct{}{},
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	return b, nil
@@ -344,30 +341,74 @@ func (b *Boundary) handle(guest net.Conn) {
 	target := net.JoinHostPort(host, strconv.Itoa(int(port)))
 	ctx, cancel = context.WithTimeout(b.ctx, dialTimeout)
 	defer cancel()
-	g, rerr := b.authorize(ctx, host, port)
+	route, err := b.cfg.Router(ctx, host, port)
+	if err != nil || route.kind == routeNone {
+		b.log.write(slog.LevelWarn, "egress failed", "destination", target, "reason", "router-failed", "error", err)
+		writeRefusal(guest, refuse(502, "router-failed"))
+		return
+	}
+	switch route.kind {
+	case routeRefuse:
+		rerr := route.refusal()
+		b.log.write(slog.LevelWarn, "egress blocked", "destination", target, "reason", rerr.reason)
+		b.cfg.Blocks.add(Block{Destination: target})
+		writeRefusal(guest, rerr)
+		return
+	case routeDial:
+		upstream, err := route.dial(ctx)
+		if err != nil {
+			b.log.write(slog.LevelWarn, "egress failed", "destination", target, "route", "dial", "reason", "dial-failed", "error", err)
+			writeRefusal(guest, refuse(502, "dial-failed"))
+			return
+		}
+		b.tunnel(guest, br, upstream, target, "route", "dial")
+		return
+	case routeServe:
+		b.serveConn(guest, br, route.serve, target)
+		return
+	}
+	dest, dhost, dport := target, host, port
+	if route.kind == routeRedirect {
+		var rerr *refusal
+		dest = net.JoinHostPort(route.host, strconv.Itoa(int(route.port)))
+		if dhost, dport, rerr = parseAuthority(dest); rerr != nil {
+			b.log.write(slog.LevelWarn, "egress failed", "destination", target, "reason", "router-failed", "error", "invalid redirect")
+			writeRefusal(guest, refuse(502, "router-failed"))
+			return
+		}
+		dest = net.JoinHostPort(dhost, strconv.Itoa(int(dport)))
+	}
+	if route.kind == routeHTTP && !route.suggest {
+		// next checks the addresses when it dials, so that a middleware
+		// can answer for a host that it can't reach.
+		if err := guest.SetDeadline(time.Time{}); err != nil {
+			return
+		}
+		b.intercept(guest, br, grant{target: target}, route, host, port)
+		return
+	}
+	g, rerr := b.authorize(ctx, route.checks(), dhost, dport)
 	if rerr != nil {
 		args := []any{"destination", target, "reason", rerr.reason}
+		if dest != target {
+			args = append(args, "redirect", dest)
+		}
 		if len(rerr.addrs) > 0 {
 			args = append(args, "addresses", rerr.addrs)
 		}
 		b.log.write(slog.LevelWarn, "egress blocked", args...)
-		switch {
-		case rerr.status == 403:
-			b.cfg.Blocks.add(Block{Destination: target, Allow: allowRule(rerr.allow, target)})
-		case rerr.reason == "resolve-failed":
-			b.cfg.Blocks.add(Block{Destination: target, Unresolved: true})
-		}
+		b.block(target, rerr, route.suggest)
 		writeRefusal(guest, rerr)
 		return
 	}
 	g.target = target
-	if inj, ok := b.injection(host, port); ok {
+	if route.kind == routeHTTP {
 		// The tunnel lasts beyond the head, so it drops the head's deadline
 		// and the dial's context; each request dials in its own.
 		if err := guest.SetDeadline(time.Time{}); err != nil {
 			return
 		}
-		b.intercept(guest, br, g, inj)
+		b.intercept(guest, br, g, route, host, port)
 		return
 	}
 	upstream, addr, err := b.dial(ctx, g)
@@ -376,13 +417,36 @@ func (b *Boundary) handle(guest net.Conn) {
 		writeRefusal(guest, refuse(502, "dial-failed"))
 		return
 	}
+	args := []any{"address", addr, "rule", g.rule}
+	if dest != target {
+		args = append([]any{"redirect", dest}, args...)
+	}
+	b.tunnel(guest, br, upstream, target, args...)
+}
+
+// block records the refusal rerr of target, with the rule that allows it
+// when suggest is set.
+func (b *Boundary) block(target string, rerr *refusal, suggest bool) {
+	switch {
+	case rerr.status == 403 && suggest:
+		b.cfg.Blocks.add(Block{Destination: target, Allow: allowRule(rerr.allow, target)})
+	case rerr.status == 403:
+		b.cfg.Blocks.add(Block{Destination: target})
+	case rerr.reason == "resolve-failed":
+		b.cfg.Blocks.add(Block{Destination: target, Unresolved: true})
+	}
+}
+
+// tunnel relays between the guest and upstream, which it closes, after it
+// answers the CONNECT request whose head br read.
+func (b *Boundary) tunnel(guest net.Conn, br *bufio.Reader, upstream net.Conn, target string, logArgs ...any) {
 	if !b.track(upstream) {
 		closeConn(upstream)
 		return
 	}
 	defer b.untrack(upstream)
 	b.cfg.Blocks.allowed(target)
-	b.log.write(slog.LevelDebug, "egress allowed", "destination", target, "address", addr, "rule", g.rule)
+	b.log.write(slog.LevelDebug, "egress allowed", append([]any{"destination", target}, logArgs...)...)
 	if _, err := io.WriteString(guest, "HTTP/1.1 200 OK\r\n\r\n"); err != nil {
 		return
 	}
@@ -408,12 +472,32 @@ func (b *Boundary) handle(guest net.Conn) {
 	relay(guest, upstream, b.cfg.IdleTimeout)
 }
 
+// serveConn hands the guest's connection to serve after it answers the
+// CONNECT request whose head br read, and closes it when serve returns or
+// the connection is idle for the idle timeout.
+func (b *Boundary) serveConn(guest net.Conn, br *bufio.Reader, serve func(net.Conn), target string) {
+	b.cfg.Blocks.allowed(target)
+	b.log.write(slog.LevelDebug, "egress allowed", "destination", target, "route", "serve")
+	if _, err := io.WriteString(guest, "HTTP/1.1 200 OK\r\n\r\n"); err != nil {
+		return
+	}
+	if err := guest.SetDeadline(time.Time{}); err != nil {
+		return
+	}
+	buffered, err := br.Peek(br.Buffered())
+	if err != nil {
+		return
+	}
+	c := watchIdle(&prefixConn{Conn: guest, r: io.MultiReader(bytes.NewReader(bytes.Clone(buffered)), guest)}, b.cfg.IdleTimeout)
+	defer c.stop()
+	serve(c)
+}
+
 // authorize decides a request for host and port. An allowed name may
 // resolve to private addresses, though not to this host or its link-local
 // and loopback addresses. Every other address must be allowed by a rule,
 // or be public with the internet mode.
-func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (grant, *refusal) {
-	p := b.cfg.Policy()
+func (b *Boundary) authorize(ctx context.Context, p egressrules.Policy, host string, port uint16) (grant, *refusal) {
 	if addr, err := netip.ParseAddr(host); err == nil {
 		ap := []netip.AddrPort{netip.AddrPortFrom(addr, port)}
 		if r, ok := p.AddrRule(addr, port); ok {
@@ -567,13 +651,47 @@ func (b *Boundary) dial(ctx context.Context, g grant) (net.Conn, netip.AddrPort,
 
 // writeRefusal answers a refused request. Its error is the guest's to see.
 func writeRefusal(c net.Conn, r *refusal) {
-	text := map[int]string{400: "Bad Request", 403: "Forbidden", 405: "Method Not Allowed", 431: "Request Header Fields Too Large", 502: "Bad Gateway", 503: "Service Unavailable", 505: "HTTP Version Not Supported"}[r.status]
 	if err := c.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return
 	}
-	if _, err := fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nProxy-Status: a2a-serve; error=%s; reason=%s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", r.status, text, errorType(r.reason), r.reason); err != nil {
+	if _, err := fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nProxy-Status: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", r.status, http.StatusText(r.status), proxyStatus(r)); err != nil {
 		slog.Debug("answering a refused egress request", "error", err)
 	}
+}
+
+// proxyStatus returns the Proxy-Status field of the refusal r.
+func proxyStatus(r *refusal) string {
+	kind := errorType(r.reason)
+	if kind == "http_request_error" && r.status == 403 {
+		kind = "http_request_denied"
+	}
+	return "a2a-serve; error=" + kind + "; reason=" + reasonParam(r.reason)
+}
+
+// reasonParam returns reason as the value of a Proxy-Status parameter: a
+// token as it is, and other text as a quoted string of its printable
+// characters.
+func reasonParam(reason string) string {
+	if reason != "" && !strings.ContainsFunc(reason, func(r rune) bool { return !isTokenChar(r) }) {
+		return reason
+	}
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, r := range reason {
+		switch {
+		case r == '"' || r == '\\':
+			sb.WriteByte('\\')
+			sb.WriteRune(r)
+		case r >= 0x20 && r < 0x7f:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
+func isTokenChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", r)
 }
 
 // errorType maps a reason token to its RFC 9209 error type.
@@ -585,7 +703,7 @@ func errorType(reason string) string {
 		return "destination_ip_prohibited"
 	case "resolve-failed":
 		return "dns_error"
-	case "dial-failed":
+	case "dial-failed", "router-failed":
 		return "destination_unavailable"
 	case "busy":
 		return "connection_limit_reached"
@@ -754,6 +872,53 @@ func relay(guest, upstream net.Conn, idle time.Duration) {
 	wg.Wait()
 	close(done)
 }
+
+// idleConn closes its connection once no data passed for idle.
+type idleConn struct {
+	net.Conn
+	last atomic.Int64
+	done chan struct{}
+	once sync.Once
+}
+
+func watchIdle(c net.Conn, idle time.Duration) *idleConn {
+	ic := &idleConn{Conn: c, done: make(chan struct{})}
+	ic.last.Store(time.Now().UnixNano())
+	go func() {
+		t := time.NewTicker(min(idle/4, time.Minute))
+		defer t.Stop()
+		for {
+			select {
+			case <-ic.done:
+				return
+			case <-t.C:
+				if time.Since(time.Unix(0, ic.last.Load())) > idle {
+					closeConn(c)
+					return
+				}
+			}
+		}
+	}()
+	return ic
+}
+
+func (c *idleConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (c *idleConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (c *idleConn) stop() { c.once.Do(func() { close(c.done) }) }
 
 // maxRecentBlocks bounds the destinations [Blocks] remembers.
 const maxRecentBlocks = 5

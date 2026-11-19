@@ -174,13 +174,12 @@ func TestAuthorize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := &Boundary{cfg: BoundaryConfig{
-				Policy:      func() egressrules.Policy { return tc.policy },
 				HostGateway: gateway,
 				Resolver:    resolver,
 				Network:     fakeNetwork{local: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/24"), netip.MustParsePrefix("2001:470:1::5/64")}},
 				Log:         slog.New(slog.DiscardHandler),
 			}}
-			got, rerr := b.authorize(context.Background(), tc.host, tc.port)
+			got, rerr := b.authorize(context.Background(), tc.policy, tc.host, tc.port)
 			reason := ""
 			if rerr != nil {
 				reason = rerr.reason
@@ -345,7 +344,7 @@ func TestBoundaryTunnels(t *testing.T) {
 	blocks := &Blocks{}
 	_, sock := listen(t, BoundaryConfig{
 		Sandbox:  "test",
-		Policy:   func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1:"+strconv.Itoa(int(echo.Port()))) },
+		Router:   PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1:"+strconv.Itoa(int(echo.Port()))) }, nil),
 		Resolver: fakeResolver{"echo.test": addrs("127.0.0.2")},
 		Log:      slog.New(logs),
 		Blocks:   blocks,
@@ -403,11 +402,11 @@ func TestBoundaryAppliesChangedPolicy(t *testing.T) {
 	var mu sync.Mutex
 	policy := mustPolicy(t, "")
 	_, sock := listen(t, BoundaryConfig{
-		Policy: func() egressrules.Policy {
+		Router: PolicyRouter(func() egressrules.Policy {
 			mu.Lock()
 			defer mu.Unlock()
 			return policy
-		},
+		}, nil),
 		Log: slog.New(slog.DiscardHandler),
 	})
 	if _, _, resp := connect(t, sock, echo.String()); resp.StatusCode != http.StatusForbidden {
@@ -425,7 +424,7 @@ func TestBoundaryLimitsTunnels(t *testing.T) {
 	t.Parallel()
 	echo := echoServer(t)
 	_, sock := listen(t, BoundaryConfig{
-		Policy:     func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Router:     PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil),
 		Log:        slog.New(slog.DiscardHandler),
 		MaxTunnels: 1,
 	})
@@ -454,7 +453,7 @@ func TestBoundaryCloseEndsTunnels(t *testing.T) {
 	t.Parallel()
 	echo := echoServer(t)
 	b, sock := listen(t, BoundaryConfig{
-		Policy: func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Router: PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil),
 		Log:    slog.New(slog.DiscardHandler),
 	})
 	c, br, resp := connect(t, sock, echo.String())
@@ -479,7 +478,7 @@ func TestBoundaryIdleTimeout(t *testing.T) {
 	t.Parallel()
 	echo := echoServer(t)
 	_, sock := listen(t, BoundaryConfig{
-		Policy:      func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Router:      PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil),
 		Log:         slog.New(slog.DiscardHandler),
 		IdleTimeout: 200 * time.Millisecond,
 	})
@@ -533,7 +532,7 @@ func TestBoundaryCloseEndsTunnelsToSilentUpstreams(t *testing.T) {
 		}
 	})
 	b, sock := listen(t, BoundaryConfig{
-		Policy: func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Router: PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil),
 		Log:    slog.New(slog.DiscardHandler),
 	})
 	c, _, resp := connect(t, sock, ln.Addr().String())
@@ -597,7 +596,7 @@ func TestBlocksSuggestOnlyRulesThatParse(t *testing.T) {
 	t.Parallel()
 	blocks := &Blocks{}
 	_, sock := listen(t, BoundaryConfig{
-		Policy:   func() egressrules.Policy { return mustPolicy(t, "") },
+		Router:   PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "") }, nil),
 		Resolver: fakeResolver{"nas.example.ts.net": addrs("100.101.102.103"), "nas.lan": addrs("192.168.1.20"), "meta.corp": addrs("169.254.169.254")},
 		Log:      slog.New(slog.DiscardHandler),
 		Blocks:   blocks,
@@ -628,7 +627,7 @@ func TestBoundarySurvivesAPanic(t *testing.T) {
 	echo := echoServer(t)
 	logs := &logRecords{}
 	_, sock := listen(t, BoundaryConfig{
-		Policy:  func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Router:  PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil),
 		Network: panickingNetwork{},
 		Log:     slog.New(logs),
 	})

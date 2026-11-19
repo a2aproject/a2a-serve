@@ -84,8 +84,11 @@ type Config struct {
 	// StateDir of sandbox.DockerOptions, and without one to StateDir.
 	Runtime sandbox.Runtime
 	// Egress is the boundary each process gets an endpoint of, with the
-	// Credentials of its Environment. Nil gives the processes the
-	// runtime's own network.
+	// Credentials of its Environment, and whose router sees the process's
+	// key as [egress.Flow.Key]. Nil gives the processes the runtime's own
+	// network. A boundary with an egress.Router needs a runtime that
+	// forces the connections through it: on the local runtime a process
+	// fails to start with sandbox.ErrNoBoundary.
 	Egress *egress.Boundary
 	// Tools decide tool calls: the first that decides a call answers it.
 	// A call that none decides is asked about.

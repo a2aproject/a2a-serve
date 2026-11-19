@@ -31,8 +31,10 @@ type Endpoint struct {
 	CA []byte
 	// Mode returns the egress mode of the current policy.
 	Mode func() string
-	// Credentials is set when the endpoint adds credentials to requests.
-	Credentials bool
+	// Credentials is set when the endpoint adds credentials to requests,
+	// and Router when a router decides its connections. Either needs the
+	// boundary.
+	Credentials, Router bool
 }
 
 var endpointOf func(any) (Endpoint, bool)

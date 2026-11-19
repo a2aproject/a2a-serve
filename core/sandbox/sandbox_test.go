@@ -78,7 +78,7 @@ func openEndpoint(t *testing.T, policy egress.Policy) *egress.Endpoint {
 			t.Errorf("Boundary.Close() error = %v", err)
 		}
 	})
-	ep, err := b.Open("test")
+	ep, err := b.Open("test", "")
 	if err != nil {
 		t.Fatalf("Boundary.Open() error = %v", err)
 	}
