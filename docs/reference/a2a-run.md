@@ -37,6 +37,7 @@ Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stder
 | `sandbox` | `docker`, `docker (rootless)` or `local` |
 | `workspace` | `dir` or `memory` |
 | `workspace_sync` | `turn` or `live` |
+| `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |
 | `egress` | What decides the agent's connections, with `--sandbox docker`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
 | `error` | Why it failed to start, with `ready` false |
 
@@ -74,6 +75,33 @@ $ a2a-run --agent opencode --workspace dir:$PWD \
 ```
 
 The agent sees the host's tools as those of the MCP server `host`. When the host advertises hooks, `a2a-run` asks it about each tool call the agent asks permission for, and tells it the result of each tool call. [Tools endpoint](a2a-run-tools.md) specifies the protocol.
+
+## Contacts
+
+`--contact` gives the agent other A2A agents it may call. `--contact-auth` sets the `Authorization` header of the requests to a contact:
+
+```console
+$ a2a-run --agent claude --workspace dir:$PWD \
+    --contact reviewer=https://reviewer.example.com \
+    --contact-auth reviewer="Bearer env:REVIEWER_TOKEN" \
+    --contact planner=unix:///run/host/planner.sock \
+    --listen unix:///tmp/a2a-run.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"policy","contacts":[{"name":"reviewer","card":"ok"},{"name":"planner","card":"ok"}]}
+```
+
+A contact is the `https://` URL of an agent card, or a `unix://` socket that serves an agent, so the host can offer agents of its own without opening a port. The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. The agent never sees it.
+
+The agent's instructions list each contact with the description and skills from its card, and the agent calls one with the `a2a` CLI:
+
+```console
+$ a2a send -a http://a2a/reviewer "Review the diff in PR 12"
+```
+
+`a2a-run` makes the call, so the agent needs no network access to the contact. With `--sandbox local`, the agent runs the `a2a` CLI from its `PATH`. The requests carry the A2A context ID of the conversation in the metadata key `a2a-run/context`. Canceling a task cancels the tasks it started at contacts.
+
+A contact whose card can't be fetched shows as `failed` in the ready line. The agent doesn't see it until a later fetch succeeds. See [limits](limits.md#a2a-run) for how often `a2a-run` fetches the cards.
+
+When a contact asks for an approval, the task ends its turn in `input-required` with the contact's question, as [Approval Messages](approval-messages.md) describes. The status message metadata `a2a-run/contact-approval` names the contact and its task. `a2a-run` sends your answer to the contact, waits for its task, and gives the agent the result.
 
 ## Stopping
 
@@ -148,6 +176,8 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--workspace dir:path` |  | Files of the agent: dir:path for a directory, or memory for files that a2a-run keeps in memory and drops at exit |
 | `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent edit a dir: workspace in place |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises |
+| `--contact name=url` |  | Other A2A agent the agent may call, through a2a-run: name=url, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
+| `--contact-auth name=value` |  | Authorization header of the requests to a --contact, which the agent never sees: name=value; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer="Bearer env:REVIEWER_TOKEN" |
 | `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
 | `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts |
 | `--home directory` |  | Agent home directory, which every agent process shares (default: a temporary directory, removed at exit) |

@@ -44,6 +44,8 @@ const (
 
 // IO is what the command uses of its process.
 type IO struct {
+	// Stdin is where a --contact-auth value of - is read from.
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 	// StdoutIsTerminal tells whether stdout is a terminal: the a2a CLI

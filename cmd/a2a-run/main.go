@@ -38,6 +38,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := a2arun.Main(ctx, os.Args[1:], a2arun.IO{
+		Stdin:            os.Stdin,
 		Stdout:           os.Stdout,
 		Stderr:           os.Stderr,
 		StdoutIsTerminal: term.IsTerminal(int(os.Stdout.Fd())),

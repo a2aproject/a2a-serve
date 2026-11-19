@@ -59,7 +59,7 @@ func (e *afterReadyError) Is(target error) bool { return target == errAfterReady
 func Command() *cobra.Command { return newRunCmd(IO{}) }
 
 func newRunCmd(std IO) *cobra.Command {
-	cfg := serve.Config{Getenv: std.Getenv, Stderr: std.Stderr, Version: std.Version}
+	cfg := serve.Config{Getenv: std.Getenv, Stdin: std.Stdin, Stderr: std.Stderr, Version: std.Version}
 	cmd := &cobra.Command{
 		Use:           "a2a-run",
 		Short:         runShort,
@@ -95,6 +95,8 @@ func newRunCmd(std IO) *cobra.Command {
 	f.StringVar(&cfg.Workspace, "workspace", "", "Files of the agent: `dir:path` for a directory, or memory for files that a2a-run keeps in memory and drops at exit")
 	f.StringVar(&cfg.WorkspaceSync, "workspace-sync", serve.SyncTurn, "How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent edit a dir: workspace in place")
 	f.StringVar(&cfg.Tools, "tools", "", "Tools endpoint of the host, an MCP server over streamable HTTP: a `url`, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises")
+	f.StringArrayVar(&cfg.Contacts, "contact", nil, "Other A2A agent the agent may call, through a2a-run: `name=url`, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com")
+	f.StringArrayVar(&cfg.ContactAuth, "contact-auth", nil, "Authorization header of the requests to a --contact, which the agent never sees: `name=value`; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer=\"Bearer env:REVIEWER_TOKEN\"")
 	f.StringVar(&cfg.Listen, "listen", serve.DefaultListen, "Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port")
 	f.IntVar(&cfg.MaxProcesses, "max-processes", serve.DefaultMaxProcesses, "Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts")
 	f.StringVar(&cfg.Home, "home", "", "Agent home `directory`, which every agent process shares (default: a temporary directory, removed at exit)")

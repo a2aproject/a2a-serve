@@ -183,6 +183,11 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Files in the changes artifact | 1 MiB each and 4 MiB in total. Past that, the artifact lists the file without its content. |
 | Paths that the changes artifact lists | 1000. Past that, it counts the rest. |
 | Changes artifacts that wait for their task to end | 1024 or 64 MB. Past that, `a2a-run` drops the oldest. |
+| Contacts | 100 |
+| A response from a contact | 32 MiB, except event streams |
+| Fetch of a contact's agent card | 10 seconds. `a2a-run` fetches the cards every hour, and a card that failed every minute. |
+| Approvals of contacts that wait for the host | 1000. An approval is forgotten after 4 hours. |
+| Wait for a contact's task after an answer to its approval | 1 hour |
 
 ## Logs
 
