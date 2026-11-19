@@ -22,7 +22,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/tools"
+	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -59,29 +59,29 @@ const (
 	byGrant      = "grant of the conversation"
 )
 
-// toolDecider decides the tool calls of the agent: by the tool rules of the
-// config in force, then by the preferences and grants of the person who
+// toolDeciders decide the tool calls of the agent: the tool rules of the
+// config in force, then the preferences and grants of the person who
 // started the task. Each decider records what decided for the log.
-func (s *Server) toolDecider() tools.Decider {
-	rules := tools.DeciderFunc(func(ctx context.Context, c tools.Call) (tools.Decision, bool, error) {
+func (s *Server) toolDeciders() []a2aserve.ToolDecider {
+	rules := a2aserve.ToolDeciderFunc(func(ctx context.Context, c a2aserve.ToolCall) (a2aserve.ToolDecision, bool, error) {
 		cfg := s.rt.Config()
-		return tools.Rules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.Decide(ctx, c)
+		return a2aserve.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.Decide(ctx, c)
 	})
-	return tools.Chain(rules, tools.DeciderFunc(s.decider.byPeople))
+	return []a2aserve.ToolDecider{rules, a2aserve.ToolDeciderFunc(s.decider.byPeople)}
 }
 
 // byPeople decides c in a turn for the person who started its task.
-func (d *toolDecider) byPeople(ctx context.Context, c tools.Call) (tools.Decision, bool, error) {
+func (d *toolDecider) byPeople(ctx context.Context, c a2aserve.ToolCall) (a2aserve.ToolDecision, bool, error) {
 	tc := agentrun.ToolCallOf(ctx)
 	if tc == nil || tc.ExecCtx == nil {
-		return tools.Decision{}, false, nil
+		return a2aserve.ToolDecision{}, false, nil
 	}
 	dec, ok, err := d.hook(ctx, tc.ExecCtx, toolrules.Call{Kind: c.Kind, Tool: c.Tool, MCP: c.MCP, Command: c.Command})
 	if err != nil || !ok {
-		return tools.Decision{}, false, err
+		return a2aserve.ToolDecision{}, false, err
 	}
 	tc.By, tc.User = dec.By, dec.User
-	return tools.Decision{Allow: dec.Allow, Rule: dec.Rule}, true, nil
+	return a2aserve.ToolDecision{Allow: dec.Allow, Rule: dec.Rule}, true, nil
 }
 
 // hook answers call for the person who started the task of execCtx.

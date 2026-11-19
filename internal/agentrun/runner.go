@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package agentrun is the engine of core/a2aserve: it runs an ACP agent as
-// an A2A executor, with one agent process per key, from the public objects
+// an A2A executor, with one agent process per key, from the objects
 // that core/a2aserve receives. Keys are opaque to it: the caller decides
 // which key a conversation runs under, what the process of each key gets,
 // and what happens inside a turn, through [Callers] and [Hooks].
@@ -44,8 +44,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/tools"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
@@ -61,7 +59,7 @@ type Config struct {
 	// the processes the runtime's own network.
 	Egress *egress.Boundary
 	// Tools decides tool calls; nil asks about every call.
-	Tools tools.Decider
+	Tools DecideTool
 	// Main is what the process of key "" gets.
 	Main Environment
 	// Callers runs different callers in different processes; nil runs
@@ -87,9 +85,21 @@ type Config struct {
 	Options Options
 }
 
+// Workspace returns the directory of the process of key, which it keeps
+// until the Release of the attachment.
+type Workspace func(ctx context.Context, key string) (Attachment, error)
+
+// Attachment is the directory of a process: Dir on the host, seen at Path,
+// or at Dir if Path is empty.
+type Attachment struct {
+	Dir, Path string
+	ReadOnly  bool
+	Release   func() error
+}
+
 // Environment is what one agent process gets.
 type Environment struct {
-	Workspace   workspace.Workspace
+	Workspace   Workspace
 	Home        string
 	Env         []string
 	Credentials []egress.Credential

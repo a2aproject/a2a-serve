@@ -105,26 +105,6 @@ func Custom(name string, argv []string) Profile {
 	return custom{name: name, argv: slices.Clone(argv)}
 }
 
-var unwrap func(any) (Profile, bool)
-
-// RegisterUnwrap sets how Of finds the profile inside the public
-// core/agent.Profile, whose internal type that package doesn't export. It
-// is called once, from the init of core/agent.
-func RegisterUnwrap(f func(any) (Profile, bool)) { unwrap = f }
-
-// Of returns the profile behind p, a Profile or a core/agent.Profile.
-func Of(p any) (Profile, error) {
-	if prof, ok := p.(Profile); ok {
-		return prof, nil
-	}
-	if unwrap != nil {
-		if prof, ok := unwrap(p); ok {
-			return prof, nil
-		}
-	}
-	return nil, errors.New("invalid agent profile: use one of agent.Opencode, agent.Claude, agent.Command or agent.Lookup")
-}
-
 // providerKeys are the environment variables that hold the key of an
 // opencode provider. opencode reads only the first, which the server also
 // sets from the others; see [withProviderKeys].

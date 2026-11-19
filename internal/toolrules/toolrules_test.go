@@ -304,3 +304,28 @@ func TestDeniesCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestMatch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		entries  []string
+		call     Call
+		wantRule string
+		wantOK   bool
+	}{
+		{name: "no entries", call: Call{Kind: "read"}},
+		{name: "first match wins", entries: []string{"edit", "r*", "read"}, call: Call{Kind: "read"}, wantRule: "r*", wantOK: true},
+		{name: "invalid entry skipped", entries: []string{"reed", "tool:x.*"}, call: Call{Tool: "x.y", MCP: true}, wantRule: "tool:x.*", wantOK: true},
+		{name: "no match", entries: []string{"edit"}, call: Call{Kind: "read"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rule, ok := Match(tc.entries, tc.call)
+			if rule != tc.wantRule || ok != tc.wantOK {
+				t.Fatalf("Match() = %q, %v, want %q, %v", rule, ok, tc.wantRule, tc.wantOK)
+			}
+		})
+	}
+}

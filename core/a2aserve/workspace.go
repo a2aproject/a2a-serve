@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package workspace gives each agent process the project directory it works
-// in: a directory shared by all processes, a private copy per process, or an
-// empty directory per process.
-package workspace
+package a2aserve
 
 import (
 	"context"
 	"errors"
 )
 
-// Workspace gives each process its project directory.
+// Workspace gives each process its project directory. [SharedDir], [Copies]
+// and [EmptyDir] are the workspaces of this package.
 type Workspace interface {
 	// Attach returns the directory of the process of key, and keeps it until
-	// Release. Copies prepare a copy here.
+	// Release. [Copies] prepares a copy here.
 	Attach(ctx context.Context, key string) (Attachment, error)
 }
 
@@ -41,9 +39,9 @@ type Attachment struct {
 	Release func() error
 }
 
-// Dir returns the workspace of the directory path, which all processes share
-// and may change.
-func Dir(path string) Workspace { return dirWorkspace(path) }
+// SharedDir returns the workspace of the directory path, which all
+// processes share and may change.
+func SharedDir(path string) Workspace { return dirWorkspace(path) }
 
 // ReadOnly returns w with the directories it attaches marked read-only.
 func ReadOnly(w Workspace) Workspace { return readOnly{w} }
@@ -61,7 +59,7 @@ type readOnly struct{ w Workspace }
 
 func (r readOnly) Attach(ctx context.Context, key string) (Attachment, error) {
 	if r.w == nil {
-		return Attachment{}, errors.New("workspace: no workspace to make read-only")
+		return Attachment{}, errors.New("a2aserve: no workspace to make read-only")
 	}
 	a, err := r.w.Attach(ctx, key)
 	if err != nil {

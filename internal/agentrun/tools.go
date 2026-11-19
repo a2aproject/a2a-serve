@@ -24,7 +24,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/tools"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -49,18 +48,22 @@ func ToolCallOf(ctx context.Context) *ToolCall {
 	return tc
 }
 
-// NewCall returns the call of a permission, whose MCP tools are those of
-// servers.
-func NewCall(kind, title string, input any, servers []string) tools.Call {
-	c := toolrules.NewCall(kind, title, input, servers)
-	return tools.Call{Kind: c.Kind, Tool: c.Tool, MCP: c.MCP, Command: c.Command}
+// Call is a tool call that the agent asks permission for, in the
+// conversation ContextID and the task TaskID.
+type Call struct {
+	toolrules.Call
+	ContextID, TaskID string
 }
+
+// DecideTool answers a tool call with Allow and the Rule that decided, or
+// returns false to ask about it.
+type DecideTool func(ctx context.Context, c Call) (Decision, bool, error)
 
 // toolDecider answers tool permissions with the decider of the runner,
 // whose rules can change without a restart. It logs each answer by what
 // decided it.
 type toolDecider struct {
-	tools tools.Decider
+	tools DecideTool
 	// servers returns the names of the MCP servers of the project, which
 	// name the MCP tools of calls.
 	servers func() []string
@@ -76,14 +79,14 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	if d.servers != nil {
 		servers = d.servers()
 	}
-	call := NewCall(q.Tool.Kind, q.Tool.Title, q.Tool.Input, servers)
+	call := Call{Call: toolrules.NewCall(q.Tool.Kind, q.Tool.Title, q.Tool.Input, servers)}
 	var taskID a2a.TaskID
 	if execCtx != nil {
 		taskID = execCtx.TaskID
 		call.ContextID, call.TaskID = execCtx.ContextID, string(execCtx.TaskID)
 	}
 	tc := &ToolCall{ExecCtx: execCtx}
-	dec, ok, err := d.tools.Decide(context.WithValue(ctx, toolCallKey{}, tc), call)
+	dec, ok, err := d.tools(context.WithValue(ctx, toolCallKey{}, tc), call)
 	if err != nil {
 		d.logger().Warn("reading what a person allowed, asking", "task", taskID, "error", err)
 		return a2aacp.Answer{}, false

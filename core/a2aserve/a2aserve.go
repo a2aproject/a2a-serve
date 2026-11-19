@@ -16,9 +16,10 @@
 // in sandboxes, one per caller key if asked, and lets the caller decide
 // tools, sessions and callers.
 //
-// An Agent takes the objects of the other public packages: an
-// [agent.Profile], a [sandbox.Runtime], an [egress.Boundary], a
-// [tools.Decider] and a [workspace.Workspace] per [Environment].
+// An Agent runs a [Profile] with a [Workspace] per [Environment], and asks
+// its [ToolDecider] about tool calls. It runs the processes in Docker unless
+// Config.Runtime gives another [sandbox.Runtime], and an [egress.Boundary]
+// decides their connections.
 package a2aserve
 
 import (
@@ -38,12 +39,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/tools"
-	"github.com/a2aproject/a2a-serve/core/workspace"
-	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
@@ -77,20 +74,22 @@ func init() {
 // Config configures an [Agent]. It takes built objects, which the Agent
 // calls, and never their settings.
 type Config struct {
-	Profile agent.Profile
+	Profile Profile
 	// Model selects the model of every session, in the agent's format.
 	// Empty keeps the agent's default.
 	Model string
-	// Runtime runs the processes. The env files of Docker containers and
-	// the sockets of their egress boundaries go to the StateDir of
-	// sandbox.DockerOptions, and without one to StateDir.
+	// Runtime runs the processes; nil runs them in Docker containers, as
+	// sandbox.Docker with no options does. The env files of Docker
+	// containers and the sockets of their egress boundaries go to the
+	// StateDir of sandbox.DockerOptions, and without one to StateDir.
 	Runtime sandbox.Runtime
 	// Egress is the boundary each process gets an endpoint of, with the
 	// Credentials of its Environment. Nil gives the processes the
 	// runtime's own network.
 	Egress *egress.Boundary
-	// Tools decides tool calls; nil asks about every call.
-	Tools tools.Decider
+	// Tools decide tool calls: the first that decides a call answers it.
+	// A call that none decides is asked about.
+	Tools []ToolDecider
 	// Main is what the process of key "" gets: at its start, and for its
 	// turns and sessions.
 	Main Environment
@@ -124,7 +123,7 @@ type Config struct {
 type Environment struct {
 	// Workspace gives the process its project directory: the Agent calls
 	// Attach before the process starts and Release after it stops.
-	Workspace workspace.Workspace
+	Workspace Workspace
 	// Home is the host directory of the process's home.
 	Home string
 	// Env holds NAME=value pairs of the process. With an Egress boundary,
@@ -249,19 +248,18 @@ type Agent struct {
 // other keys start on their first turn. Everything runs until Close, and
 // the turns in progress end when ctx or Close does.
 func New(ctx context.Context, cfg Config) (*Agent, error) {
-	profile, err := agentprofile.Of(cfg.Profile)
-	if err != nil {
-		return nil, err
+	if cfg.Profile.profile == nil {
+		return nil, errors.New("a2aserve: invalid agent profile: use one of Opencode, Claude, Command or LookupProfile")
 	}
 	if cfg.Runtime == nil {
-		return nil, errors.New("a2aserve: no sandbox runtime")
+		cfg.Runtime = sandbox.Docker(sandbox.DockerOptions{})
 	}
 	rc := agentrun.Config{
-		Profile:  profile,
+		Profile:  cfg.Profile.profile,
 		Model:    cfg.Model,
 		Runtime:  cfg.Runtime,
 		Egress:   cfg.Egress,
-		Tools:    cfg.Tools,
+		Tools:    decideTools(cfg.Tools),
 		Main:     cfg.Main.engine(),
 		Pools:    map[string]agentrun.Pool{},
 		AgentAPI: cfg.AgentAPI,
@@ -392,7 +390,7 @@ func (e *countedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorC
 // engine returns e for the engine.
 func (e Environment) engine() agentrun.Environment {
 	return agentrun.Environment{
-		Workspace:   e.Workspace,
+		Workspace:   attach(e.Workspace),
 		Home:        e.Home,
 		Env:         e.Env,
 		Credentials: e.Credentials,
@@ -404,6 +402,17 @@ func (e Environment) engine() agentrun.Environment {
 		Labels:      e.Labels,
 		Pool:        e.Pool,
 		Process:     e.process,
+	}
+}
+
+// attach returns the engine's workspace of w, or nil without one.
+func attach(w Workspace) agentrun.Workspace {
+	if w == nil {
+		return nil
+	}
+	return func(ctx context.Context, key string) (agentrun.Attachment, error) {
+		a, err := w.Attach(ctx, key)
+		return agentrun.Attachment(a), err
 	}
 }
 
