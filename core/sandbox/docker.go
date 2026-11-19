@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -118,12 +119,14 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 		Name:     spec.Name,
 		Image:    spec.Image,
 		Command:  command(spec.Command),
-		Mounts:   mounts(spec.Mounts),
 		Home:     spec.Home,
 		Limits:   sandboxrt.Limits(spec.Limits),
 		Labels:   spec.Labels,
 		Stderr:   spec.Stderr,
 		Progress: d.opts.Progress,
+	}
+	if err := dockerMounts(&sb, spec.Mounts); err != nil {
+		return nil, err
 	}
 	visible := sb.Mounts
 	if spec.Home != "" {
@@ -158,6 +161,28 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 		return nil, errors.Join(err, d.release(ctx))
 	}
 	return &dockerSandbox{Sandbox: s, d: d}, nil
+}
+
+// dockerMounts gives the container of sb the mounts: a host directory as
+// a bind mount, and a tmpfs in memory, read-only as an empty mask.
+func dockerMounts(sb *sandboxrt.Spec, mounts []Mount) error {
+	for _, m := range mounts {
+		if err := checkSource(m); err != nil {
+			return err
+		}
+		if !path.IsAbs(m.Dst) {
+			return fmt.Errorf("the mount of %s has the destination %q, which isn't an absolute path", m.Src.kind, m.Dst)
+		}
+		switch {
+		case m.Src.kind == MountHostDir:
+			sb.Mounts = append(sb.Mounts, sandboxrt.Mount{Src: m.Src.path, Dst: m.Dst, ReadOnly: m.ReadOnly})
+		case m.ReadOnly:
+			sb.Masks = append(sb.Masks, sandboxrt.Mask{Dst: m.Dst})
+		default:
+			sb.Scratch = append(sb.Scratch, m.Dst)
+		}
+	}
+	return nil
 }
 
 // expose gives the container of sb the sockets: a Unix listener mounted
@@ -205,13 +230,15 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 // capabilities converts what the runtime found on this machine.
 func capabilities(c sandboxrt.Capabilities) Capabilities {
 	if c.Boundary != nil {
-		return Capabilities{Problem: c.Boundary.Error()}
+		return Capabilities{Problem: c.Boundary.Error(), Mounts: dockerMountKinds()}
 	}
 	if c.RelayImage != nil {
 		if _, missing := errors.AsType[*sandboxrt.MissingRelayImage](c.RelayImage); !missing {
-			return Capabilities{Problem: c.RelayImage.Error()}
+			return Capabilities{Problem: c.RelayImage.Error(), Mounts: dockerMountKinds()}
 		}
-		return Capabilities{Boundary: true, Problem: c.RelayImage.Error()}
+		return Capabilities{Boundary: true, Problem: c.RelayImage.Error(), Mounts: dockerMountKinds()}
 	}
-	return Capabilities{Boundary: true}
+	return Capabilities{Boundary: true, Mounts: dockerMountKinds()}
 }
+
+func dockerMountKinds() []MountKind { return []MountKind{MountHostDir, MountTmpfs} }

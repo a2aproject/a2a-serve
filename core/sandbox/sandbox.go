@@ -18,6 +18,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 
@@ -96,11 +97,57 @@ type Command struct {
 	Env []string
 }
 
-// Mount is a host directory or file visible in the sandbox at Path.
+// Mount shows Src in the sandbox at Dst, an absolute path.
 type Mount struct {
-	Host     string
-	Path     string
+	Dst      string
+	Src      Source
 	ReadOnly bool
+}
+
+// MountKind is a kind of [Source].
+type MountKind string
+
+// The kinds of [Source].
+const (
+	// MountHostDir is a host directory or file, which [HostDir] builds.
+	MountHostDir MountKind = "host-dir"
+	// MountTmpfs is an empty directory in memory, which [Tmpfs] builds.
+	MountTmpfs MountKind = "tmpfs"
+)
+
+// Source is what a mount shows. Only this package builds one, with
+// [HostDir] or [Tmpfs]; the zero Source is invalid.
+type Source struct {
+	kind MountKind
+	path string
+}
+
+// HostDir returns the source of the host directory or file at path.
+func HostDir(path string) Source { return Source{kind: MountHostDir, path: path} }
+
+// Tmpfs returns the source of an empty directory in memory, whose contents
+// go away with the sandbox.
+func Tmpfs() Source { return Source{kind: MountTmpfs} }
+
+// Kind returns the kind of s, or "" for the zero Source.
+func (s Source) Kind() MountKind { return s.kind }
+
+// HostPath returns the host path of a [HostDir] source, or "".
+func (s Source) HostPath() string { return s.path }
+
+// UnsupportedMountError is the error of Create for a mount the runtime
+// can't show.
+type UnsupportedMountError struct {
+	// Backend names the runtime, such as "local".
+	Backend string
+	Dst     string
+	Kind    MountKind
+	// Reason says why, such as "the command runs on the host".
+	Reason string
+}
+
+func (e *UnsupportedMountError) Error() string {
+	return fmt.Sprintf("the %s sandbox can't mount a %s source at %s: %s", e.Backend, e.Kind, e.Dst, e.Reason)
 }
 
 // Socket is a host listener that the command reaches.
@@ -129,14 +176,16 @@ type Capabilities struct {
 	Boundary bool
 	// Problem says why Boundary isn't set, or what may still fail.
 	Problem string
+	// Mounts are the kinds of sources the runtime mounts.
+	Mounts []MountKind
 }
 
-func mounts(ms []Mount) []sandboxrt.Mount {
-	out := make([]sandboxrt.Mount, len(ms))
-	for i, m := range ms {
-		out[i] = sandboxrt.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly}
+// checkSource returns the error of a mount without a source.
+func checkSource(m Mount) error {
+	if m.Src.kind == "" {
+		return fmt.Errorf("the mount at %q has no source: use sandbox.HostDir or sandbox.Tmpfs", m.Dst)
 	}
-	return out
+	return nil
 }
 
 func command(c Command) sandboxrt.Command {

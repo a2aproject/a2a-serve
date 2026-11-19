@@ -792,7 +792,7 @@ func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 }
 
 func sharedWorkspace(dir string) agentrun.Workspace {
-	return func(context.Context, string) (agentrun.Attachment, error) {
+	return func(context.Context, string, string) (agentrun.Attachment, error) {
 		return agentrun.Attachment{Dir: dir, Release: func() error { return nil }}, nil
 	}
 }

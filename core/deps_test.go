@@ -54,13 +54,14 @@ var sharedLeaves = []string{
 }
 
 // publicImports are the public core packages that each public core
-// package may import: egress <- sandbox <- a2aserve, and no package imports
-// a2aserve.
+// package may import: egress <- sandbox <- a2aserve, fsys <- a2aserve, and
+// no package imports a2aserve.
 var publicImports = map[string][]string{
 	"egress":   nil,
 	"sandbox":  {"egress"},
+	"fsys":     nil,
 	"approval": nil,
-	"a2aserve": {"egress", "sandbox"},
+	"a2aserve": {"egress", "fsys", "sandbox"},
 }
 
 // platforms are the systems whose files the test lists, since go list sees

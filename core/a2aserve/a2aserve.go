@@ -112,7 +112,9 @@ type Config struct {
 	// A2A configures the handler of [Agent.Handler].
 	A2A A2A
 	// StateDir keeps the files of the processes, which no process may
-	// see; empty uses a temporary directory, removed at Close.
+	// see, and the directories of [TurnSynced] workspaces, which only
+	// their process sees; empty uses a temporary directory, removed at
+	// Close.
 	StateDir string
 	// Log receives the records of the Agent; nil uses the default logger.
 	Log *slog.Logger
@@ -413,10 +415,30 @@ func attach(w Workspace) agentrun.Workspace {
 	if w == nil {
 		return nil
 	}
-	return func(ctx context.Context, key string) (agentrun.Attachment, error) {
-		a, err := w.Attach(ctx, key)
-		return agentrun.Attachment(a), err
+	return func(ctx context.Context, key, stateDir string) (agentrun.Attachment, error) {
+		a, err := attachIn(ctx, w, key, stateDir)
+		if err != nil {
+			return agentrun.Attachment{}, err
+		}
+		out := agentrun.Attachment{Dir: a.Dir, Path: a.Path, ReadOnly: a.ReadOnly, Release: a.Release, BeforeTurn: a.BeforeTurn}
+		if after := a.AfterTurn; after != nil {
+			out.AfterTurn = func(ctx context.Context) error { return turnError(after(ctx)) }
+		}
+		return out, nil
 	}
+}
+
+// turnError gives the engine the status message metadata of err.
+func turnError(err error) error {
+	conflict, ok := errors.AsType[*SyncConflictError](err)
+	if !ok {
+		return err
+	}
+	paths := make([]any, len(conflict.Paths))
+	for i, p := range conflict.Paths {
+		paths[i] = p
+	}
+	return &agentrun.TurnError{Err: err, Metadata: map[string]any{ConflictsKey: paths}}
 }
 
 // engine returns h for the engine, added to the hooks of the frontend of

@@ -1,0 +1,578 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2aserve_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/core/fsys"
+)
+
+// snapshot describes the entries of tree: "dir", "-> target", or the mode
+// and content of a file.
+func snapshot(t *testing.T, tree fsys.FS) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	var visit func(dir string)
+	visit = func(dir string) {
+		entries, err := tree.ReadDir(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("FS.ReadDir(%q) error = %v", dir, err)
+		}
+		for _, e := range entries {
+			switch {
+			case e.Mode.IsDir():
+				out[e.Path] = "dir"
+				visit(e.Path)
+			case e.Mode&fs.ModeSymlink != 0:
+				out[e.Path] = "-> " + e.Target
+			default:
+				rc, err := tree.Open(context.Background(), e.Path)
+				if err != nil {
+					t.Fatalf("FS.Open(%q) error = %v", e.Path, err)
+				}
+				data, err := io.ReadAll(rc)
+				if err != nil {
+					t.Fatalf("reading %q error = %v", e.Path, err)
+				}
+				if err := rc.Close(); err != nil {
+					t.Fatalf("closing %q error = %v", e.Path, err)
+				}
+				out[e.Path] = fmt.Sprintf("%v %s", e.Mode.Perm(), data)
+			}
+		}
+	}
+	visit(".")
+	return out
+}
+
+func put(t *testing.T, tree fsys.FS, path, data string, mode fs.FileMode) {
+	t.Helper()
+	if _, err := tree.Write(context.Background(), path, strings.NewReader(data), mode, ""); err != nil {
+		t.Fatalf("FS.Write(%q) error = %v", path, err)
+	}
+}
+
+func symlink(t *testing.T, tree fsys.FS, target, path string) {
+	t.Helper()
+	if err := tree.Symlink(context.Background(), target, path); err != nil {
+		t.Fatalf("FS.Symlink(%q) error = %v", path, err)
+	}
+}
+
+func remove(t *testing.T, tree fsys.FS, path string) {
+	t.Helper()
+	if err := tree.Remove(context.Background(), path); err != nil {
+		t.Fatalf("FS.Remove(%q) error = %v", path, err)
+	}
+}
+
+// attachSynced attaches the directory of key in a TurnSynced workspace of
+// tree, whose directories are in root.
+func attachSynced(t *testing.T, tree fsys.FS, root, key string) (a2aserve.Attachment, fsys.FS) {
+	t.Helper()
+	att, err := a2aserve.TurnSynced(tree, a2aserve.TurnSyncOptions{Dir: root}).Attach(context.Background(), key)
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	return att, fsys.Dir(att.Dir)
+}
+
+func TestTurnSyncedFillsDirectory(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	put(t, tree, "main.go", "package main", 0o644)
+	put(t, tree, "bin/run.sh", "#!/bin/sh", 0o755)
+	symlink(t, tree, "bin/run.sh", "run")
+	put(t, tree, "sub/.a2a/config.yaml", "x", 0o644)
+
+	att, local := attachSynced(t, tree, t.TempDir(), "a")
+
+	want := map[string]string{
+		"main.go":    "-rw-r--r-- package main",
+		"bin":        "dir",
+		"bin/run.sh": "-rwxr-xr-x #!/bin/sh",
+		"run":        "-> bin/run.sh",
+		"sub":        "dir",
+	}
+	if diff := cmp.Diff(want, snapshot(t, local)); diff != "" {
+		t.Fatalf("TurnSynced().Attach() directory wrong entries (-want +got) diff = %s", diff)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
+func TestTurnSyncedSyncsAtTurnBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		treeEdit  func(t *testing.T, tree fsys.FS)
+		localEdit func(t *testing.T, local fsys.FS)
+		want      map[string]string
+	}{
+		{
+			name:     "tree adds a file",
+			treeEdit: func(t *testing.T, tree fsys.FS) { put(t, tree, "new.txt", "new", 0o600) },
+			want:     map[string]string{"keep.txt": "-rw-r--r-- keep", "dir": "dir", "dir/a.txt": "-rw-r--r-- a", "new.txt": "-rw------- new"},
+		},
+		{
+			name:     "tree removes a directory",
+			treeEdit: func(t *testing.T, tree fsys.FS) { remove(t, tree, "dir") },
+			want:     map[string]string{"keep.txt": "-rw-r--r-- keep"},
+		},
+		{
+			name:      "agent adds an executable file",
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "tools/build.sh", "#!/bin/sh", 0o755) },
+			want:      map[string]string{"keep.txt": "-rw-r--r-- keep", "dir": "dir", "dir/a.txt": "-rw-r--r-- a", "tools": "dir", "tools/build.sh": "-rwxr-xr-x #!/bin/sh"},
+		},
+		{
+			name:      "agent changes a file",
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "keep.txt", "changed", 0o644) },
+			want:      map[string]string{"keep.txt": "-rw-r--r-- changed", "dir": "dir", "dir/a.txt": "-rw-r--r-- a"},
+		},
+		{
+			name:      "agent removes a directory",
+			localEdit: func(t *testing.T, local fsys.FS) { remove(t, local, "dir") },
+			want:      map[string]string{"keep.txt": "-rw-r--r-- keep"},
+		},
+		{
+			name: "agent replaces a file with a symlink",
+			localEdit: func(t *testing.T, local fsys.FS) {
+				remove(t, local, "keep.txt")
+				symlink(t, local, "dir/a.txt", "keep.txt")
+			},
+			want: map[string]string{"keep.txt": "-> dir/a.txt", "dir": "dir", "dir/a.txt": "-rw-r--r-- a"},
+		},
+		{
+			name: "placeholders and agent directories stay",
+			localEdit: func(t *testing.T, local fsys.FS) {
+				put(t, local, "opencode.json", "{}\n", 0o644)
+				put(t, local, ".claude/settings.json", "{}\n", 0o644)
+				put(t, local, ".mcp.json", "{}\n", 0o644)
+				put(t, local, ".a2a/state", "x", 0o644)
+			},
+			want: map[string]string{"keep.txt": "-rw-r--r-- keep", "dir": "dir", "dir/a.txt": "-rw-r--r-- a"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.Memory()
+			put(t, tree, "keep.txt", "keep", 0o644)
+			put(t, tree, "dir/a.txt", "a", 0o644)
+			att, local := attachSynced(t, tree, t.TempDir(), "a")
+			ctx := context.Background()
+
+			if tc.treeEdit != nil {
+				tc.treeEdit(t, tree)
+			}
+			if err := att.BeforeTurn(ctx); err != nil {
+				t.Fatalf("BeforeTurn() error = %v", err)
+			}
+			if tc.localEdit != nil {
+				tc.localEdit(t, local)
+			}
+			if err := att.AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() error = %v", err)
+			}
+
+			if diff := cmp.Diff(tc.want, snapshot(t, tree)); diff != "" {
+				t.Fatalf("tree after the turn wrong entries (-want +got) diff = %s", diff)
+			}
+			got := snapshot(t, local)
+			for p := range got {
+				if strings.HasPrefix(p, ".a2a") || strings.HasPrefix(p, ".claude") || p == "opencode.json" || p == ".mcp.json" {
+					delete(got, p)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("directory after the turn wrong entries (-want +got) diff = %s", diff)
+			}
+			if err := att.Release(); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		treeEdit  func(t *testing.T, tree fsys.FS)
+		localEdit func(t *testing.T, local fsys.FS)
+		// betweenTurns makes both edits before BeforeTurn.
+		betweenTurns bool
+		want         map[string]string
+		wantPaths    []string
+	}{
+		{
+			name:         "both change a file between turns",
+			treeEdit:     func(t *testing.T, tree fsys.FS) { put(t, tree, "f.txt", "theirs", 0o644) },
+			localEdit:    func(t *testing.T, local fsys.FS) { put(t, local, "f.txt", "mine", 0o644) },
+			betweenTurns: true,
+			want:         map[string]string{"f.txt": "-rw-r--r-- theirs", "d": "dir", "d/a.txt": "-rw-r--r-- a"},
+			wantPaths:    []string{"f.txt"},
+		},
+		{
+			name:         "tree removes a directory the agent added to between turns",
+			treeEdit:     func(t *testing.T, tree fsys.FS) { remove(t, tree, "d") },
+			localEdit:    func(t *testing.T, local fsys.FS) { put(t, local, "d/mine.txt", "mine", 0o644) },
+			betweenTurns: true,
+			want:         map[string]string{"f.txt": "-rw-r--r-- base"},
+			wantPaths:    []string{"d"},
+		},
+		{
+			name:      "both change a file",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "f.txt", "theirs", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "f.txt", "mine", 0o644) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- theirs", "d": "dir", "d/a.txt": "-rw-r--r-- a"},
+			wantPaths: []string{"f.txt"},
+		},
+		{
+			name:      "tree removes what the agent changed",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { remove(t, tree, "f.txt") },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "f.txt", "mine", 0o644) },
+			want:      map[string]string{"d": "dir", "d/a.txt": "-rw-r--r-- a"},
+			wantPaths: []string{"f.txt"},
+		},
+		{
+			name:      "agent removes what the tree changed",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "f.txt", "theirs", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { remove(t, local, "f.txt") },
+			want:      map[string]string{"f.txt": "-rw-r--r-- theirs", "d": "dir", "d/a.txt": "-rw-r--r-- a"},
+			wantPaths: []string{"f.txt"},
+		},
+		{
+			name:      "both create a file",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "new.txt", "theirs", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "new.txt", "mine", 0o755) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "new.txt": "-rw-r--r-- theirs"},
+			wantPaths: []string{"new.txt"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.Memory()
+			put(t, tree, "f.txt", "base", 0o644)
+			put(t, tree, "d/a.txt", "a", 0o644)
+			att, local := attachSynced(t, tree, t.TempDir(), "a")
+			ctx := context.Background()
+			if !tc.betweenTurns {
+				if err := att.BeforeTurn(ctx); err != nil {
+					t.Fatalf("BeforeTurn() error = %v", err)
+				}
+			}
+			tc.localEdit(t, local)
+			tc.treeEdit(t, tree)
+			if tc.betweenTurns {
+				if err := att.BeforeTurn(ctx); err != nil {
+					t.Fatalf("BeforeTurn() error = %v", err)
+				}
+			}
+
+			err := att.AfterTurn(ctx)
+
+			conflict, ok := errors.AsType[*a2aserve.SyncConflictError](err)
+			if !ok {
+				t.Fatalf("AfterTurn() error = %v, want a SyncConflictError", err)
+			}
+			if diff := cmp.Diff(tc.wantPaths, conflict.Paths); diff != "" {
+				t.Fatalf("AfterTurn() wrong conflicts (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.want, snapshot(t, tree)); diff != "" {
+				t.Fatalf("tree after the conflict wrong entries (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.want, snapshot(t, local)); diff != "" {
+				t.Fatalf("directory after the conflict wrong entries (-want +got) diff = %s", diff)
+			}
+			if err := att.BeforeTurn(ctx); err != nil {
+				t.Fatalf("BeforeTurn() after the conflict error = %v", err)
+			}
+			if err := att.AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() of the next turn error = %v, want nil", err)
+			}
+			if err := att.Release(); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTurnSyncedReleaseWritesBackAndRemovesTheDirectory(t *testing.T) {
+	t.Parallel()
+	tree, root := fsys.Memory(), t.TempDir()
+	att, local := attachSynced(t, tree, root, "a")
+	put(t, local, "late.txt", "late", 0o644)
+
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+
+	if diff := cmp.Diff(map[string]string{"late.txt": "-rw-r--r-- late"}, snapshot(t, tree)); diff != "" {
+		t.Fatalf("tree after Release() wrong entries (-want +got) diff = %s", diff)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("os.ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("os.ReadDir() after Release() = %v, want no directory or state left", entries)
+	}
+	if err := att.AfterTurn(context.Background()); err != nil {
+		t.Fatalf("AfterTurn() after Release() error = %v, want nil", err)
+	}
+}
+
+func TestTurnSyncedWritesBackADirectoryLeftByAStop(t *testing.T) {
+	t.Parallel()
+	tree, root := fsys.Memory(), t.TempDir()
+	put(t, tree, "f.txt", "base", 0o644)
+	_, local := attachSynced(t, tree, root, "a")
+	put(t, local, "f.txt", "mine", 0o644)
+
+	att, _ := attachSynced(t, tree, root, "a")
+
+	if diff := cmp.Diff(map[string]string{"f.txt": "-rw-r--r-- mine"}, snapshot(t, tree)); diff != "" {
+		t.Fatalf("tree after the next Attach() wrong entries (-want +got) diff = %s", diff)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
+func TestTurnSyncedRefusesAttach(t *testing.T) {
+	t.Parallel()
+	big := fsys.Memory()
+	for _, name := range []string{"a", "b", "c"} {
+		put(t, big, name, "x", 0o644)
+	}
+	tests := []struct {
+		name    string
+		w       a2aserve.Workspace
+		wantErr error
+		want    string
+	}{
+		{name: "no directory outside an Agent", w: a2aserve.TurnSynced(fsys.Memory(), a2aserve.TurnSyncOptions{}), want: "attaches only in an Agent"},
+		{name: "too many entries", w: a2aserve.TurnSynced(big, a2aserve.TurnSyncOptions{Dir: t.TempDir(), MaxEntries: 2}), wantErr: a2aserve.ErrWorkspaceTooLarge},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := tc.w.Attach(context.Background(), "a")
+			if err == nil || tc.wantErr != nil && !errors.Is(err, tc.wantErr) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("TurnSynced().Attach() error = %v, want %v %q", err, tc.wantErr, tc.want)
+			}
+		})
+	}
+
+}
+
+func TestTurnSyncedAttachWaitsForRelease(t *testing.T) {
+	t.Parallel()
+	w := a2aserve.TurnSynced(fsys.Memory(), a2aserve.TurnSyncOptions{Dir: t.TempDir()})
+	att, err := w.Attach(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := w.Attach(ctx, "a"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("TurnSynced().Attach() of an attached key error = %v, want %v", err, context.DeadlineExceeded)
+	}
+
+	attached := make(chan error, 1)
+	go func() {
+		next, err := w.Attach(context.Background(), "a")
+		if err == nil {
+			err = next.Release()
+		}
+		attached <- err
+	}()
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+	if err := <-attached; err != nil {
+		t.Fatalf("TurnSynced().Attach() after Release() error = %v", err)
+	}
+}
+
+// syncedDir returns the directory of the only process of a TurnSynced
+// workspace in root.
+func syncedDir(t *testing.T, root string) string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("os.ReadDir() error = %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return filepath.Join(root, e.Name())
+		}
+	}
+	t.Fatalf("os.ReadDir(%s) = %v, want a synced directory", root, entries)
+	return ""
+}
+
+// waitFile waits for the file path of tree to hold data.
+func waitFile(t *testing.T, tree fsys.FS, path, data string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got := snapshot(t, tree)[path]
+		if strings.HasSuffix(got, " "+data) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tree %s = %q, want %q", path, got, data)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestTurnSyncedAgentWritesBackOnEveryTurnEnd(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		turn      func(t *testing.T, a *a2aserve.Agent, store taskstore.Store, dir string) a2a.TaskState
+		wantState a2a.TaskState
+		path      string
+		want      string
+	}{
+		{
+			name: "completed",
+			turn: func(t *testing.T, a *a2aserve.Agent, _ taskstore.Store, _ string) a2a.TaskState {
+				return sendTask(t, client(t, a), "", "write out.txt").Status.State
+			},
+			wantState: a2a.TaskStateCompleted,
+			path:      "out.txt",
+			want:      "written by fakeacp\n",
+		},
+		{
+			name: "agent exited",
+			turn: func(t *testing.T, a *a2aserve.Agent, _ taskstore.Store, dir string) a2a.TaskState {
+				writeFile(t, filepath.Join(dir, "before-crash.txt"), "kept")
+				return sendTask(t, client(t, a), "", "crash").Status.State
+			},
+			wantState: a2a.TaskStateFailed,
+			path:      "before-crash.txt",
+			want:      "kept",
+		},
+		{
+			name: "canceled",
+			turn: func(t *testing.T, a *a2aserve.Agent, store taskstore.Store, dir string) a2a.TaskState {
+				c := client(t, a)
+				msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("slow"))
+				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+				if err != nil {
+					t.Fatalf("Client.SendMessage(slow) error = %v", err)
+				}
+				task := res.(*a2a.Task)
+				waitStored(t, store, task.ID, a2a.TaskStateWorking)
+				writeFile(t, filepath.Join(dir, "mid-turn.txt"), "kept")
+				canceled, err := c.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID})
+				if err != nil {
+					t.Fatalf("Client.CancelTask() error = %v", err)
+				}
+				return canceled.Status.State
+			},
+			wantState: a2a.TaskStateCanceled,
+			path:      "mid-turn.txt",
+			want:      "kept",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree, root := fsys.Memory(), t.TempDir()
+			store := taskstore.NewInMemory(nil)
+			a := newAgent(t, a2aserve.Config{
+				Main: a2aserve.Environment{Workspace: a2aserve.TurnSynced(tree, a2aserve.TurnSyncOptions{Dir: root}), Home: filepath.Join(t.TempDir(), "home")},
+				A2A:  a2aserve.A2A{TaskStore: store},
+			})
+
+			if got := tc.turn(t, a, store, syncedDir(t, root)); got != tc.wantState {
+				t.Fatalf("task state = %v, want %v", got, tc.wantState)
+			}
+
+			waitFile(t, tree, tc.path, tc.want)
+		})
+	}
+}
+
+func TestTurnSyncedAgentFailsATurnWithConflicts(t *testing.T) {
+	t.Parallel()
+	tree, root := fsys.Memory(), t.TempDir()
+	put(t, tree, "f.txt", "base", 0o644)
+	var mu sync.Mutex
+	var explained error
+	a := newAgent(t, a2aserve.Config{
+		Main: a2aserve.Environment{Workspace: a2aserve.TurnSynced(tree, a2aserve.TurnSyncOptions{Dir: root}), Home: filepath.Join(t.TempDir(), "home")},
+		Hooks: a2aserve.Hooks{
+			Turn: func(context.Context, *a2asrv.ExecutorContext) func() {
+				put(t, tree, "f.txt", "theirs", 0o644)
+				return func() {}
+			},
+			Explain: func(_ context.Context, _ *a2asrv.ExecutorContext, err error) []*a2a.Part {
+				mu.Lock()
+				defer mu.Unlock()
+				explained = err
+				return []*a2a.Part{a2a.NewTextPart("explained: " + err.Error())}
+			},
+		},
+	})
+
+	task := sendTask(t, client(t, a), "", "write f.txt")
+
+	if task.Status.State != a2a.TaskStateFailed || task.Status.Message == nil {
+		t.Fatalf("Client.SendMessage() status = %+v, want failed with a message", task.Status)
+	}
+	if diff := cmp.Diff([]any{"f.txt"}, task.Status.Message.Metadata[a2aserve.ConflictsKey]); diff != "" {
+		t.Fatalf("status message metadata %s wrong value (-want +got) diff = %s", a2aserve.ConflictsKey, diff)
+	}
+	if got := task.Status.Message.Parts[0].Text(); !strings.HasPrefix(got, "explained: ") {
+		t.Fatalf("status message = %q, want the one of Hooks.Explain", got)
+	}
+	mu.Lock()
+	_, ok := errors.AsType[*a2aserve.SyncConflictError](explained)
+	mu.Unlock()
+	if !ok {
+		t.Fatalf("Hooks.Explain() error = %v, want a SyncConflictError", explained)
+	}
+	if got := snapshot(t, tree)["f.txt"]; got != "-rw-r--r-- theirs" {
+		t.Fatalf("tree f.txt = %q, want the tree's version", got)
+	}
+	if got := readFile(t, filepath.Join(syncedDir(t, root), "f.txt")); got != "theirs" {
+		t.Fatalf("directory f.txt = %q, want the tree's version", got)
+	}
+}

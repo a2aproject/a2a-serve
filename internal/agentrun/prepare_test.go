@@ -68,7 +68,7 @@ func privateDir(t *testing.T) string {
 }
 
 func sharedDir(dir string) Workspace {
-	return func(context.Context, string) (Attachment, error) {
+	return func(context.Context, string, string) (Attachment, error) {
 		return Attachment{Dir: dir, Release: func() error { return nil }}, nil
 	}
 }

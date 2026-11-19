@@ -62,8 +62,8 @@ type Spec struct {
 	Sandbox string
 	Backend sandboxrt.Backend
 	// Base is the sandbox that Prepare completes: its name, image, limits,
-	// labels and the writers of its output. The image defaults to the
-	// profile's.
+	// labels, the writers of its output, and the masks and scratch paths
+	// of mounts in memory. The image defaults to the profile's.
 	Base sandboxrt.Spec
 	// Mounts are the directories the harness works on. The first is the
 	// workspace and must keep its path in the sandbox.
@@ -278,7 +278,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	sb.Command = profileCommand(spec, ws)
 	sb.Command.Env = append(cliEnv(spec.Env), sb.Command.Env...)
 	sb.Mounts = sandboxMounts(spec.Mounts)
-	sb.Masks = hiddenMasks(spec)
+	sb.Masks = append(slices.Clone(spec.Base.Masks), hiddenMasks(spec)...)
 	sb.Home = spec.Home
 	if spec.WorkspaceSrc != "" {
 		sb.Mounts[0].Src = spec.WorkspaceSrc
@@ -297,7 +297,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		}
 		sb.Mounts = append(sb.Mounts, cm.mounts...)
 		sb.Masks = append(sb.Masks, cm.masks...)
-		sb.Scratch = cm.scratch
+		sb.Scratch = append(slices.Clone(spec.Base.Scratch), cm.scratch...)
 	}
 	if spec.PolicyDir != "" {
 		dst, err := policyMount(spec)

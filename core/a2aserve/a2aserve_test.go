@@ -16,6 +16,7 @@ package a2aserve_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -434,5 +435,25 @@ func TestCloseFailsATurnInProgress(t *testing.T) {
 	}
 	if got := stored.Task.Status; got.State != a2a.TaskStateFailed || got.Message == nil || got.Message.Parts[0].Text() != agentrun.StoppedMessage {
 		t.Fatalf("Store.Get() status after Agent.Close() = %v, want failed with %q", got, agentrun.StoppedMessage)
+	}
+}
+
+func TestNewRefusesTmpfsWithoutASandbox(t *testing.T) {
+	t.Parallel()
+	env := environment(t, "")
+	env.Mounts = []sandbox.Mount{{Dst: "/scratch", Src: sandbox.Tmpfs()}}
+	_, err := a2aserve.New(context.Background(), a2aserve.Config{
+		Profile:  a2aserve.Command(fakeACP),
+		Runtime:  sandbox.Local(),
+		StateDir: testutil.ShortTempDir(t),
+		Main:     env,
+	})
+	got, ok := errors.AsType[*sandbox.UnsupportedMountError](err)
+	if !ok {
+		t.Fatalf("a2aserve.New() with a tmpfs mount error = %v, want an UnsupportedMountError", err)
+	}
+	want := &sandbox.UnsupportedMountError{Backend: "local", Dst: "/scratch", Kind: sandbox.MountTmpfs, Reason: "the command runs on the host, with no mount namespace"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("a2aserve.New() wrong error (-want +got) diff = %s", diff)
 	}
 }
