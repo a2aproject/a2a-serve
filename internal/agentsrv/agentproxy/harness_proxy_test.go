@@ -824,3 +824,55 @@ func TestGuardedHandlerNamesTheAgentThatTheNetworkDoesNotReach(t *testing.T) {
 		})
 	}
 }
+
+// fakeSchedules is a schedules agent that completes every command.
+type fakeSchedules struct{}
+
+func (fakeSchedules) Agent(auth.Principal, string, bool) a2asrv.AgentExecutor {
+	return fakeSchedulesExecutor{}
+}
+
+type fakeSchedulesExecutor struct{}
+
+func (fakeSchedulesExecutor) Execute(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		if yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("no schedules"))), nil)
+		}
+	}
+}
+
+func (fakeSchedulesExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
+	}
+}
+
+func TestHarnessProxyNeitherWatchesNorRecordsSchedulesTasks(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newProxyFixture(t)
+	f.proxy = NewHarnessProxy(HarnessProxyDeps{Store: f.store, Claims: f.claims, Clients: f.clients, Watches: f.ws, Schedules: fakeSchedules{}})
+	srv := f.serve(t, "")
+	t.Cleanup(f.claims.beginTurn(Claims{ContextID: "c1", TaskID: "turn1", User: auth.Owner()}))
+	client := proxyClient(t, srv.URL+"/"+f.handle(t, "c1")+"/"+pairings.SchedulesAgent)
+
+	if _, err := client.SendMessage(ctx, &a2a.SendMessageRequest{
+		Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("list")),
+		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
+	}); err != nil {
+		t.Fatalf("SendMessage() to the schedules agent error = %v", err)
+	}
+
+	watches, err := f.store.Watches(ctx)
+	if err != nil {
+		t.Fatalf("store.Watches() error = %v", err)
+	}
+	calls, err := f.store.CallTasksOf(ctx, "c1", "turn1")
+	if err != nil {
+		t.Fatalf("store.CallTasksOf() error = %v", err)
+	}
+	if len(watches) != 0 || len(calls) != 0 {
+		t.Fatalf("watches = %+v, call tasks = %+v, want none for the schedules agent", watches, calls)
+	}
+}

@@ -286,3 +286,60 @@ func TestNewStaticRefusesInvalidContacts(t *testing.T) {
 		})
 	}
 }
+
+// authRecorder answers every request and records its Authorization header.
+type authRecorder struct {
+	mu   sync.Mutex
+	auth map[string]string
+}
+
+func (r *authRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.auth[req.URL.String()] = req.Header.Get("Authorization")
+	r.mu.Unlock()
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+}
+
+func TestStaticSendsAuthOnlyOverHTTPSToTheCardsHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		contact string
+		request string
+		want    string
+	}{
+		{name: "card's host", contact: "https://a.example/card.json", request: "https://a.example/", want: secretAuth},
+		{name: "explicit default port", contact: "https://a.example:443/card.json", request: "https://a.example/", want: secretAuth},
+		{name: "explicit default port of the request", contact: "https://a.example/card.json", request: "https://a.example:443/", want: secretAuth},
+		{name: "plain http to the card's host", contact: "https://a.example/card.json", request: "http://a.example/"},
+		{name: "plain http on the https port", contact: "https://a.example/card.json", request: "http://a.example:443/"},
+		{name: "another port", contact: "https://a.example/card.json", request: "https://a.example:8443/"},
+		{name: "another host", contact: "https://a.example/card.json", request: "https://b.example/"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &authRecorder{auth: map[string]string{}}
+			c, err := newStaticContact(Entry{Name: "a", URL: tc.contact, Auth: secretAuth}, rec)
+			if err != nil {
+				t.Fatalf("newStaticContact() error = %v", err)
+			}
+			req, err := http.NewRequest(http.MethodGet, tc.request, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err := c.http.Do(req)
+			if err != nil {
+				t.Fatalf("GET %s error = %v", tc.request, err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := rec.auth[tc.request]; got != tc.want {
+				t.Fatalf("Authorization of GET %s = %q, want %q", tc.request, got, tc.want)
+			}
+		})
+	}
+}

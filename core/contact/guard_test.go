@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 )
@@ -402,5 +403,25 @@ func TestGuardListTasksRejectsBadPaging(t *testing.T) {
 				t.Fatalf("guard.ListTasks() error = %v, want %v", err, a2a.ErrInvalidRequest)
 			}
 		})
+	}
+}
+
+func TestGuardRefusesTheAgentsAnswerToAnApprovalWithoutAFollowup(t *testing.T) {
+	t.Parallel()
+	calls := newMemoryCalls()
+	recordStarted(t, calls, "c1", "t1", "r1")
+	ev, err := structuredinput.NewRequestEvent(&a2a.Task{ID: "t1", ContextID: "r1"}, permissionRequest(), a2a.NewTextPart("Run git push?"))
+	if err != nil {
+		t.Fatalf("structuredinput.NewRequestEvent() error = %v", err)
+	}
+	agent := &recordingAgent{task: &a2a.Task{ID: "t1", ContextID: "r1", Status: ev.Status}}
+
+	_, err = guarded(t, calls, agent, "c1").SendMessage(context.Background(), message("t1", "r1"))
+
+	if !errors.Is(err, a2a.ErrUnauthorized) {
+		t.Fatalf("guard.SendMessage() answering an approval error = %v, want %v", err, a2a.ErrUnauthorized)
+	}
+	if diff := cmp.Diff([]string{"GetTask"}, agent.calls()); diff != "" {
+		t.Fatalf("calls that reached the contact wrong result (-want +got) diff = %s", diff)
 	}
 }

@@ -40,8 +40,10 @@ type Config struct {
 	// memory: at most 1000 calls per conversation, of the conversations
 	// that called last.
 	Calls Calls
-	// Followup takes the tasks that calls leave unfinished; nil leaves
-	// them to the agent, and approvals unanswered.
+	// Followup takes the tasks that calls leave unfinished. Without one,
+	// nobody follows them, and a contact's task that waits for an approval
+	// waits until it times out or is canceled, as the agent may not answer
+	// it.
 	Followup Followup
 	// Scoped serves contacts at /<scope>/<name>, for one agent process
 	// that serves many conversations. Otherwise they are at /<name>.

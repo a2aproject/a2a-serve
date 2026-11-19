@@ -33,7 +33,7 @@ import (
 // at target: the handler that the proxy serves. It keeps the conversation
 // to the tasks it started, records them, adds the hop count and metadata
 // of t, and gives the tasks that the calls leave unfinished to the
-// Followup. With a Followup, the agent may not answer an approval.
+// Followup. The agent may not answer an approval.
 func (p *Proxy) Guard(t Turn, name string, target Target) a2asrv.RequestHandler {
 	h := target.handlerFor(t)
 	return &guard{RequestHandler: h, proxy: p, turn: t, contact: name}
@@ -337,10 +337,10 @@ func configPush(req *a2a.SendMessageRequest) *a2a.PushConfig {
 	return req.Config.PushConfig
 }
 
-// checkAnswer rejects a reply to a pending approval, which the Followup
-// takes instead.
+// checkAnswer rejects a reply to a pending approval: approvals belong to a
+// person, whom the Followup asks.
 func (g *guard) checkAnswer(ctx context.Context, req *a2a.SendMessageRequest) error {
-	if req.Message.TaskID == "" || g.proxy.followup == nil {
+	if req.Message.TaskID == "" {
 		return nil
 	}
 	task, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: req.Message.TaskID})

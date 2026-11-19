@@ -15,6 +15,7 @@
 package contact
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,8 +55,8 @@ type Entry struct {
 	// of a socket that serves the contact.
 	URL string
 	// Auth is the value of the Authorization header of the requests to the
-	// contact, or "". It is a secret: it goes to the card's host only, and
-	// is never logged.
+	// contact, or "". It is a secret: it goes only over https to the card's
+	// host and port, or through the socket, and is never logged.
 	Auth string
 }
 
@@ -169,10 +170,10 @@ func newStaticContact(e Entry, transport http.RoundTripper) (*staticContact, err
 	}
 	c := &staticContact{name: e.Name}
 	var rt http.RoundTripper
-	host := ""
+	cardOrigin := ""
 	switch {
 	case u.Scheme == "https" && u.Host != "":
-		c.cardURL, host = e.URL, u.Host
+		c.cardURL, cardOrigin = e.URL, origin(u)
 		c.display = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 		if p, ok := u.User.Password(); ok {
 			c.secrets = append(c.secrets, p)
@@ -191,7 +192,7 @@ func newStaticContact(e Entry, transport http.RoundTripper) (*staticContact, err
 		return nil, fmt.Errorf("contact: the URL of %s must start with https:// or unix:///", e.Name)
 	}
 	c.http = &http.Client{
-		Transport:     &authTransport{base: egressrules.LimitResponses(rt, maxResponse), host: host, auth: e.Auth},
+		Transport:     &authTransport{base: egressrules.LimitResponses(rt, maxResponse), origin: cardOrigin, auth: e.Auth},
 		CheckRedirect: egressrules.CheckRedirect,
 	}
 	return c, nil
@@ -208,21 +209,31 @@ func unixTransport(path string) http.RoundTripper {
 	}
 }
 
-// authTransport adds the Authorization header to the requests to host, or
-// to every request when host is "".
+// authTransport adds the Authorization header to the requests over https
+// to origin, the scheme, host and port of the card, or to every request
+// when origin is "", for a socket that every request goes through.
 type authTransport struct {
-	base http.RoundTripper
-	host string
-	auth string
+	base   http.RoundTripper
+	origin string
+	auth   string
 }
 
 func (t *authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.auth == "" || (t.host != "" && !strings.EqualFold(r.URL.Host, t.host)) {
+	if t.auth == "" || (t.origin != "" && origin(r.URL) != t.origin) {
 		return t.base.RoundTrip(r)
 	}
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", t.auth)
 	return t.base.RoundTrip(r)
+}
+
+// origin is the https origin of u with its port spelled out, or "" for
+// another scheme.
+func origin(u *url.URL) string {
+	if u.Scheme != "https" {
+		return ""
+	}
+	return "https://" + net.JoinHostPort(strings.ToLower(u.Hostname()), cmp.Or(u.Port(), "443"))
 }
 
 func (s *Static) loop(ctx context.Context) {

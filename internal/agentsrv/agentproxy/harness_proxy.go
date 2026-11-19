@@ -137,7 +137,7 @@ func (hp *HarnessProxy) proxy(caller Caller) *contact.Proxy {
 		Turns:     harnessTurns{claims: hp.claims, caller: caller},
 		Directory: hp,
 		Calls:     storeCalls{store: hp.store},
-		Followup:  hp.watches,
+		Followup:  harnessFollowup{watches: hp.watches},
 		Scoped:    true,
 	})
 	if err != nil {
@@ -216,7 +216,12 @@ type storeCalls struct {
 
 var _ contact.Calls = storeCalls{}
 
+// Record leaves out the tasks of the schedules agent: its handler lives
+// for one request, so nobody can reach them later.
 func (sc storeCalls) Record(ctx context.Context, t contact.Turn, c contact.Call) error {
+	if c.Contact == pairings.SchedulesAgent {
+		return nil
+	}
 	return sc.store.PutCallTask(ctx, store.CallTask{ContextID: t.ContextID, Agent: c.Contact, TaskID: string(c.TaskID), RemoteContextID: c.ContextID, OriginTaskID: t.TaskID})
 }
 
@@ -250,6 +255,20 @@ func (sc storeCalls) OfTurn(ctx context.Context, t contact.Turn) ([]contact.Call
 		out[i] = contact.Call{Contact: c.Agent, TaskID: a2a.TaskID(c.TaskID), ContextID: c.RemoteContextID}
 	}
 	return out, nil
+}
+
+// harnessFollowup follows up the tasks of other agents with the watches.
+// The schedules agent's tasks end within their request, and the watches
+// can't reach them.
+type harnessFollowup struct {
+	watches *Watches
+}
+
+func (f harnessFollowup) Follow(ctx context.Context, t contact.Turn, o contact.Outstanding) {
+	if o.Contact == pairings.SchedulesAgent {
+		return
+	}
+	f.watches.Follow(ctx, t, o)
 }
 
 var _ contact.Followup = (*Watches)(nil)
