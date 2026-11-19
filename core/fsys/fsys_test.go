@@ -541,9 +541,18 @@ func TestDirSeesOutsideChanges(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	got, _, err := f.Changes(ctx, cursor)
-	if err != nil {
-		t.Fatalf("FS.Changes() error = %v", err)
+	// A scan may see the file between its creation and its write, and report
+	// it empty first.
+	var got []fsys.Info
+	for {
+		changed, next, err := f.Changes(ctx, cursor)
+		if err != nil {
+			t.Fatalf("FS.Changes() error = %v", err)
+		}
+		got, cursor = changed, next
+		if len(got) != 1 || got[0].Size != 0 {
+			break
+		}
 	}
 	if diff := cmp.Diff([]entry{{Path: "outside.txt", Size: 1}}, entries(got), cmpopts.IgnoreFields(entry{}, "Mode")); diff != "" {
 		t.Fatalf("FS.Changes() wrong changes (-want +got) diff = %s", diff)
