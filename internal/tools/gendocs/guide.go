@@ -21,7 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/a2arun"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clidoc"
 )
 
 // generatedPart is text of a page between the markers
@@ -36,6 +38,7 @@ type generatedPart struct {
 var generatedParts = []generatedPart{
 	{path: filepath.Join("..", "..", "guide", "config.md"), name: "live-settings", text: liveSettingsText},
 	{path: filepath.Join("..", "configuration.md"), name: "settings", text: settingsTable},
+	{path: filepath.Join("..", "a2a-run.md"), name: "a2a-run-flags", text: func() string { return clidoc.FlagTable(a2arun.Command()) }},
 }
 
 // liveSettingsText says which settings a running agent applies at once.

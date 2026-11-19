@@ -57,3 +57,5 @@ a2a plugin set-enabled true
 `A2ACLI_PLUGINS_ENABLED=true` turns them on for one shell.
 
 If `a2a serve` fails with `unknown command "serve" for "a2a"`, command plugins are off or `a2a-serve` is not on `PATH`.
+
+[`a2a-run`](a2a-run.md), which ships next to `a2a-serve`, is a command plugin too: `a2a run` runs it.

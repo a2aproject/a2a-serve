@@ -1,0 +1,127 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package a2arun
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/a2arun/serve"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+)
+
+const runShort = "Serve a coding agent in a sandbox over A2A"
+
+const runLong = `Serve a coding agent in a sandbox over A2A, for a host process that starts
+a2a-run and talks to it.
+
+a2a-run starts the agent, prints one JSON line on stdout once it is up, and
+serves A2A until it gets SIGINT or SIGTERM. Each A2A context runs in an agent
+process of its own. Logs go to stderr.`
+
+const runExample = `a2a-run --agent opencode --workspace dir:$PWD \
+  --inject-model-key openrouter=OPENROUTER_API_KEY \
+  --listen unix:///tmp/a2a-run.sock`
+
+// shutdownTimeout bounds the stop after a signal.
+const shutdownTimeout = 30 * time.Second
+
+// afterReadyError is an error of a server that printed its ready line.
+type afterReadyError struct{ err error }
+
+func (e *afterReadyError) Error() string { return e.err.Error() }
+
+func (e *afterReadyError) Unwrap() error { return e.err }
+
+// errAfterReady matches an [afterReadyError] with errors.Is.
+var errAfterReady = errors.New("a2a-run failed after it was ready")
+
+func (e *afterReadyError) Is(target error) bool { return target == errAfterReady }
+
+// Command returns the a2a-run command, for its reference.
+func Command() *cobra.Command { return newRunCmd(IO{}) }
+
+func newRunCmd(std IO) *cobra.Command {
+	cfg := serve.Config{Getenv: std.Getenv, Stderr: std.Stderr, Version: std.Version}
+	cmd := &cobra.Command{
+		Use:           "a2a-run",
+		Short:         runShort,
+		Long:          runLong,
+		Example:       runExample,
+		Version:       std.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return &serve.UsageError{Err: fmt.Errorf("a2a-run takes no arguments, got %q; pass the agent with --agent or --command", args[0])}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error { return run(cmd.Context(), cfg, std) },
+	}
+	cmd.SetOut(std.Stdout)
+	cmd.SetErr(std.Stderr)
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &serve.UsageError{Err: err} })
+	f := cmd.Flags()
+	f.SortFlags = false
+	f.StringVar(&cfg.Agent, "agent", "", "Agent to serve, a `name`: claude or opencode")
+	f.StringVar(&cfg.Command, "command", "", "Command line of the agent, as shell `words`: replaces the command of --agent, or without --agent starts any agent that speaks ACP on stdio")
+	f.StringVar(&cfg.Model, "model", "", "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's)")
+	f.StringVar(&cfg.Image, "image", "", "Container image of the agent (default: the image of --agent); only applies to --sandbox docker")
+	f.StringVar(&cfg.Sandbox, "sandbox", serve.SandboxDocker, "Where the agent runs: docker, or local for this machine without isolation")
+	f.StringVar(&cfg.Egress, "egress", "", "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts and the hosts of --inject-model-key) (default internet)")
+	f.StringSliceVar(&cfg.EgressAllow, "egress-allow", nil, "Host the Docker sandbox may also reach, private ones included: a `rule` such as nas.lan, *.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port")
+	f.StringArrayVar(&cfg.Env, "env", nil, "Variable for the agent: `NAME=value`, such as DEBUG=1")
+	f.StringArrayVar(&cfg.Secrets, "secret", nil, "Variable of your environment to pass to the agent, such as an API key: a `NAME`; the agent can read it")
+	f.StringArrayVar(&cfg.ModelKeys, "inject-model-key", nil, "API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of "+strings.Join(egressrules.ProviderNames(), ", ")+" and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY")
+	f.StringVar(&cfg.Workspace, "workspace", "", "Workspace that the agent processes share: `dir:path`, a directory")
+	f.StringVar(&cfg.Listen, "listen", serve.DefaultListen, "Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port")
+	f.IntVar(&cfg.MaxProcesses, "max-processes", serve.DefaultMaxProcesses, "Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts")
+	f.StringVar(&cfg.Home, "home", "", "Agent home `directory`, which every agent process shares (default: a temporary directory, removed at exit)")
+	f.StringVar(&cfg.StateDir, "state-dir", "", "State `directory` for the files of the agent processes that no process may see, such as their sockets (default: a temporary directory, removed at exit)")
+	return cmd
+}
+
+// run serves the agent of cfg until ctx ends or the A2A endpoint fails.
+func run(ctx context.Context, cfg serve.Config, std IO) error {
+	srv, err := serve.Start(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := writeReady(std.Stdout, srv.Ready()); err != nil {
+		return &afterReadyError{err: errors.Join(fmt.Errorf("writing the ready line: %w", err), stop(ctx, srv))}
+	}
+	var served error
+	select {
+	case <-ctx.Done():
+	case served = <-srv.Done():
+	}
+	if err := errors.Join(served, stop(ctx, srv)); err != nil {
+		return &afterReadyError{err: err}
+	}
+	return nil
+}
+
+// stop closes srv within shutdownTimeout.
+func stop(ctx context.Context, srv *serve.Server) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	defer cancel()
+	return srv.Close(ctx)
+}
