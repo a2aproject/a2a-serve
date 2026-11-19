@@ -360,6 +360,9 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 	if r.EnvDir == "" {
 		return "", errors.New("creating the container env file: no directory for it")
 	}
+	if _, err := fsutil.MkdirAll(filepath.Dir(r.EnvDir)); err != nil {
+		return "", fmt.Errorf("creating the container env file: %w", err)
+	}
 	if err := fsutil.MkdirReal(r.EnvDir); err != nil {
 		return "", fmt.Errorf("creating the container env file: %w", err)
 	}
