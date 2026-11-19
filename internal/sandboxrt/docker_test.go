@@ -70,6 +70,20 @@ func TestDockerRunnerStopRemovesEnvFiles(t *testing.T) {
 	}
 }
 
+func TestDockerRunnerCreatesEnvDirWithParents(t *testing.T) {
+	sandboxtest.FakeDocker(t, "exit 0")
+	envDir := filepath.Join(t.TempDir(), "run", "env")
+	r := &DockerRunner{Name: "a2a-coder", Image: "img", EnvDir: envDir, Env: []string{"KEY=secret"}}
+
+	if _, err := r.Command(context.Background(), Command{Path: "opencode"}); err != nil {
+		t.Fatalf("DockerRunner.Command() error = %v", err)
+	}
+
+	if got := dirNames(t, envDir); len(got) != 1 {
+		t.Fatalf("env directory has %v, want one env file", got)
+	}
+}
+
 func TestPruneEnvFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
