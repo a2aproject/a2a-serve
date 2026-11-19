@@ -48,10 +48,11 @@ type KeyedRate struct {
 // maxKeys keys are tracked, it admits the requests of other keys, so that
 // clients which fill the table can't lock out the rest.
 func NewKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string) *KeyedRate {
-	return newKeyedRate(limit, burst, maxKeys, key, time.Now)
+	return NewKeyedRateAt(limit, burst, maxKeys, key, time.Now)
 }
 
-func newKeyedRate(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string, now func() time.Time) *KeyedRate {
+// NewKeyedRateAt is [NewKeyedRate] with the clock now.
+func NewKeyedRateAt(limit rate.Limit, burst, maxKeys int, key func(*http.Request) string, now func() time.Time) *KeyedRate {
 	return &KeyedRate{
 		limit: limit, burst: burst, maxKeys: maxKeys, key: key, now: now,
 		idle: time.Duration(float64(burst) / float64(limit) * float64(time.Second)),

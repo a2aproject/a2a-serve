@@ -463,7 +463,10 @@ func newPeer(t *testing.T) testPeer {
 // returns their status.
 func ingressTryer(t *testing.T, forwardedFor string) (f *front.Front, serve func(segment string) int) {
 	t.Helper()
-	f, _ = newFront(t)
+	// A stopped clock keeps the buckets from refilling while a slow run
+	// sends its requests.
+	stopped := time.Now()
+	f = front.NewAt(info, meshbackend.Routes{}, echo(t, "control"), echo(t, "signin"), func() time.Time { return stopped })
 	f.Open(upstream(t))
 	return f, func(segment string) int {
 		req := httptest.NewRequest(http.MethodGet, "/ingress/"+url.PathEscape(segment)+"/a2a/coder/tasks", nil)
