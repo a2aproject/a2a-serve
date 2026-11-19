@@ -43,6 +43,7 @@
 //	env <name>       replies with the variable name and its value, or unset
 //	write <file>     writes file and replies whether it could
 //	rename <a> <b>   renames a to b and replies whether it could
+//	fetch <url>      sends GET url and replies with the status and the body
 //	read <file>      replies with the content of file
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	markdown         replies with Markdown that uses most of the syntax
@@ -65,6 +66,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -777,6 +779,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			a.chunk(sid, "rename ok")
 		}
 		end("end_turn")
+	case "fetch":
+		a.chunk(sid, fetch(arg))
+		end("end_turn")
 	case "dial":
 		c, err := net.DialTimeout("tcp", arg, 10*time.Second)
 		if err != nil {
@@ -947,4 +952,23 @@ func partsText(parts []*a2a.Part) string {
 		}
 	}
 	return strings.Join(out, "")
+}
+
+// fetch sends GET url and returns the status and up to 1 KiB of the body.
+func fetch(url string) string {
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Get(url)
+	if err != nil {
+		return "fetch error: " + err.Error()
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "closing the body:", err)
+		}
+	}()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+	if err != nil {
+		return "fetch error: " + err.Error()
+	}
+	return fmt.Sprintf("fetch %d %s", resp.StatusCode, body)
 }

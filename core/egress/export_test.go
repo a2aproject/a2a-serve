@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"net"
 	"net/netip"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
@@ -27,6 +28,12 @@ import (
 // and trusts roots for the hosts that get credentials.
 func NewWithHosts(cfg Config, roots *x509.CertPool) (*Boundary, error) {
 	return newBoundary(cfg, deps{roots: roots, resolver: loopbackResolver{}})
+}
+
+// NewProxyRouterWithTimeout returns a proxy router that waits timeout for
+// the proxy's decisions.
+func NewProxyRouterWithTimeout(cfg ProxyConfig, timeout time.Duration) (*ProxyRouter, error) {
+	return newProxyRouter(cfg, timeout)
 }
 
 type loopbackResolver struct{}

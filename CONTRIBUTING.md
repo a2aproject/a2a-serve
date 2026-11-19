@@ -76,7 +76,7 @@ The core knows nothing of people, roles, config files, chats, networks or the CL
 
 The frontend in `internal/` decides who calls and what they get. `internal/agentcfg` maps `config.yaml` to the core's inputs and words the errors with the flags and commands that fix them, and `internal/agentsrv` builds the agent with `a2aserve.New`, gives it its callers and hooks, and serves its A2A handler.
 
-`internal/a2arun` is the command line of `a2a-run`, a second command plugin that serves an agent to a host process. It is built from the core alone, and `go test ./internal/a2arun/` fails when it imports a package that the core doesn't.
+`internal/a2arun` is the command line of `a2a-run`, a second command plugin that serves an agent to a host process. It is built from the core alone, and `go test ./internal/a2arun/` fails when it imports a package that the core doesn't. `internal/a2arun/refhost` is a reference host that the tests use, and `internal/a2arun/conformance` checks a host's endpoints, the reference host's by default.
 
 Imports point from the frontend to the core. Among the public packages, `egress` comes first, `sandbox` imports it, and `a2aserve` imports both and `fsys`; `fsys` and `approval` import no other public package, and no package imports `a2aserve`. `go test ./core/` fails when the core breaks these rules or imports a frontend package; the few internal packages the core may use, such as `internal/fsutil`, are listed in that test.
 

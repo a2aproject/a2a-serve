@@ -1,0 +1,125 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package serve
+
+import (
+	"context"
+	"log/slog"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
+)
+
+// How the ready line names what decides the Docker sandbox's connections:
+// the egress policy, the egress proxy, or nothing, when the sandbox can't
+// route them through a2a-run and uses Docker's own network.
+const (
+	EgressPolicy = "policy"
+	EgressProxy  = "proxy"
+	EgressNone   = "none"
+)
+
+// resolveEgressProxy checks the --egress-proxy URL of cfg, which replaces
+// the egress rules and the model keys.
+func resolveEgressProxy(cfg Config) (string, error) {
+	if cfg.EgressProxy == "" {
+		return "", nil
+	}
+	var conflicts []string
+	for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0} {
+		if set {
+			conflicts = append(conflicts, flag)
+		}
+	}
+	if len(conflicts) > 0 {
+		slices.Sort(conflicts)
+		return "", usagef("--egress-proxy can't be used with %s: the proxy decides every connection of the agent and adds the model keys", strings.Join(conflicts, ", "))
+	}
+	if _, err := egress.NewProxyRouter(egress.ProxyConfig{URL: cfg.EgressProxy}); err != nil {
+		return "", usagef("invalid --egress-proxy: %w", err)
+	}
+	return cfg.EgressProxy, nil
+}
+
+// placeholderKeys returns the placeholder API keys of the model providers
+// that env doesn't set, so that the agent starts; the egress proxy adds
+// the real keys.
+func placeholderKeys(env []string) []string {
+	var out []string
+	for _, name := range egressrules.ProviderNames() {
+		p, _ := egressrules.LookupProvider(name)
+		if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, p.KeyEnv+"=") }) {
+			continue
+		}
+		out = append(out, p.KeyEnv+"="+p.Placeholder(p.KeyEnv))
+	}
+	return out
+}
+
+// newBoundary returns the egress boundary of the Docker sandbox: one whose
+// router is the egress proxy, with the proxy router, or one of the policy.
+func newBoundary(s settings, log *slog.Logger, turns *turns) (*egress.Boundary, *egress.ProxyRouter, error) {
+	if s.egressProxy == "" {
+		policy := s.policy
+		b, err := egress.New(egress.Config{Policy: func() egress.Policy { return policy }, Log: log})
+		return b, nil, err
+	}
+	r, err := egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task})
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := egress.New(egress.Config{Router: r, Log: log})
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, r, nil
+}
+
+// turns knows the task that each context's process works on, for the
+// requests that the egress proxy gets.
+type turns struct {
+	mu sync.Mutex
+	// current holds the task of each context with a turn in progress.
+	current map[string]string
+}
+
+func newTurns() *turns { return &turns{current: map[string]string{}} }
+
+// turn records the task of execCtx until the turn ends.
+func (t *turns) turn(_ context.Context, execCtx *a2asrv.ExecutorContext) func() {
+	contextID, task := execCtx.ContextID, string(execCtx.TaskID)
+	t.mu.Lock()
+	t.current[contextID] = task
+	t.mu.Unlock()
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.current[contextID] == task {
+			delete(t.current, contextID)
+		}
+	}
+}
+
+// task returns the task of the process of key, a context ID, or "".
+func (t *turns) task(key string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.current[key]
+}

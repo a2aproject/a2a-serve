@@ -56,7 +56,10 @@ type Ready struct {
 	A2A       string `json:"a2a,omitempty"`
 	Sandbox   string `json:"sandbox,omitempty"`
 	Workspace string `json:"workspace,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// Egress is how the Docker sandbox's connections are decided: by the
+	// egress policy or by the egress proxy.
+	Egress string `json:"egress,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Server serves the agent over A2A until Close.
@@ -64,6 +67,7 @@ type Server struct {
 	log      *slog.Logger
 	agent    *a2aserve.Agent
 	boundary *egress.Boundary
+	proxy    *egress.ProxyRouter
 	ln       net.Listener
 	http     *http.Server
 	served   chan error
@@ -98,13 +102,13 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating the state directory: %w", err)
 	}
-	rt, summary, err := srv.runtime(ctx, s, stderr)
+	rt, summary, boundary, err := srv.runtime(ctx, s, stderr)
 	if err != nil {
 		return nil, err
 	}
+	turns := newTurns()
 	if s.sandbox == SandboxDocker {
-		policy := s.policy
-		if srv.boundary, err = egress.New(egress.Config{Policy: func() egress.Policy { return policy }, Log: srv.log}); err != nil {
+		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns); err != nil {
 			return nil, err
 		}
 	}
@@ -134,6 +138,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
+		Hooks:    a2aserve.Hooks{Turn: turns.turn},
 		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}},
 		StateDir: stateDir,
 		Log:      srv.log,
@@ -153,6 +158,14 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		srv.served <- err
 	}()
 	srv.ready = Ready{Ready: true, A2A: url(srv.ln), Sandbox: summary, Workspace: s.workspace.kind}
+	switch {
+	case s.egressProxy != "":
+		srv.ready.Egress = EgressProxy
+	case s.sandbox == SandboxDocker && boundary:
+		srv.ready.Egress = EgressPolicy
+	case s.sandbox == SandboxDocker:
+		srv.ready.Egress = EgressNone
+	}
 	return srv, nil
 }
 
@@ -188,10 +201,13 @@ func (s *Server) release() error {
 	if s.boundary != nil {
 		errs = append(errs, s.boundary.Close())
 	}
+	if s.proxy != nil {
+		s.proxy.CloseIdleConnections()
+	}
 	for _, dir := range s.temp {
 		errs = append(errs, fsutil.RemoveAll(dir))
 	}
-	s.agent, s.ln, s.boundary, s.temp = nil, nil, nil, nil
+	s.agent, s.ln, s.boundary, s.proxy, s.temp = nil, nil, nil, nil, nil
 	return errors.Join(errs...)
 }
 
@@ -210,25 +226,29 @@ func (s *Server) dir(dir, pattern string) (string, error) {
 }
 
 // runtime returns the sandbox runtime of set, and how the ready line
-// describes it. It checks that Docker answers before anything starts.
-func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (sandbox.Runtime, string, error) {
+// describes it, and whether the egress boundary decides the sandbox's
+// connections. It checks that Docker answers before anything starts.
+func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_ sandbox.Runtime, summary string, boundary bool, _ error) {
 	if set.sandbox == SandboxLocal {
-		return sandbox.Local(), SandboxLocal, nil
+		return sandbox.Local(), SandboxLocal, false, nil
 	}
 	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
 	caps, err := rt.Probe(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
+	}
+	if !caps.Boundary && set.egressProxy != "" {
+		return nil, "", false, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)
 	}
 	rootless, err := sandboxrt.CheckDocker(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if rootless {
-		return rt, SandboxDocker + " (rootless)", nil
+		return rt, SandboxDocker + " (rootless)", caps.Boundary, nil
 	}
-	return rt, SandboxDocker, nil
+	return rt, SandboxDocker, caps.Boundary, nil
 }
