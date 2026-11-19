@@ -174,6 +174,11 @@ type Options struct {
 	// Executor replaces the main process, and runs every conversation,
 	// for tests.
 	Executor a2asrv.AgentExecutor
+	// Hooks are the hooks only the frontend sets; core/a2aserve adds the
+	// public ones to them.
+	Hooks Hooks
+	// PoolLabels name the processes of each pool in errors.
+	PoolLabels map[string]string
 }
 
 // Callers tells the runner about keys, which it treats as opaque.
@@ -195,8 +200,6 @@ type Pool struct {
 	MaxProcesses int
 	// QuestionTimeout stops a turn whose question gets no answer.
 	QuestionTimeout time.Duration
-	// Label names the processes of the pool in errors.
-	Label string
 }
 
 // Hooks are the caller's decisions inside a turn. Each is optional.

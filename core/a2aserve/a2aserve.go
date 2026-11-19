@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aevent"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
@@ -60,13 +61,6 @@ func init() {
 				env.process = &p
 			}
 			return ok && env != nil
-		},
-		ProcessOf: func(v any) (agentrun.ProcessOptions, bool) {
-			env, ok := v.(Environment)
-			if !ok || env.process == nil {
-				return agentrun.ProcessOptions{}, false
-			}
-			return *env.process, true
 		},
 		RunnerOf: func(v any) (*agentrun.Runner, bool) {
 			a, ok := v.(*Agent)
@@ -170,9 +164,6 @@ type Pool struct {
 	MaxProcesses int
 	// QuestionTimeout stops a turn whose question gets no answer.
 	QuestionTimeout time.Duration
-	// Label names the processes of the pool in errors, such as "the agent
-	// processes of users".
-	Label string
 }
 
 // Sessions keeps the agent session of each conversation, so that every
@@ -193,47 +184,26 @@ type Session struct {
 	Key string
 }
 
-// Hooks are the caller's decisions about turns and processes. Each is
-// optional.
+// Hooks are the caller's decisions about turns. Each is optional.
 type Hooks struct {
 	// Turn runs while the agent works on a message.
 	Turn func(ctx context.Context, task *a2asrv.ExecutorContext) (end func())
 	// Explain returns the status message of a failed turn, or nil for the
 	// error's text.
 	Explain func(ctx context.Context, task *a2asrv.ExecutorContext, err error) []*a2a.Part
-	// Refused words the error that refuses a turn, or returns "" for the
-	// error's text.
-	Refused func(err error) string
 	// Prompt returns the parts sent to the agent for a message.
 	Prompt func(ctx context.Context, task *a2asrv.ExecutorContext) ([]*a2a.Part, error)
 	// Stalled returns the status message of a turn that the Agent stopped
 	// since the agent sent nothing for d, while a tool call ran if tool, or
 	// nil for the Agent's own.
 	Stalled func(d time.Duration, tool bool) []*a2a.Part
-	// Abandoned stores the event that ends a task whose agent stopped
-	// while it waited for an answer, which no execution can emit.
-	Abandoned func(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) error
-	// Denied notes a tool call titled title that Tools denied.
-	Denied func(task *a2asrv.ExecutorContext, title string)
-	// LeftOutMCP reports a server of the project's .mcp.json left out of
-	// a session, since the process doesn't get the variables missing.
-	LeftOutMCP func(ctx context.Context, server string, missing []string)
-	// Hold holds what an admitted turn needs while it runs, until release.
-	// Its refusal fails the turn, and leaves a task that waits for an
-	// answer waiting.
-	Hold func(ctx context.Context, key string, task *a2asrv.ExecutorContext) (release func(), err error)
-	// CanStart refuses to start the process of key.
-	CanStart func(ctx context.Context, key string) error
-	// PrepareHome writes into the home of env before the process of key
-	// starts with it.
-	PrepareHome func(ctx context.Context, key string, env Environment) error
-	// AgentAPIError gets the errors of serving AgentAPI.
-	AgentAPIError func(err error)
 }
 
 // A2A configures the A2A request handler of an [Agent].
 type A2A struct {
-	// TaskStore stores the tasks; nil keeps them in memory.
+	// TaskStore stores the tasks; nil keeps them in memory. The Agent also
+	// stores there the end of a task whose agent stopped while the task
+	// waited for an answer, which no execution can emit.
 	TaskStore    taskstore.Store
 	Materializer taskstore.UpdateMaterializer
 	Interceptors []a2asrv.CallInterceptor
@@ -287,7 +257,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		Main:     cfg.Main.engine(),
 		Pools:    map[string]agentrun.Pool{},
 		AgentAPI: cfg.AgentAPI,
-		Hooks:    cfg.Hooks.engine(),
+
 		StateDir: cfg.StateDir,
 		Log:      cfg.Log,
 		Stderr:   cfg.Stderr,
@@ -304,6 +274,10 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	if cfg.options != nil {
 		rc.Options = *cfg.options
 	}
+	if cfg.A2A.TaskStore == nil {
+		cfg.A2A.TaskStore = taskstore.NewInMemory(&taskstore.InMemoryStoreConfig{Authenticator: a2asrv.NewTaskStoreAuthenticator()})
+	}
+	rc.Hooks = cfg.Hooks.engine(rc.Options.Hooks, cfg.A2A)
 	r, err := agentrun.New(rc)
 	if err != nil {
 		return nil, err
@@ -391,45 +365,43 @@ func (e Environment) engine() agentrun.Environment {
 	}
 }
 
-// environment returns the Environment of e, from the engine.
-func environment(e agentrun.Environment) Environment {
-	return Environment{
-		Workspace:   e.Workspace,
-		Home:        e.Home,
-		Env:         e.Env,
-		Credentials: e.Credentials,
-		Mounts:      e.Mounts,
-		Hide:        e.Hide,
-		Limits:      e.Limits,
-		Image:       e.Image,
-		Name:        e.Name,
-		Labels:      e.Labels,
-		Pool:        e.Pool,
-		process:     e.Process,
-	}
-}
-
-// engine returns h for the engine.
-func (h Hooks) engine() agentrun.Hooks {
-	out := agentrun.Hooks{
-		Hold:          h.Hold,
-		CanStart:      h.CanStart,
-		Turn:          h.Turn,
-		Prompt:        h.Prompt,
-		Denied:        h.Denied,
-		Refused:       h.Refused,
-		LeftOutMCP:    h.LeftOutMCP,
-		Stalled:       h.Stalled,
-		Explain:       h.Explain,
-		Abandoned:     h.Abandoned,
-		AgentAPIError: h.AgentAPIError,
-	}
-	if h.PrepareHome != nil {
-		out.PrepareHome = func(ctx context.Context, key string, env agentrun.Environment) error {
-			return h.PrepareHome(ctx, key, environment(env))
+// engine returns h for the engine, added to the hooks of the frontend of
+// this module. Without its own, a task whose agent stopped while it waited
+// for an answer ends in the task store of cfg.
+func (h Hooks) engine(frontend agentrun.Hooks, cfg A2A) agentrun.Hooks {
+	out := frontend
+	out.Turn, out.Explain, out.Prompt, out.Stalled = h.Turn, h.Explain, h.Prompt, h.Stalled
+	if out.Abandoned == nil {
+		materializer := cfg.Materializer
+		if materializer == nil {
+			materializer = taskstore.NewFullUpdateMaterializer(a2aevent.ApplyShallowUpdate)
 		}
+		out.Abandoned = abandon(cfg.TaskStore, materializer)
 	}
 	return out
+}
+
+// abandon stores the event that ends a task whose agent stopped while it
+// waited for an answer, unless the task ended first, such as by a reply.
+func abandon(store taskstore.Store, materializer taskstore.UpdateMaterializer) func(context.Context, *a2a.TaskStatusUpdateEvent) error {
+	return func(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) error {
+		stored, err := store.Get(ctx, ev.TaskID)
+		if err != nil {
+			return err
+		}
+		if stored.Task.Status.State.Terminal() {
+			return nil
+		}
+		task, err := materializer.ApplyUpdate(ctx, stored.Task, ev)
+		if err != nil {
+			return err
+		}
+		_, err = store.Update(ctx, &taskstore.UpdateRequest{Task: task, Event: ev, PrevTask: stored.Task, PrevVersion: stored.Version})
+		if errors.Is(err, taskstore.ErrConcurrentModification) {
+			return nil
+		}
+		return err
+	}
 }
 
 // callers adapts Callers to the engine.

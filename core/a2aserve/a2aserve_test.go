@@ -24,10 +24,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
@@ -101,6 +103,41 @@ func client(t *testing.T, a *a2aserve.Agent) *a2aclient.Client {
 		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
 	}
 	return c
+}
+
+// sendTask sends text in the conversation contextID and returns its task.
+func sendTask(t *testing.T, c *a2aclient.Client, contextID, text string) *a2a.Task {
+	t.Helper()
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))
+	msg.ContextID = contextID
+	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg})
+	if err != nil {
+		t.Fatalf("Client.SendMessage(%q) error = %v", text, err)
+	}
+	task, ok := res.(*a2a.Task)
+	if !ok {
+		t.Fatalf("Client.SendMessage(%q) = %T, want a task", text, res)
+	}
+	return task
+}
+
+// waitStored waits for the task id in store to reach state.
+func waitStored(t *testing.T, store taskstore.Store, id a2a.TaskID, state a2a.TaskState) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		stored, err := store.Get(context.Background(), id)
+		if err != nil {
+			t.Fatalf("Store.Get() error = %v", err)
+		}
+		if stored.Task.Status.State == state {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Store.Get() state = %v, want %v", stored.Task.Status.State, state)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // send sends text in the conversation contextID and returns the text of
@@ -263,4 +300,22 @@ func TestMainGetsConfigMainWithoutAskingCallers(t *testing.T) {
 	if got == "" {
 		t.Fatalf("Client.SendMessage(pid) in the main process = %q, want its pid", got)
 	}
+}
+
+func TestUnansweredQuestionFailsTheTaskInTheStore(t *testing.T) {
+	t.Parallel()
+	store := taskstore.NewInMemory(nil)
+	callers := keyedCallers{envs: map[string]a2aserve.Environment{"a": environment(t, "users")}}
+	a := newAgent(t, a2aserve.Config{
+		Callers: callers,
+		Pools:   map[string]a2aserve.Pool{"users": {QuestionTimeout: 100 * time.Millisecond}},
+		A2A:     a2aserve.A2A{TaskStore: store},
+	})
+
+	task := sendTask(t, client(t, a), "a-1", "ask")
+
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("Client.SendMessage(ask) state = %v, want %v", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	waitStored(t, store, task.ID, a2a.TaskStateFailed)
 }

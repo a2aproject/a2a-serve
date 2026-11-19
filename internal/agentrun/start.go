@@ -138,7 +138,7 @@ func (r *Runner) startPool(ctx context.Context, name string) (a2asrv.AgentExecut
 	cfg.QuestionTimeout = pool.QuestionTimeout
 	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("preparing %s: %w", cmp.Or(pool.Label, "the agent processes of the pool "+name), err)
+		return nil, nil, fmt.Errorf("preparing %s: %w", cmp.Or(r.cfg.Options.PoolLabels[name], "the agent processes of the pool "+name), err)
 	}
 	return r.stalls.guard(acp), func(context.Context) error { return acp.Close() }, nil
 }

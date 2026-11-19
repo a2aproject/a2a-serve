@@ -92,28 +92,18 @@ func (s *Server) newAgent(ctx context.Context, opts Options) error {
 		Pools: map[string]a2aserve.Pool{
 			// Approvals reject questions after their timeout; this stops the
 			// turn if that answer doesn't arrive.
-			guestPool: {QuestionTimeout: s.timings.GuestQuestionTimeout + time.Minute, Label: "the agent of guests"},
-			usersPool: {MaxProcesses: maxUserAgents, QuestionTimeout: s.timings.UserQuestionTimeout + time.Minute, Label: "the agent processes of users"},
+			guestPool: {QuestionTimeout: s.timings.GuestQuestionTimeout + time.Minute},
+			usersPool: {MaxProcesses: maxUserAgents, QuestionTimeout: s.timings.UserQuestionTimeout + time.Minute},
 		},
 		Sessions: sessionStore{s.sessions},
 		AgentAPI: http.HandlerFunc(s.serveAgentAPI),
 		Hooks: a2aserve.Hooks{
 			Turn:    func(ctx context.Context, execCtx *a2asrv.ExecutorContext) func() { return s.claims.turn(ctx, execCtx) },
 			Explain: s.failure,
-			Refused: func(err error) string { return agentcfg.Explain(err).Error() },
 			Prompt: func(ctx context.Context, execCtx *a2asrv.ExecutorContext) ([]*a2a.Part, error) {
 				return s.queued.prompt(ctx, execCtx)
 			},
-			Stalled:   stalledTurn,
-			Abandoned: runnerTasks{s}.Abandon,
-			Denied:    func(execCtx *a2asrv.ExecutorContext, title string) { s.notes.Add(execCtx.TaskID, deniedNote(title)) },
-			LeftOutMCP: func(ctx context.Context, server string, missing []string) {
-				slog.WarnContext(ctx, "leaving out an MCP server with variables that the conversation's container doesn't get; pass them with --secret, or give them in the sandbox rule of its user", "server", server, "missing", missing)
-			},
-			Hold:          s.holdBudget,
-			CanStart:      s.canStart,
-			PrepareHome:   s.prepareHome,
-			AgentAPIError: func(err error) { reportFatal(s.fatal, err) },
+			Stalled: stalledTurn,
 		},
 		A2A: a2aserve.A2A{
 			TaskStore:          s.tasks.CutLists(),
@@ -147,6 +137,19 @@ func (s *Server) newAgent(ctx context.Context, opts Options) error {
 		MainPrepared:    s.mainPrepared,
 		AllSessions:     s.store.Sessions(),
 		Executor:        opts.Executor,
+		Hooks: agentrun.Hooks{
+			Refused:   func(err error) string { return agentcfg.Explain(err).Error() },
+			Abandoned: runnerTasks{s}.Abandon,
+			Denied:    func(execCtx *a2asrv.ExecutorContext, title string) { s.notes.Add(execCtx.TaskID, deniedNote(title)) },
+			LeftOutMCP: func(ctx context.Context, server string, missing []string) {
+				slog.WarnContext(ctx, "leaving out an MCP server with variables that the conversation's container doesn't get; pass them with --secret, or give them in the sandbox rule of its user", "server", server, "missing", missing)
+			},
+			Hold:          s.holdBudget,
+			CanStart:      s.canStart,
+			PrepareHome:   s.prepareHome,
+			AgentAPIError: func(err error) { reportFatal(s.fatal, err) },
+		},
+		PoolLabels: map[string]string{guestPool: "the agent of guests", usersPool: "the agent processes of users"},
 	})
 	if err != nil {
 		return errors.Join(err, b.Close())
@@ -445,9 +448,9 @@ func (s *Server) startedWith(key string) (access.Sandbox, bool) {
 
 // prepareHome writes the storage note and the instructions into the agent
 // home of key, after it checks that the home is private.
-func (s *Server) prepareHome(ctx context.Context, key string, env a2aserve.Environment) error {
+func (s *Server) prepareHome(ctx context.Context, key string, env agentrun.Environment) error {
 	home := env.Home
-	s.setStorageNote(home, stateOf(agentrun.ProcessOf(env).State).Storage)
+	s.setStorageNote(home, stateOf(env.Process.State).Storage)
 	_, isUser := agentkey.UserOf(key)
 	switch {
 	case key == agentkey.Guest:
