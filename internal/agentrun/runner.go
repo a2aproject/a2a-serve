@@ -301,11 +301,10 @@ type Runner struct {
 	workspaces sync.Map
 	// mainState is the state of the Environment the main process started
 	// with, and mainSince when it started.
-	mainState  atomic.Pointer[any]
-	mainSince  atomic.Pointer[time.Time]
-	closeMain  func(context.Context) error
-	stopServe  func(context.Context) error
-	background sync.WaitGroup
+	mainState atomic.Pointer[any]
+	mainSince atomic.Pointer[time.Time]
+	closeMain func(context.Context) error
+	stopServe func(context.Context) error
 }
 
 var _ a2asrv.AgentExecutor = (*Runner)(nil)
@@ -603,7 +602,6 @@ func (r *Runner) StopServe(ctx context.Context) error {
 // Start does, and stops the processes of the pools. Turns that start later
 // fail.
 func (r *Runner) Shutdown(ctx context.Context) error {
-	r.background.Wait()
 	if r.split == nil {
 		return nil
 	}

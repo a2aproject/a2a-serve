@@ -601,7 +601,14 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		return nil
 	})
 	closers.push(s.engine.Shutdown)
-	s.background.Go(func() { s.sandboxLoop(ctx) })
+	// The loop stops processes, so it ends before they close, also when
+	// the start fails later on.
+	var loop sync.WaitGroup
+	loop.Go(func() { s.sandboxLoop(ctx) })
+	closers.push(func(context.Context) error {
+		loop.Wait()
+		return nil
+	})
 	return nil
 }
 
