@@ -78,7 +78,7 @@ type ContactStatus struct {
 
 // resolveContacts checks the --contact and --contact-auth flags of cfg and
 // reads the auth values they name.
-func resolveContacts(cfg Config) ([]contact.Entry, error) {
+func resolveContacts(ctx context.Context, cfg Config) ([]contact.Entry, error) {
 	if len(cfg.Contacts) > contact.MaxContacts {
 		return nil, usagef("%d --contact flags: a2a-run takes at most %d", len(cfg.Contacts), contact.MaxContacts)
 	}
@@ -86,10 +86,10 @@ func resolveContacts(cfg Config) ([]contact.Entry, error) {
 	for _, v := range cfg.Contacts {
 		name, u, ok := strings.Cut(v, "=")
 		if !ok || name == "" || u == "" {
-			return nil, usagef("invalid --contact %q: want <name>=<url>, such as reviewer=https://reviewer.example.com", contactArg(name))
+			return nil, usagef("invalid --contact: want name=url, such as reviewer=https://reviewer.example.com")
 		}
 		if !names.Valid(name) {
-			return nil, usagef("invalid --contact name %q: want %s", name, names.Rule)
+			return nil, usagef("invalid --contact name: want a name of %s, then =url", names.Rule)
 		}
 		if slices.ContainsFunc(out, func(e contact.Entry) bool { return strings.EqualFold(e.Name, name) }) {
 			return nil, usagef("--contact names %s twice; give each contact one URL", name)
@@ -104,17 +104,17 @@ func resolveContacts(cfg Config) ([]contact.Entry, error) {
 	for _, v := range cfg.ContactAuth {
 		name, value, ok := strings.Cut(v, "=")
 		if !ok || name == "" {
-			return nil, usagef("invalid --contact-auth for %q: want <name>=<header value>, such as reviewer=\"Bearer env:REVIEWER_TOKEN\"", contactArg(name))
+			return nil, usagef("invalid --contact-auth: want name=value, such as reviewer=\"Bearer env:REVIEWER_TOKEN\"")
 		}
 		i := slices.IndexFunc(out, func(e contact.Entry) bool { return strings.EqualFold(e.Name, name) })
 		if i < 0 {
-			return nil, usagef("--contact-auth names %s, which no --contact names", name)
+			return nil, usagef("--contact-auth names a contact that no --contact names; the contacts are: %s", contactNames(out))
 		}
 		if seen[out[i].Name] {
-			return nil, usagef("--contact-auth names %s twice; give each contact one header value", name)
+			return nil, usagef("--contact-auth names %s twice; give each contact one header value", out[i].Name)
 		}
 		seen[out[i].Name] = true
-		auth, err := resolveAuth(cfg, out[i].Name, value, stdin)
+		auth, err := resolveAuth(ctx, cfg, out[i].Name, value, stdin)
 		if err != nil {
 			return nil, err
 		}
@@ -123,13 +123,17 @@ func resolveContacts(cfg Config) ([]contact.Entry, error) {
 	return out, nil
 }
 
-// contactArg is what an error shows of a flag value that may hold a
-// secret: only the name before the =.
-func contactArg(name string) string {
-	if name == "" {
-		return "..."
+// contactNames lists the names of entries for an error, which leaves out
+// the value of a flag that names none of them: it may be a secret.
+func contactNames(entries []contact.Entry) string {
+	if len(entries) == 0 {
+		return "none"
 	}
-	return name + "=..."
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Name
+	}
+	return strings.Join(out, ", ")
 }
 
 // checkContactURL refuses a contact URL that isn't an https:// card URL or
@@ -155,7 +159,7 @@ func checkContactURL(name, v string) error {
 // resolveAuth returns the header value of --contact-auth for the contact
 // name, whose last word may be env:VAR or -. The errors leave the value
 // out.
-func resolveAuth(cfg Config, name, value string, stdin *stdinSecret) (string, error) {
+func resolveAuth(ctx context.Context, cfg Config, name, value string, stdin *stdinSecret) (string, error) {
 	value = strings.TrimSpace(value)
 	head, last := "", value
 	if i := strings.LastIndexByte(value, ' '); i >= 0 {
@@ -163,7 +167,7 @@ func resolveAuth(cfg Config, name, value string, stdin *stdinSecret) (string, er
 	}
 	switch {
 	case last == "-":
-		secret, err := stdin.read(name)
+		secret, err := stdin.read(ctx, name)
 		if err != nil {
 			return "", err
 		}
@@ -187,6 +191,9 @@ func resolveAuth(cfg Config, name, value string, stdin *stdinSecret) (string, er
 	return auth, nil
 }
 
+// maxStdinSecret bounds the line of a --contact-auth value of -.
+const maxStdinSecret = 64 << 10
+
 // stdinSecret reads the one --contact-auth value of - from stdin: a line,
 // or a prompt without echo on a terminal.
 type stdinSecret struct {
@@ -195,7 +202,9 @@ type stdinSecret struct {
 	consumed bool
 }
 
-func (s *stdinSecret) read(name string) (string, error) {
+// read returns the value, or ctx's error once ctx ends first. The read
+// that ctx abandons stays blocked on stdin until the process exits.
+func (s *stdinSecret) read(ctx context.Context, name string) (string, error) {
 	if s.consumed {
 		return "", usagef("--contact-auth %s: only one --contact-auth can read its value from stdin; pass the others as env:VAR", name)
 	}
@@ -203,14 +212,49 @@ func (s *stdinSecret) read(name string) (string, error) {
 	if s.in == nil {
 		return "", usagef("--contact-auth %s: - reads the value from stdin, which a2a-run doesn't have here", name)
 	}
+	read := func() (string, error) { return readLine(s.in, name) }
 	if f, ok := s.in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		return s.readTerminal(f, name)
+		state, err := term.GetState(int(f.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("--contact-auth %s: reading the prompt: %w", name, err)
+		}
+		defer func() {
+			if ctx.Err() == nil {
+				return
+			}
+			if err := term.Restore(int(f.Fd()), state); err != nil {
+				slog.Warn("restoring the terminal", "error", err)
+			}
+		}()
+		read = func() (string, error) { return s.readTerminal(f, name) }
 	}
-	line, err := bufio.NewReader(s.in).ReadString('\n')
+	type result struct {
+		value string
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		v, err := read()
+		done <- result{v, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-done:
+		return r.value, r.err
+	}
+}
+
+// readLine reads the first line of in, of at most maxStdinSecret bytes.
+func readLine(in io.Reader, name string) (string, error) {
+	line, err := bufio.NewReader(io.LimitReader(in, maxStdinSecret+1)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("--contact-auth %s: reading stdin: %w", name, err)
 	}
 	line = strings.TrimRight(line, "\r\n")
+	if len(line) > maxStdinSecret {
+		return "", usagef("--contact-auth %s: the line on stdin is longer than 64 KiB", name)
+	}
 	if line == "" {
 		return "", usagef("--contact-auth %s: stdin had no value", name)
 	}
@@ -236,6 +280,9 @@ func (s *stdinSecret) readTerminal(f *os.File, name string) (string, error) {
 	if v == "" {
 		return "", usagef("--contact-auth %s: empty value", name)
 	}
+	if len(v) > maxStdinSecret {
+		return "", usagef("--contact-auth %s: the value is longer than 64 KiB", name)
+	}
 	return v, nil
 }
 
@@ -245,6 +292,9 @@ type contacts struct {
 	dir   *contact.Static
 	proxy *contact.Proxy
 	relay *approvalQueue
+	// stopped ends when the server stops, which ends the relay's waits.
+	stopped    context.Context
+	stopRelays context.CancelFunc
 
 	mu sync.Mutex
 	// lined holds the agents line each conversation got last, and when.
@@ -271,7 +321,8 @@ func startContacts(ctx context.Context, entries []contact.Entry, transport http.
 	if err != nil {
 		return nil, errors.Join(err, dir.Close())
 	}
-	return &contacts{dir: dir, proxy: proxy, relay: relay, lined: map[string]linedContext{}}, nil
+	stopped, stop := context.WithCancel(context.Background())
+	return &contacts{dir: dir, proxy: proxy, relay: relay, stopped: stopped, stopRelays: stop, lined: map[string]linedContext{}}, nil
 }
 
 // agentAPI returns the handler of the agent's requests, or nil without
@@ -384,11 +435,19 @@ func (c *contacts) forgetOldest() {
 	delete(c.lined, oldest)
 }
 
-// close stops fetching the cards.
+// stop ends the waits of the relay, whose tasks fail as the server stops.
+func (c *contacts) stop() {
+	if c != nil {
+		c.stopRelays()
+	}
+}
+
+// close ends the waits of the relay and stops fetching the cards.
 func (c *contacts) close() error {
 	if c == nil {
 		return nil
 	}
+	c.stopRelays()
 	return c.dir.Close()
 }
 

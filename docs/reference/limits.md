@@ -188,6 +188,7 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Fetch of a contact's agent card | 10 seconds. `a2a-run` fetches the cards every hour, and a card that failed every minute. |
 | Approvals of contacts that wait for the host | 1000. An approval is forgotten after 4 hours. |
 | Wait for a contact's task after an answer to its approval | 1 hour |
+| A `--contact-auth` value read from stdin with `-` | 64 KiB |
 
 ## Logs
 

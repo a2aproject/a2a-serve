@@ -147,7 +147,7 @@ func (fc *fakeContact) canceledTasks() []a2a.TaskID {
 func (fc *fakeContact) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		if execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired {
-			finishContact(execCtx, yield, "fake answer")
+			fc.answered(ctx, execCtx, yield)
 			return
 		}
 		if !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
@@ -163,11 +163,33 @@ func (fc *fakeContact) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 			if yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
 				<-ctx.Done()
 			}
-		case "ask":
+		case "ask", "askhold":
 			ev, err := structuredinput.NewRequestEvent(execCtx, permissionRequest(), a2a.NewTextPart("Run git push?"))
 			yield(ev, err)
 		}
 	}
+}
+
+// answered runs the task once its approval is answered: after ask, it
+// sends its result a while later without a status in between, and after
+// askhold it works until canceled.
+func (fc *fakeContact) answered(ctx context.Context, execCtx *a2asrv.ExecutorContext, yield func(a2a.Event, error) bool) {
+	if len(execCtx.StoredTask.History) > 0 && messageText(execCtx.StoredTask.History[0]) == "askhold" {
+		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
+			return
+		}
+		fc.mu.Lock()
+		fc.held = append(fc.held, execCtx.TaskID)
+		fc.mu.Unlock()
+		<-ctx.Done()
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(300 * time.Millisecond):
+	}
+	finishContact(execCtx, yield, "fake answer")
 }
 
 func finishContact(execCtx *a2asrv.ExecutorContext, yield func(a2a.Event, error) bool, result string) {
@@ -208,9 +230,25 @@ func (h *recordingHandler) note(m map[string]any) {
 	h.fc.metadata = append(h.fc.metadata, m)
 }
 
+// SendMessage answers a reply to a task that asks to return at once with
+// the task as it is, before the reply is processed, as a server may.
 func (h *recordingHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	h.note(req.Metadata)
-	return h.RequestHandler.SendMessage(ctx, req)
+	if req.Config == nil || !req.Config.ReturnImmediately || req.Message.TaskID == "" {
+		return h.RequestHandler.SendMessage(ctx, req)
+	}
+	task, err := h.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: req.Message.TaskID})
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		for _, err := range h.RequestHandler.SendStreamingMessage(context.WithoutCancel(ctx), req) {
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return task, nil
 }
 
 func (h *recordingHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
@@ -231,6 +269,14 @@ type contactsServer struct {
 	stderr   *syncBuffer
 	reviewer *fakeContact
 	planner  *fakeContact
+	once     sync.Once
+	closeErr error
+}
+
+// close closes the server once.
+func (cs *contactsServer) close(ctx context.Context) error {
+	cs.once.Do(func() { cs.closeErr = cs.srv.Close(ctx) })
+	return cs.closeErr
 }
 
 func startWithContacts(t *testing.T, extra ...string) *contactsServer {
@@ -258,7 +304,7 @@ func startWithContacts(t *testing.T, extra ...string) *contactsServer {
 	}
 	cs.srv = srv
 	t.Cleanup(func() {
-		if err := srv.Close(context.Background()); err != nil {
+		if err := cs.close(context.Background()); err != nil {
 			t.Errorf("Server.Close() error = %v", err)
 		}
 		if strings.Contains(cs.stderr.String(), contactSecret) {
@@ -430,6 +476,45 @@ func TestContactsRelayApprovalsToTheHost(t *testing.T) {
 	if task.Status.State != a2a.TaskStateCompleted || testutil.AllArtifactText(task) != "fake answer" {
 		t.Fatalf("reviewer task = %v %q, want completed with the fake answer", task.Status.State, testutil.AllArtifactText(task))
 	}
+}
+
+func TestContactsFailATaskWaitingForAContactWhenTheServerStops(t *testing.T) {
+	t.Parallel()
+	cs := startWithContacts(t)
+	ctx := context.Background()
+	asked := cs.sendTask(ctx, t, "ctx-stop", "", "call reviewer askhold")
+	if asked.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("call reviewer askhold state = %v, want %v", asked.Status.State, a2a.TaskStateInputRequired)
+	}
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("once"))
+	msg.ContextID, msg.TaskID = "ctx-stop", asked.ID
+	last := make(chan a2a.Event, 1)
+	go func() {
+		var ev a2a.Event
+		for e, err := range cs.client.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: msg}) {
+			if err != nil {
+				break
+			}
+			ev = e
+		}
+		last <- ev
+	}()
+	waitUntil(t, "the reviewer to work on the answer", func() bool { return len(cs.reviewer.heldTasks()) == 1 })
+
+	start := time.Now()
+	if err := cs.close(ctx); err != nil {
+		t.Fatalf("Server.Close() error = %v", err)
+	}
+
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("Server.Close() took %v, want it to end the wait for the contact", d)
+	}
+	ev := <-last
+	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	if !ok || up.Status.State != a2a.TaskStateFailed || !strings.Contains(messageText(up.Status.Message), "The server stopped") {
+		t.Fatalf("last event of the answer = %#v, want the task failed as the server stopped", ev)
+	}
+	waitUntil(t, "the reviewer's task to be canceled", func() bool { return slices.Equal(cs.reviewer.canceledTasks(), cs.reviewer.heldTasks()) })
 }
 
 func messageText(m *a2a.Message) string {

@@ -86,7 +86,7 @@ type Server struct {
 // cfg.Listen. The agent's turns end when ctx does. Errors of the flags are
 // [UsageError]s.
 func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
-	s, err := cfg.resolve()
+	s, err := cfg.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +211,7 @@ func (s *Server) Done() <-chan error { return s.served }
 // Close stops serving and stops the agent processes, whose tasks fail. It
 // removes the Unix socket and the temporary directories.
 func (s *Server) Close(ctx context.Context) error {
+	s.contacts.stop()
 	shutdown := make(chan error, 1)
 	go func() { shutdown <- s.http.Shutdown(ctx) }()
 	err := s.agent.Close(ctx)

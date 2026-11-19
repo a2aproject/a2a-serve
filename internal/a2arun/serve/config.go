@@ -15,6 +15,7 @@
 package serve
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -149,7 +150,7 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // resolve checks cfg and reads the variables it names. Its errors are
 // [UsageError]s.
-func (cfg Config) resolve() (settings, error) {
+func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	s := settings{model: cfg.Model, image: cfg.Image, home: cfg.Home, stateDir: cfg.StateDir}
 	var err error
 	if s.sandbox, err = resolveSandbox(cfg); err != nil {
@@ -179,7 +180,7 @@ func (cfg Config) resolve() (settings, error) {
 	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
 		return settings{}, err
 	}
-	if s.contacts, err = resolveContacts(cfg); err != nil {
+	if s.contacts, err = resolveContacts(ctx, cfg); err != nil {
 		return settings{}, err
 	}
 	if s.listen, err = parseListen(cfg.Listen); err != nil {

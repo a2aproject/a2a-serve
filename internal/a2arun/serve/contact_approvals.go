@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/approval"
 	"github.com/a2aproject/a2a-serve/core/contact"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/question"
 )
 
@@ -48,6 +49,9 @@ const (
 	// resultPoll is how often a contact's task is read while its stream
 	// isn't available.
 	resultPoll = time.Second
+	// stopCancelTimeout bounds canceling the tasks at contacts of a task
+	// that the stop ends.
+	stopCancelTimeout = 10 * time.Second
 	// maxResultText bounds the text of a contact's result that goes to the
 	// agent after an approval.
 	maxResultText = 64 << 10
@@ -317,6 +321,11 @@ func (r *relay) answer(ctx context.Context, execCtx *a2asrv.ExecutorContext, nam
 			yield(r.ask(execCtx, p, fmt.Sprintf("I couldn't use the reply. This question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", "))), nil)
 			return
 		}
+		outer := ctx
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stopWatch := context.AfterFunc(r.contacts.stopped, cancel)
+		defer stopWatch()
 		target, err := r.contacts.dir.Target(ctx, p.turn, p.contact)
 		if err != nil {
 			r.contacts.relay.drop(execCtx.TaskID)
@@ -328,6 +337,9 @@ func (r *relay) answer(ctx context.Context, execCtx *a2asrv.ExecutorContext, nam
 			_, err = contact.Dial(ctx, p.turn, target, msg)
 		}
 		r.contacts.relay.done(p)
+		if r.stopping(outer, execCtx, p, yield) {
+			return
+		}
 		if err != nil {
 			r.contacts.relay.drop(execCtx.TaskID)
 			r.log.Warn("sending the host's answer to a contact", "contact", p.contact, "task", p.task.ID, "error", redactURLs(err.Error()))
@@ -337,8 +349,8 @@ func (r *relay) answer(ctx context.Context, execCtx *a2asrv.ExecutorContext, nam
 		if !yield(statusEvent(execCtx, a2a.TaskStateWorking, fmt.Sprintf("Sent the answer to %s; waiting for its task.", p.contact)), nil) {
 			return
 		}
-		result, err := waitSettled(ctx, r.contacts.proxy.Guard(p.turn, p.contact, target), p.task.ID)
-		if ctx.Err() != nil {
+		result, err := waitSettled(ctx, r.contacts.proxy.Guard(p.turn, p.contact, target), p.task.ID, p.task.Status)
+		if r.stopping(outer, execCtx, p, yield) || outer.Err() != nil {
 			return
 		}
 		if err != nil {
@@ -354,6 +366,23 @@ func (r *relay) answer(ctx context.Context, execCtx *a2asrv.ExecutorContext, nam
 		}
 		r.continueTurn(ctx, execCtx, resultText(p.contact, option, result), yield)
 	}
+}
+
+// stopping reports whether the server stops. Then it fails the task of
+// execCtx as the runner fails the turns that the stop ends, and cancels
+// the tasks it started at contacts, which nobody waits for anymore.
+func (r *relay) stopping(ctx context.Context, execCtx *a2asrv.ExecutorContext, p *pendingApproval, yield func(a2a.Event, error) bool) bool {
+	if r.contacts.stopped.Err() == nil {
+		return false
+	}
+	r.contacts.relay.drop(execCtx.TaskID)
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopCancelTimeout)
+	defer cancel()
+	if _, err := r.contacts.proxy.CancelCalls(cctx, p.turn); err != nil {
+		r.log.Warn("canceling the tasks at contacts of a task that the stop ended", "task", execCtx.TaskID, "error", redactURLs(err.Error()))
+	}
+	agentrun.FailStopped(execCtx, true)(yield)
+	return true
 }
 
 // continueTurn runs the next turn of the task of execCtx with text.
@@ -376,24 +405,27 @@ func (r *relay) continueTurn(ctx context.Context, execCtx *a2asrv.ExecutorContex
 	}
 }
 
-// waitSettled waits until the contact's task id ends or waits for input,
-// and returns it.
-func waitSettled(ctx context.Context, h a2asrv.RequestHandler, id a2a.TaskID) (*a2a.Task, error) {
+// waitSettled waits until the contact's task id ends or waits for input
+// again, and returns it. A status the same as answered, the one that the
+// answer replied to, is still waiting for the answer: a server can return
+// at once, before it processes the reply.
+func waitSettled(ctx context.Context, h a2asrv.RequestHandler, id a2a.TaskID, answered a2a.TaskStatus) (*a2a.Task, error) {
 	ctx, cancel := context.WithTimeout(ctx, resultTimeout)
 	defer cancel()
+	moved := func(st a2a.TaskStatus) bool { return settled(st.State) && !sameStatus(st, answered) }
 	for {
 		task, err := h.GetTask(ctx, &a2a.GetTaskRequest{ID: id})
 		if err != nil {
 			return nil, err
 		}
-		if settled(task.Status.State) {
+		if moved(task.Status) {
 			return task, nil
 		}
 		for ev, err := range h.SubscribeToTask(ctx, &a2a.SubscribeToTaskRequest{ID: id}) {
 			if err != nil {
 				break
 			}
-			if state, ok := stateOf(ev); ok && settled(state) {
+			if st, ok := statusOf(ev); ok && moved(st) {
 				break
 			}
 		}
@@ -403,6 +435,18 @@ func waitSettled(ctx context.Context, h a2asrv.RequestHandler, id a2a.TaskID) (*
 		case <-time.After(resultPoll):
 		}
 	}
+}
+
+// sameStatus reports whether a and b are one status: the same state,
+// message and time.
+func sameStatus(a, b a2a.TaskStatus) bool {
+	if a.State != b.State || (a.Message == nil) != (b.Message == nil) || (a.Message != nil && a.Message.ID != b.Message.ID) {
+		return false
+	}
+	if a.Timestamp == nil || b.Timestamp == nil {
+		return a.Timestamp == b.Timestamp
+	}
+	return a.Timestamp.Equal(*b.Timestamp)
 }
 
 func settled(s a2a.TaskState) bool {
@@ -471,13 +515,18 @@ func replyOption(msg *a2a.Message, q *question.Question) (question.Option, bool)
 }
 
 func stateOf(ev a2a.Event) (a2a.TaskState, bool) {
+	st, ok := statusOf(ev)
+	return st.State, ok
+}
+
+func statusOf(ev a2a.Event) (a2a.TaskStatus, bool) {
 	switch e := ev.(type) {
 	case *a2a.TaskStatusUpdateEvent:
-		return e.Status.State, true
+		return e.Status, true
 	case *a2a.Task:
-		return e.Status.State, true
+		return e.Status, true
 	}
-	return "", false
+	return a2a.TaskStatus{}, false
 }
 
 func statusEvent(execCtx *a2asrv.ExecutorContext, state a2a.TaskState, text string) *a2a.TaskStatusUpdateEvent {
