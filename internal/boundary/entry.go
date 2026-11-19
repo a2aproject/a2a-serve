@@ -31,7 +31,8 @@ const EnvRelayKey = "A2A_SERVE_RELAY_KEY"
 // [--check] [--fs <dst>=<socket>[,ro]]... <socket> <uid> <gid> [<command>
 // [args...]]. Each --fs is a live workspace that mount mounts. It returns
 // the exit code of the command. A failed setup writes its reason to stderr
-// and returns [SetupFailedExit], and a failed mount [MountFailedExit].
+// and returns [SetupFailedExit], a failed mount [MountFailedExit], and a
+// tree that a mount can't read [TreeFailedExit].
 func RunInit(args, env []string, failSetup bool, mount MountFunc, stderr io.Writer) (int, error) {
 	check := len(args) > 0 && args[0] == "--check"
 	if check {
@@ -63,6 +64,12 @@ func RunInit(args, env []string, failSetup bool, mount MountFunc, stderr io.Writ
 			return 0, err
 		}
 		return MountFailedExit, nil
+	}
+	if treeErr, ok := errors.AsType[*TreeError](err); ok {
+		if _, err := fmt.Fprintf(stderr, "%s%v\n", TreeErrorPrefix, treeErr); err != nil {
+			return 0, err
+		}
+		return TreeFailedExit, nil
 	}
 	if setupErr, ok := errors.AsType[*SetupError](err); ok {
 		if _, err := fmt.Fprintf(stderr, "a2a-init: setting up the sandbox's network: %v\n", setupErr); err != nil {

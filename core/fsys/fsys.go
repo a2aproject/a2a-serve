@@ -50,7 +50,8 @@ type Info struct {
 
 // FS is a file tree. Its methods are safe for concurrent use. Write,
 // Mkdir, Symlink and Rename create the missing parent directories of their
-// path.
+// path. No method follows a symlink: a path through one doesn't exist, and
+// creating an entry under one fails with ENOTDIR.
 type FS interface {
 	// Stat describes the entry at path. It doesn't follow a symlink.
 	Stat(ctx context.Context, path string) (Info, error)

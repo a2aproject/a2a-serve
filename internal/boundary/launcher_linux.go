@@ -80,6 +80,13 @@ func Launch(cfg LaunchConfig) (int, error) {
 		return 0, &SetupError{Err: err}
 	}
 	defer eng.Close()
+	if len(cfg.Mounts) > 0 {
+		// The FUSE mount took CAP_SYS_ADMIN, for which Docker relaxes its
+		// seccomp profile.
+		if err := confine(); err != nil {
+			return 0, &MountError{Dst: cfg.Mounts[0].Dst, Err: err}
+		}
+	}
 	if cfg.Check {
 		return 0, checkMounts(cfg.Mounts)
 	}
@@ -341,11 +348,12 @@ func lastCap() (int, error) {
 }
 
 // checkMounts lists the root of each mount, as the agent would, once the
-// launcher dropped its privileges.
+// launcher dropped its privileges. Its error is one of the tree that the
+// mount shows, which this machine can mount.
 func checkMounts(mounts []Mount) error {
 	for _, m := range mounts {
 		if _, err := os.ReadDir(m.Dst); err != nil {
-			return &MountError{Dst: m.Dst, Err: err}
+			return &TreeError{Dst: m.Dst, Err: err}
 		}
 	}
 	return nil

@@ -253,9 +253,13 @@ func servedFailed(code int, out string) bool {
 
 // mountReasonOf returns the launcher's mount error in the output of a
 // check, or its first line.
-func mountReasonOf(out string) string {
+func mountReasonOf(out string) string { return launcherReason(out, boundary.MountErrorPrefix) }
+
+// launcherReason returns the error that the launcher reported after prefix
+// in the output of a check, or its first line.
+func launcherReason(out, prefix string) string {
 	for line := range strings.Lines(out) {
-		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), boundary.MountErrorPrefix); ok {
+		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
 			return reason
 		}
 	}
@@ -329,6 +333,9 @@ func (r *DockerRunner) probe(ctx context.Context, envFile string) error {
 		return fmt.Errorf("the check didn't finish: %w", ctx.Err())
 	}
 	ee, exited := errors.AsType[*exec.ExitError](err)
+	if exited && len(r.Served) > 0 && ee.ExitCode() == boundary.TreeFailedExit {
+		return &ServedTreeError{Dst: r.Served[0].Dst, Reason: launcherReason(string(out), boundary.TreeErrorPrefix)}
+	}
 	if exited && len(r.Served) > 0 && servedFailed(ee.ExitCode(), string(out)) {
 		return &ServedMountError{Dst: r.Served[0].Dst, Reason: mountReasonOf(string(out))}
 	}

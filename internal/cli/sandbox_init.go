@@ -36,7 +36,8 @@ socket, mounts each --fs live workspace, whose file operations go to the
 file server on its socket, drops every capability, and runs the command as
 uid:gid. With --check, it sets up the network and the mounts and drops the
 capabilities, then exits. When the setup fails, it exits with status ` + strconv.Itoa(boundary.SetupFailedExit) + `,
-and when a mount fails, with status ` + strconv.Itoa(boundary.MountFailedExit) + `.`,
+when a mount fails, with status ` + strconv.Itoa(boundary.MountFailedExit) + `, and when the check can't read the tree of a
+mount, with status ` + strconv.Itoa(boundary.TreeFailedExit) + `.`,
 		Args:               cobra.MinimumNArgs(3),
 		DisableFlagParsing: true,
 		SilenceUsage:       true,

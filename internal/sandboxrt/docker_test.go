@@ -510,6 +510,19 @@ func TestDockerRunnerProbeReportsMountFailures(t *testing.T) {
 	}
 }
 
+func TestDockerRunnerProbeReportsTreeFailures(t *testing.T) {
+	sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+`echo "`+boundary.TreeErrorPrefix+`reading /workspace: input/output error" >&2; exit 123`)
+	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}}
+	err := r.Probe(context.Background())
+	got, ok := errors.AsType[*ServedTreeError](err)
+	if !ok || got.Reason != "reading /workspace: input/output error" {
+		t.Fatalf("DockerRunner.Probe() error = %v, want a ServedTreeError with the launcher's reason", err)
+	}
+	if _, ok := errors.AsType[*ServedMountError](err); ok {
+		t.Fatalf("DockerRunner.Probe() error = %v, want no ServedMountError, which disables live workspaces", err)
+	}
+}
+
 func TestDockerRunnerCommandWithRelay(t *testing.T) {
 	t.Parallel()
 	r := &DockerRunner{

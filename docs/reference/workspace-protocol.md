@@ -12,6 +12,8 @@ The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http
 
 A path is relative to the root of the tree, slash-separated and cleaned, such as `src/main.go`. `.` is the root. The server refuses a path that is empty, absolute, contains NUL, or isn't clean, such as `a/../b`, `./a`, `a/` or `..`, with `400` and the code `invalid`. The client refuses such paths before it sends them, and refuses entries outside the directory it listed.
 
+No request follows a symlink. A path through one doesn't exist, and a request that creates an entry under one gets `422` with the code `not_dir`.
+
 ## Entries
 
 `stat`, `list`, writes and changes describe an entry as a JSON object:

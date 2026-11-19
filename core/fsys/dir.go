@@ -49,9 +49,9 @@ const (
 // directory holds more entries than it compares.
 var ErrTooManyEntries = errors.New("the directory has too many entries to follow its changes")
 
-// Dir returns the tree of the host directory at root. No method reaches
-// outside it, also through symlinks, which it creates and describes as
-// they are. The changes made outside its methods appear in its feed once
+// Dir returns the tree of the host directory at root. No method follows a
+// symlink, which it creates and describes as it is: as in Memory, a path
+// through one doesn't exist, and nothing can be created under it. The changes made outside its methods appear in its feed once
 // Changes compares the directory with what it saw last: on every call, and
 // every second while it waits. It compares up to 200000 entries.
 func Dir(root string) FS { return newDir(root, defaultMaxChanges, defaultMaxEntries, defaultPoll) }
@@ -73,7 +73,10 @@ type dir struct {
 	seen map[string]Info
 }
 
-// in runs f with the root of the directory and the host form of p.
+// in runs f with the root of the directory and the host form of p, once
+// no parent of p is a symlink. A path through one doesn't exist for the
+// methods that read or remove, and fails with ENOTDIR for those that
+// create, as in Memory.
 func (d *dir) in(op, p string, f func(r *os.Root, name string) error) (err error) {
 	if err := checkPath(op, p); err != nil {
 		return err
@@ -83,7 +86,42 @@ func (d *dir) in(op, p string, f func(r *os.Root, name string) error) (err error
 		return err
 	}
 	defer func() { err = errors.Join(err, r.Close()) }()
-	return f(r, filepath.FromSlash(p))
+	name := filepath.FromSlash(p)
+	if err := checkParents(r, name); err != nil {
+		switch op {
+		case "stat", "readdir", "open", "remove", "rename":
+			return &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+		}
+		return err
+	}
+	return f(r, name)
+}
+
+// checkParents fails with ENOTDIR when a parent of name, from the root
+// down, is a symlink or isn't a directory, since the methods of os.Root
+// follow a symlink in the root. A missing parent ends the check. A parent
+// that a symlink replaces between the check and the operation is still
+// followed; only symlinks that are already in the tree can race this way.
+func checkParents(r *os.Root, name string) error {
+	dir := filepath.Dir(name)
+	if dir == "." {
+		return nil
+	}
+	cur := ""
+	for part := range strings.SplitSeq(dir, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := r.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return &fs.PathError{Op: "lstat", Path: filepath.ToSlash(cur), Err: errNotDir}
+		}
+	}
+	return nil
 }
 
 // infoOf describes the entry at p, which fi describes.
@@ -339,6 +377,9 @@ func (d *dir) Rename(ctx context.Context, from, to string) error {
 	}
 	err := d.in("rename", from, func(r *os.Root, name string) error {
 		if _, err := r.Lstat(name); err != nil {
+			return err
+		}
+		if err := checkParents(r, filepath.FromSlash(to)); err != nil {
 			return err
 		}
 		if err := mkdirs(r, filepath.Dir(filepath.FromSlash(to))); err != nil {

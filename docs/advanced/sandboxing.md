@@ -66,6 +66,9 @@ The launcher mounts the tree with FUSE:
 1. `docker run` adds `--device /dev/fuse` and the `SYS_ADMIN` capability.
 1. The launcher mounts FUSE at the workspace path before it drops its capabilities. It keeps serving the mount after it drops them, and sends each operation over the fs socket.
 1. The agent inherits no capability and no file of the launcher, so it can't answer the mount's calls or unmount it.
+1. Docker relaxes its seccomp profile for a container with `SYS_ADMIN`, so the launcher installs its own filter before it starts the agent. The filter refuses new namespaces, mounts, keyrings and bpf, as Docker's default profile does.
+
+The agent can reach the fs socket directly. The server applies the masks and the read-only setting there too, follows no symlink, and refuses symlinks that lead into masked paths.
 
 Files are written whole. The writes to an open file go to a buffer in the container, and reach the program when the agent closes, flushes or syncs the file. The last write wins. Many network file systems use these close-to-open semantics, and they suit editors and build tools. A program that changes a file in place through `mmap`, such as a database, changes it in the tree when it closes the file. The buffers are bounded per file and per container, as [Limits](../reference/limits.md#live-workspace) lists.
 

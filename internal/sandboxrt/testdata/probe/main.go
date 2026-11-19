@@ -20,15 +20,20 @@
 // "ln:<target>=<path>", "cp:<from>=<to>" and "chmod:<path>=<octal mode>"
 // print whether they work, "readlink:<path>" prints the target, "mode:<path>"
 // the permission bits, and "exec:<path>" whether the file runs.
+// "unshare:user" prints the errno of unshare(CLONE_NEWUSER), and
+// "userns:<path>" runs path in new user and network namespaces and prints
+// whether it runs or EPERM.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -96,6 +101,18 @@ func probe(kind, target string) string {
 		return fmt.Sprintf("%04o", fi.Mode().Perm())
 	case "exec":
 		return result(exec.Command(target).Run())
+	case "unshare":
+		if err := syscall.Unshare(syscall.CLONE_NEWUSER); err != nil {
+			return errnoName(err)
+		}
+		return "ok"
+	case "userns":
+		cmd := exec.Command(target)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET}
+		if err := cmd.Run(); err != nil {
+			return errnoName(err)
+		}
+		return "ok"
 	case "dial":
 		c, err := net.DialTimeout("tcp", target, 10*time.Second)
 		if err != nil {
@@ -107,6 +124,17 @@ func probe(kind, target string) string {
 		return "ok"
 	}
 	return "unknown"
+}
+
+// errnoName names the errno of err, such as EPERM.
+func errnoName(err error) string {
+	switch {
+	case errors.Is(err, syscall.EPERM):
+		return "EPERM"
+	case errors.Is(err, syscall.EINVAL):
+		return "EINVAL"
+	}
+	return "error: " + err.Error()
 }
 
 func result(err error) string {

@@ -356,6 +356,7 @@ func TestDockerServesLiveWorkspace(t *testing.T) {
 			"cp:/probe=/ws/tool", "chmod:/ws/tool=755", "mode:/ws/tool", "exec:/ws/tool",
 			"ln:tool=/ws/link", "readlink:/ws/link", "rm:/ws/delete.txt",
 			"read:/ws/.mcp.json", "ls:/ws/sub", "write:/ws/.mcp.json", "mkdir:/ws/.a2a",
+			"unshare:user", "userns:/probe",
 		}},
 		Mounts: []sandbox.Mount{{Dst: "/ws", Src: sandbox.Served(masked)}},
 		Labels: map[string]string{"a2a.test": "sandbox"},
@@ -379,6 +380,8 @@ func TestDockerServesLiveWorkspace(t *testing.T) {
 		"ls:/ws/sub 0 entries",
 		"write:/ws/.mcp.json error",
 		"mkdir:/ws/.a2a error",
+		"unshare:user EPERM",
+		"userns:/probe EPERM",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())

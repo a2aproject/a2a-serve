@@ -15,12 +15,15 @@
 // Package fsysmask lays the masks of a sandbox over an fsys tree that the
 // sandbox shows live, as the bind mounts of a container lay them over a
 // host directory: files shown with other contents, directories private to
-// the sandbox, names hidden at any depth, and a read-only view.
+// the sandbox, names hidden at any depth, and a read-only view. Paths
+// through a symlink, and symlinks that lead to a masked path, are refused,
+// so that a tree that follows symlinks doesn't take a path past the masks.
 package fsysmask
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -151,6 +154,47 @@ func (m *masked) refuseChange(op, p string, k kind) error {
 	return nil
 }
 
+// checkParents refuses p when a parent of it in the tree is a symlink, so
+// that a tree that follows symlinks doesn't take p past the masks. A path
+// in a Private directory is in a tree of the mask, which doesn't follow.
+func (m *masked) checkParents(ctx context.Context, op, p string, k kind) error {
+	if k != plain && k != fixed {
+		return nil
+	}
+	parts := strings.Split(p, "/")
+	for i := 1; i < len(parts); i++ {
+		dir := strings.Join(parts[:i], "/")
+		info, err := m.tree.Stat(ctx, dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode&fs.ModeSymlink != 0 {
+			return denied(op, p, "the path goes through the symlink "+dir)
+		}
+	}
+	return nil
+}
+
+// checkTarget refuses a symlink at p to target when target, from the
+// directory of p, is masked. An absolute target, or one out of the tree,
+// is resolved where the tree is mounted, through the masks.
+func (m *masked) checkTarget(op, p, target string) error {
+	if path.IsAbs(target) {
+		return nil
+	}
+	resolved := path.Join(path.Dir(p), target)
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return nil
+	}
+	if k := m.classify(resolved).kind; k != plain {
+		return denied(op, p, "the symlink leads to "+resolved+", which the sandbox hides or masks")
+	}
+	return nil
+}
+
 func (m *masked) rootInfo(p string) fsys.Info {
 	return fsys.Info{Path: p, Mode: fs.ModeDir | 0o755, ModTime: m.created, Version: "private"}
 }
@@ -163,6 +207,9 @@ func (m *masked) fixedInfo(info fsys.Info) fsys.Info {
 
 func (m *masked) Stat(ctx context.Context, p string) (fsys.Info, error) {
 	pl := m.classify(p)
+	if err := m.checkParents(ctx, "stat", p, pl.kind); err != nil {
+		return fsys.Info{}, err
+	}
 	switch pl.kind {
 	case hidden:
 		return fsys.Info{}, notExist("stat", p)
@@ -184,6 +231,9 @@ func (m *masked) Stat(ctx context.Context, p string) (fsys.Info, error) {
 
 func (m *masked) ReadDir(ctx context.Context, p string) ([]fsys.Info, error) {
 	pl := m.classify(p)
+	if err := m.checkParents(ctx, "readdir", p, pl.kind); err != nil {
+		return nil, err
+	}
 	switch pl.kind {
 	case hidden:
 		return nil, notExist("readdir", p)
@@ -229,6 +279,9 @@ func (m *masked) Open(ctx context.Context, p string) (io.ReadCloser, error) {
 // OpenRange implements [fsys.RangeOpener].
 func (m *masked) OpenRange(ctx context.Context, p string, offset, length int64) (io.ReadCloser, error) {
 	pl := m.classify(p)
+	if err := m.checkParents(ctx, "open", p, pl.kind); err != nil {
+		return nil, err
+	}
 	switch pl.kind {
 	case hidden:
 		return nil, notExist("open", p)
@@ -255,6 +308,9 @@ func (m *masked) Write(ctx context.Context, p string, r io.Reader, mode fs.FileM
 	if err := m.refuseChange("write", p, pl.kind); err != nil {
 		return fsys.Info{}, err
 	}
+	if err := m.checkParents(ctx, "write", p, pl.kind); err != nil {
+		return fsys.Info{}, err
+	}
 	if pl.kind != private {
 		return m.tree.Write(ctx, p, r, mode, ifVersion)
 	}
@@ -273,6 +329,9 @@ func (m *masked) Mkdir(ctx context.Context, p string, mode fs.FileMode) error {
 	if err := m.refuseChange("mkdir", p, pl.kind); err != nil {
 		return err
 	}
+	if err := m.checkParents(ctx, "mkdir", p, pl.kind); err != nil {
+		return err
+	}
 	if pl.kind == private {
 		return pl.tree.Mkdir(ctx, pl.rel, mode)
 	}
@@ -282,6 +341,12 @@ func (m *masked) Mkdir(ctx context.Context, p string, mode fs.FileMode) error {
 func (m *masked) Symlink(ctx context.Context, target, p string) error {
 	pl := m.classify(p)
 	if err := m.refuseChange("symlink", p, pl.kind); err != nil {
+		return err
+	}
+	if err := m.checkTarget("symlink", p, target); err != nil {
+		return err
+	}
+	if err := m.checkParents(ctx, "symlink", p, pl.kind); err != nil {
 		return err
 	}
 	if pl.kind == private {
@@ -301,6 +366,24 @@ func (m *masked) Rename(ctx context.Context, from, to string) error {
 	if err := m.refuseChange("rename", to, dst.kind); err != nil {
 		return err
 	}
+	if err := m.checkParents(ctx, "rename", from, src.kind); err != nil {
+		return err
+	}
+	if err := m.checkParents(ctx, "rename", to, dst.kind); err != nil {
+		return err
+	}
+	if src.kind == plain {
+		// A relative symlink leads elsewhere from another directory.
+		info, err := m.tree.Stat(ctx, from)
+		if err != nil {
+			return err
+		}
+		if info.Mode&fs.ModeSymlink != 0 {
+			if err := m.checkTarget("rename", to, info.Target); err != nil {
+				return err
+			}
+		}
+	}
 	switch {
 	case src.kind == private && dst.kind == private && src.root == dst.root:
 		return src.tree.Rename(ctx, src.rel, dst.rel)
@@ -316,6 +399,9 @@ func (m *masked) Remove(ctx context.Context, p string) error {
 		return notExist("remove", p)
 	}
 	if err := m.refuseChange("remove", p, pl.kind); err != nil {
+		return err
+	}
+	if err := m.checkParents(ctx, "remove", p, pl.kind); err != nil {
 		return err
 	}
 	if pl.kind == private {

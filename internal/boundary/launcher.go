@@ -80,6 +80,24 @@ func (e *MountError) Unwrap() error { return e.Err }
 // [MountError].
 const MountErrorPrefix = "a2a-init: mounting the live workspace: "
 
+// TreeFailedExit is the exit code of the launcher's check when it mounted
+// a live workspace, and reading its tree failed.
+const TreeFailedExit = 123
+
+// TreeError is an error of reading the tree of a live workspace that the
+// launcher mounted, such as of a file server that doesn't answer.
+type TreeError struct {
+	Dst string
+	Err error
+}
+
+func (e *TreeError) Error() string { return "reading " + e.Dst + ": " + e.Err.Error() }
+func (e *TreeError) Unwrap() error { return e.Err }
+
+// TreeErrorPrefix starts the line in which the launcher reports a
+// [TreeError].
+const TreeErrorPrefix = "a2a-init: reading the live workspace: "
+
 // SetupError is an error of setting up the container's network or
 // dropping its capabilities.
 type SetupError struct{ Err error }

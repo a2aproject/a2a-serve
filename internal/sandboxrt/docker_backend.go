@@ -167,7 +167,9 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		}
 		if err := d.probeOnce(len(spec.Served) > 0, func() error { return r.Probe(ctx) }); err != nil {
 			cerr := errors.Join(closeFn(), r.Stop(ctx))
-			if _, ok := errors.AsType[*ServedMountError](err); ok {
+			_, mountFailed := errors.AsType[*ServedMountError](err)
+			_, treeFailed := errors.AsType[*ServedTreeError](err)
+			if mountFailed || treeFailed {
 				return nil, errors.Join(err, cerr)
 			}
 			if !errors.Is(err, ErrNoBoundary) {

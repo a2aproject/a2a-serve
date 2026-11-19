@@ -90,6 +90,18 @@ func (e *ServedMountError) Error() string {
 	return "the sandbox can't show the live workspace at " + e.Dst + ": " + e.Reason
 }
 
+// ServedTreeError is the error of a [ServedMount] that the sandbox
+// mounted, and whose tree it couldn't read, such as of a file server that
+// doesn't answer. Unlike a [ServedMountError], it fails only this start.
+type ServedTreeError struct {
+	Dst    string
+	Reason string
+}
+
+func (e *ServedTreeError) Error() string {
+	return "the sandbox can't read the live workspace at " + e.Dst + ": " + e.Reason
+}
+
 // Network is the network of a sandbox: the runtime's own, or none but the
 // egress boundary.
 type Network struct {

@@ -19,6 +19,11 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -193,5 +198,116 @@ func TestMaskFiltersChanges(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"new.go"}, got); diff != "" {
 		t.Fatalf("FS.Changes() wrong paths (-want +got) diff = %s", diff)
+	}
+}
+
+// serveMasked serves tree with masks like a workspace's over a Unix
+// socket, as the agent reaches it, and returns its client.
+func serveMasked(t *testing.T, tree fsys.FS) fsys.FS {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "fsysmask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("removing the socket directory error = %v", err)
+		}
+	})
+	ln, err := net.Listen("unix", filepath.Join(dir, "fs.sock"))
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	srv := httptest.NewUnstartedServer(fsys.Handler(fsysmask.New(tree, fsysmask.Rules{
+		Files:   map[string][]byte{".mcp.json": []byte("{}")},
+		Private: []string{".opencode"},
+		Hidden:  func(name string) bool { return name == ".a2a" },
+	})))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	c, err := fsys.Client("unix://" + ln.Addr().String())
+	if err != nil {
+		t.Fatalf("fsys.Client() error = %v", err)
+	}
+	return c
+}
+
+func TestMaskRefusesSymlinksIntoMasks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	root := t.TempDir()
+	c := serveMasked(t, fsys.Dir(root))
+	ctx := context.Background()
+	for _, tc := range []struct{ target, link string }{
+		{".a2a", "h"},
+		{".a2a/state", "h"},
+		{"sub/.a2a", "h"},
+		{"../.a2a", "sub/h"},
+		{".mcp.json", "m"},
+		{".opencode", "o"},
+		{"../.opencode/x", "sub/o"},
+	} {
+		if err := c.Symlink(ctx, tc.target, tc.link); !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("Client.Symlink(%q, %q) error = %v, want %v", tc.target, tc.link, err, fs.ErrPermission)
+		}
+	}
+	for _, tc := range []struct{ target, link string }{{"main.go", "ok"}, {"../main.go", "sub/ok"}, {"/etc/passwd", "abs"}, {"..", "up"}} {
+		if err := c.Symlink(ctx, tc.target, tc.link); err != nil {
+			t.Fatalf("Client.Symlink(%q, %q) error = %v, want nil", tc.target, tc.link, err)
+		}
+	}
+}
+
+func TestMaskRefusesPathsThroughSymlinks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	root := t.TempDir()
+	for p, data := range map[string]string{".a2a/secret": "secret", ".opencode/agent.md": "host's"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{"h": ".a2a", "o": ".opencode"} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := serveMasked(t, fsys.Dir(root))
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		op   func() error
+	}{
+		{name: "read", op: func() error { _, err := c.Open(ctx, "h/secret"); return err }},
+		{name: "stat", op: func() error { _, err := c.Stat(ctx, "h/secret"); return err }},
+		{name: "list", op: func() error { _, err := c.ReadDir(ctx, "h"); return err }},
+		{name: "write", op: func() error { _, err := c.Write(ctx, "h/evil", strings.NewReader("x"), 0o644, ""); return err }},
+		{name: "write in a private directory", op: func() error { _, err := c.Write(ctx, "o/agent.md", strings.NewReader("x"), 0o644, ""); return err }},
+		{name: "remove", op: func() error { return c.Remove(ctx, "h/secret") }},
+		{name: "rename out", op: func() error { return c.Rename(ctx, "h/secret", "stolen") }},
+	}
+	for _, tc := range tests {
+		if err := tc.op(); err == nil {
+			t.Fatalf("%s through a symlink error = nil, want one", tc.name)
+		}
+	}
+	for p, want := range map[string]string{".a2a/secret": "secret", ".opencode/agent.md": "host's"} {
+		got, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil || string(got) != want {
+			t.Fatalf("the host's %s = %q, %v, want it unchanged", p, got, err)
+		}
+	}
+	for _, p := range []string{".a2a/evil", "stolen"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("the host's %s error = %v, want %v", p, err, fs.ErrNotExist)
+		}
 	}
 }

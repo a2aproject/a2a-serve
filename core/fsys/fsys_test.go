@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -260,6 +261,50 @@ func TestMkdir(t *testing.T) {
 		write(t, f, "file", "x", 0o644)
 		if err := f.Mkdir(ctx, "file", 0o755); !errors.Is(err, fs.ErrExist) {
 			t.Fatalf("FS.Mkdir() over a file error = %v, want %v", err, fs.ErrExist)
+		}
+	})
+}
+
+func TestPathsDontGoThroughSymlinks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	forEach(t, func(t *testing.T, newFS func(int) fsys.FS) {
+		f := newTree(t, newFS)
+		ctx := context.Background()
+		write(t, f, "dir/secret", "secret", 0o644)
+		if err := f.Symlink(ctx, "dir", "link"); err != nil {
+			t.Fatalf("FS.Symlink() error = %v", err)
+		}
+		tests := []struct {
+			name string
+			op   func() error
+			want error
+		}{
+			{name: "stat", op: func() error { _, err := f.Stat(ctx, "link/secret"); return err }, want: fs.ErrNotExist},
+			{name: "open", op: func() error { _, err := f.Open(ctx, "link/secret"); return err }, want: fs.ErrNotExist},
+			{name: "list the link", op: func() error { _, err := f.ReadDir(ctx, "link"); return err }, want: syscall.ENOTDIR},
+			{name: "list through the link", op: func() error { _, err := f.ReadDir(ctx, "link/sub"); return err }, want: fs.ErrNotExist},
+			{name: "remove", op: func() error { return f.Remove(ctx, "link/secret") }, want: fs.ErrNotExist},
+			{name: "rename from", op: func() error { return f.Rename(ctx, "link/secret", "stolen") }, want: fs.ErrNotExist},
+			{name: "write", op: func() error { _, err := f.Write(ctx, "link/new", strings.NewReader("x"), 0o644, ""); return err }, want: syscall.ENOTDIR},
+			{name: "write deeper", op: func() error { _, err := f.Write(ctx, "link/a/new", strings.NewReader("x"), 0o644, ""); return err }, want: syscall.ENOTDIR},
+			{name: "mkdir", op: func() error { return f.Mkdir(ctx, "link/new", 0o755) }, want: syscall.ENOTDIR},
+			{name: "symlink", op: func() error { return f.Symlink(ctx, "x", "link/new") }, want: syscall.ENOTDIR},
+			{name: "rename to", op: func() error { return f.Rename(ctx, "dir/secret", "link/moved") }, want: syscall.ENOTDIR},
+		}
+		for _, tc := range tests {
+			if err := tc.op(); !errors.Is(err, tc.want) {
+				t.Fatalf("%s through a symlink error = %v, want %v", tc.name, err, tc.want)
+			}
+		}
+		got, err := f.ReadDir(ctx, "dir")
+		if err != nil {
+			t.Fatalf("FS.ReadDir(dir) error = %v", err)
+		}
+		if diff := cmp.Diff([]entry{{Path: "dir/secret", Mode: 0o644, Size: 6}}, entries(got)); diff != "" {
+			t.Fatalf("FS.ReadDir(dir) after the operations through the symlink wrong entries (-want +got) diff = %s", diff)
 		}
 	})
 }

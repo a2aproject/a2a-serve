@@ -38,8 +38,10 @@ import (
 func TestDockerProbeOnce(t *testing.T) {
 	t.Parallel()
 	setupErr := &EgressSetupError{Reason: "no tun"}
+	mountErr := &ServedMountError{Dst: "/workspace", Reason: "permission denied"}
 	tests := []struct {
 		name      string
+		served    bool
 		first     error
 		wantCalls int
 		wantErr   error
@@ -47,6 +49,8 @@ func TestDockerProbeOnce(t *testing.T) {
 		{name: "check passes", wantCalls: 1},
 		{name: "setup fails", first: setupErr, wantCalls: 1, wantErr: setupErr},
 		{name: "docker fails", first: errors.New("docker: Error response from daemon: EOF"), wantCalls: 2},
+		{name: "mount fails", served: true, first: mountErr, wantCalls: 1, wantErr: mountErr},
+		{name: "tree fails", served: true, first: &ServedTreeError{Dst: "/workspace", Reason: "connection refused"}, wantCalls: 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,10 +64,10 @@ func TestDockerProbeOnce(t *testing.T) {
 				}
 				return nil
 			}
-			if err := d.probeOnce(false, probe); !errors.Is(err, tc.first) {
+			if err := d.probeOnce(tc.served, probe); !errors.Is(err, tc.first) {
 				t.Fatalf("Docker.probeOnce() error = %v, want %v", err, tc.first)
 			}
-			if err := d.probeOnce(false, probe); !errors.Is(err, tc.wantErr) {
+			if err := d.probeOnce(tc.served, probe); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("second Docker.probeOnce() error = %v, want %v", err, tc.wantErr)
 			}
 			if calls != tc.wantCalls {
