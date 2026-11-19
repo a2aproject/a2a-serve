@@ -39,10 +39,12 @@ const (
 )
 
 // serveTrees serves the trees of mounts on sockets in dir, the directory
-// of the egress socket, gives r their mounts, and returns the function
-// that stops the servers. A read-only mount refuses changes on its socket
-// too, since the agent can reach the socket.
-func serveTrees(r *DockerRunner, mounts []ServedMount, dir string) (func() error, error) {
+// of the egress socket, and returns the mounts of the launcher, with the
+// sandbox paths of their sockets, and the function that stops the servers.
+// A read-only mount refuses changes on its socket too, since the agent can
+// reach the socket.
+func serveTrees(mounts []ServedMount, dir string) ([]boundary.Mount, func() error, error) {
+	var out []boundary.Mount
 	var closers []func() error
 	closeAll := func() error {
 		var errs []error
@@ -53,7 +55,7 @@ func serveTrees(r *DockerRunner, mounts []ServedMount, dir string) (func() error
 	}
 	for i, m := range mounts {
 		if !path.IsAbs(m.Dst) || m.Tree == nil {
-			return nil, errors.Join(&ServedMountError{Dst: m.Dst, Reason: "want an absolute path and a tree"}, closeAll())
+			return nil, nil, errors.Join(&ServedMountError{Dst: m.Dst, Reason: "want an absolute path and a tree"}, closeAll())
 		}
 		tree := m.Tree
 		if m.ReadOnly {
@@ -62,7 +64,7 @@ func serveTrees(r *DockerRunner, mounts []ServedMount, dir string) (func() error
 		name := boundary.FSSocketPrefix + strconv.Itoa(i) + ".sock"
 		ln, err := net.Listen("unix", filepath.Join(dir, name))
 		if err != nil {
-			return nil, errors.Join(err, closeAll())
+			return nil, nil, errors.Join(err, closeAll())
 		}
 		srv := &http.Server{Handler: fsys.Handler(tree), ReadHeaderTimeout: fsHeaderTimeout, IdleTimeout: fsIdleTimeout}
 		go func() {
@@ -71,9 +73,9 @@ func serveTrees(r *DockerRunner, mounts []ServedMount, dir string) (func() error
 			}
 		}()
 		closers = append(closers, srv.Close)
-		r.Served = append(r.Served, boundary.Mount{Dst: path.Clean(m.Dst), Socket: boundary.ContainerSocketDir + "/" + name, ReadOnly: m.ReadOnly})
+		out = append(out, boundary.Mount{Dst: path.Clean(m.Dst), Socket: boundary.ContainerSocketDir + "/" + name, ReadOnly: m.ReadOnly})
 	}
-	return closeAll, nil
+	return out, closeAll, nil
 }
 
 // checkServed returns the error of the mounts of spec that a Docker

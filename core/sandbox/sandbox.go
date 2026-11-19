@@ -144,8 +144,9 @@ func Tmpfs() Source { return Source{kind: MountTmpfs} }
 //
 // The Docker runtime mounts it with FUSE in the launcher of the container,
 // which needs the egress boundary on Linux, and Docker's AppArmor profile
-// denies it unless DockerOptions.ServedAppArmor names another. Probe
-// reports whether it works, and Create fails with an
+// denies it unless DockerOptions.ServedAppArmor names another. The
+// Bubblewrap runtime mounts it the same way, behind the egress boundary.
+// Probe reports whether it works, and Create fails with an
 // [UnsupportedMountError] where it doesn't.
 func Served(tree fsys.FS) Source { return Source{kind: MountServed, tree: tree} }
 

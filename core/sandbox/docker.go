@@ -20,15 +20,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
-	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/boundary"
-	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
@@ -57,61 +54,19 @@ type DockerOptions struct {
 }
 
 // Docker returns the runtime that runs commands in Docker containers.
-func Docker(opts DockerOptions) Runtime { return &docker{opts: opts} }
+func Docker(opts DockerOptions) Runtime {
+	return &docker{opts: opts, shared: shared[*sandboxrt.Docker]{
+		stateDir: opts.StateDir,
+		launcher: opts.Launcher,
+		newBackend: func(dir string, launcher func() string) *sandboxrt.Docker {
+			return sandboxrt.NewDocker(filepath.Join(dir, "env"), launcher, opts.ServedAppArmor)
+		},
+	}}
+}
 
 type docker struct {
-	opts DockerOptions
-
-	mu         sync.Mutex
-	dir        string
-	backend    *sandboxrt.Docker
-	boundaries *sandboxrt.Boundaries
-	// users counts the sandboxes that are being created or not yet
-	// closed, which use backend and boundaries.
-	users int
-}
-
-// acquire returns the backend and the boundaries of d, setting them up for
-// the first user. The caller calls release when done.
-func (d *docker) acquire() (*sandboxrt.Docker, *sandboxrt.Boundaries, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.backend == nil {
-		dir := d.opts.StateDir
-		if dir == "" {
-			tmp, err := os.MkdirTemp("", "a2a-sandbox-")
-			if err != nil {
-				return nil, nil, fmt.Errorf("creating the directory of the containers' files: %w", err)
-			}
-			dir = tmp
-		}
-		d.dir = dir
-		d.boundaries = sandboxrt.NewBoundaries(filepath.Join(dir, "egress"), sandboxrt.SocketIDLen, cryptoutil.Unambiguous, nil)
-		launcher := d.boundaries.Launcher
-		if d.opts.Launcher != "" {
-			launcher = func() string { return d.opts.Launcher }
-		}
-		d.backend = sandboxrt.NewDocker(filepath.Join(dir, "env"), launcher, d.opts.ServedAppArmor)
-	}
-	d.users++
-	return d.backend, d.boundaries, nil
-}
-
-// release ends a use of acquire. The last one closes the listener of the
-// egress containers and removes a temporary state directory.
-func (d *docker) release(ctx context.Context) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.users--
-	if d.users > 0 {
-		return nil
-	}
-	err := d.boundaries.Close(ctx)
-	if d.opts.StateDir == "" {
-		err = errors.Join(err, os.RemoveAll(d.dir))
-	}
-	d.backend, d.boundaries, d.dir = nil, nil, ""
-	return err
+	opts   DockerOptions
+	shared shared[*sandboxrt.Docker]
 }
 
 func (d *docker) Probe(ctx context.Context) (Capabilities, error) {
@@ -133,34 +88,14 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 		Stderr:   spec.Stderr,
 		Progress: d.opts.Progress,
 	}
-	if err := dockerMounts(&sb, spec.Mounts); err != nil {
+	ep, behind, err := isolate(&sb, spec, "docker")
+	if err != nil {
 		return nil, err
-	}
-	visible := sb.Mounts
-	if spec.Home != "" {
-		visible = append(slices.Clone(visible), sandboxrt.Mount{Src: spec.Home, Dst: sandboxrt.ContainerHome})
-	}
-	for _, dst := range sandboxrt.ContainerPaths(visible, spec.Hide) {
-		sb.Masks = append(sb.Masks, sandboxrt.Mask{Dst: dst})
-	}
-	var ep boundary.Endpoint
-	var err error
-	if spec.Egress != nil {
-		if ep, err = boundary.EndpointOf(spec.Egress); err != nil {
-			return nil, err
-		}
-		if ep.Mode() == egressrules.ModeUnrestricted && ep.Credentials {
-			return nil, errors.New("the egress endpoint adds credentials, which needs the boundary, and its policy is unrestricted")
-		}
-	}
-	behind := spec.Egress != nil && ep.Mode() != egressrules.ModeUnrestricted
-	if len(sb.Served) > 0 && !behind {
-		return nil, &UnsupportedMountError{Backend: "docker", Dst: sb.Served[0].Dst, Kind: MountServed, Reason: "a live workspace needs the egress boundary, whose launcher mounts it: give the sandbox an egress endpoint with a policy other than unrestricted"}
 	}
 	if err := expose(&sb, spec.Sockets, behind); err != nil {
 		return nil, err
 	}
-	backend, boundaries, err := d.acquire()
+	backend, boundaries, err := d.shared.acquire()
 	if err != nil {
 		return nil, err
 	}
@@ -169,15 +104,45 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 	}
 	s, err := backend.Prepare(ctx, sb)
 	if err != nil {
-		return nil, errors.Join(unsupportedMount("docker", err), d.release(ctx))
+		return nil, errors.Join(unsupportedMount("docker", err), d.shared.release(ctx))
 	}
-	return &dockerSandbox{Sandbox: s, d: d}, nil
+	return &releasing{Sandbox: s, release: d.shared.release}, nil
 }
 
-// dockerMounts gives the container of sb the mounts: a host directory as
+// isolate gives sb the mounts of spec, the masks of its hidden paths and
+// the boundary of its egress endpoint, which the sandbox is behind unless
+// there is none or its policy is unrestricted. backend names the runtime
+// in errors.
+func isolate(sb *sandboxrt.Spec, spec Spec, backend string) (ep boundary.Endpoint, behind bool, err error) {
+	if err := backendMounts(sb, spec.Mounts); err != nil {
+		return boundary.Endpoint{}, false, err
+	}
+	visible := sb.Mounts
+	if spec.Home != "" {
+		visible = append(slices.Clone(visible), sandboxrt.Mount{Src: spec.Home, Dst: sandboxrt.ContainerHome})
+	}
+	for _, dst := range sandboxrt.ContainerPaths(visible, spec.Hide) {
+		sb.Masks = append(sb.Masks, sandboxrt.Mask{Dst: dst})
+	}
+	if spec.Egress != nil {
+		if ep, err = boundary.EndpointOf(spec.Egress); err != nil {
+			return boundary.Endpoint{}, false, err
+		}
+		if ep.Mode() == egressrules.ModeUnrestricted && ep.Credentials {
+			return boundary.Endpoint{}, false, errors.New("the egress endpoint adds credentials, which needs the boundary, and its policy is unrestricted")
+		}
+	}
+	behind = spec.Egress != nil && ep.Mode() != egressrules.ModeUnrestricted
+	if len(sb.Served) > 0 && !behind {
+		return boundary.Endpoint{}, false, &UnsupportedMountError{Backend: backend, Dst: sb.Served[0].Dst, Kind: MountServed, Reason: "a live workspace needs the egress boundary, whose launcher mounts it: give the sandbox an egress endpoint with a policy other than unrestricted"}
+	}
+	return ep, behind, nil
+}
+
+// backendMounts gives the sandbox of sb the mounts: a host directory as
 // a bind mount, a tmpfs in memory, read-only as an empty mask, and a
 // served tree as a live workspace.
-func dockerMounts(sb *sandboxrt.Spec, mounts []Mount) error {
+func backendMounts(sb *sandboxrt.Spec, mounts []Mount) error {
 	for _, m := range mounts {
 		if err := checkSource(m); err != nil {
 			return err
@@ -227,18 +192,6 @@ func expose(sb *sandboxrt.Spec, sockets []Socket, behind bool) error {
 		}
 	}
 	return nil
-}
-
-type dockerSandbox struct {
-	sandboxrt.Sandbox
-	d    *docker
-	once sync.Once
-}
-
-func (s *dockerSandbox) Close(ctx context.Context) error {
-	err := s.Sandbox.Close(ctx)
-	s.once.Do(func() { err = errors.Join(err, s.d.release(ctx)) })
-	return err
 }
 
 // capabilities converts what the runtime found on this machine.

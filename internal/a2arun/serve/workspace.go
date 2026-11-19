@@ -109,7 +109,7 @@ func parseWorkspace(v, sync, sandbox string) (workspace, error) {
 			}
 		}
 		if w.served() && sandbox == SandboxLocal {
-			return workspace{}, usagef("--workspace-sync live with --workspace %s needs --sandbox docker, which mounts the workspace in the sandbox; %s", w.shown, liveHint)
+			return workspace{}, usagef("--workspace-sync live with --workspace %s needs --sandbox docker or bwrap, which mount the workspace in the sandbox; %s", w.shown, liveHint)
 		}
 		return w, nil
 	}
@@ -128,7 +128,7 @@ func parseWorkspace(v, sync, sandbox string) (workspace, error) {
 	if !info.IsDir() {
 		return workspace{}, usagef("invalid --workspace %q: %s isn't a directory", v, abs)
 	}
-	if sandbox == SandboxDocker {
+	if sandbox != SandboxLocal {
 		broad, err := projectfiles.BroadMount(abs)
 		if err != nil {
 			return workspace{}, &UsageError{Err: err}

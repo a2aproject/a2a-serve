@@ -22,7 +22,11 @@
 // the permission bits, and "exec:<path>" whether the file runs.
 // "unshare:user" prints the errno of unshare(CLONE_NEWUSER), and
 // "userns:<path>" runs path in new user and network namespaces and prints
-// whether it runs or EPERM.
+// whether it runs or EPERM. "caps:" prints the capability sets of the
+// process, "env:<name>" the variable, and "unix:<path>" whether a
+// connection to the Unix socket opens. "ptrace:<pid>" prints whether
+// PTRACE_ATTACH to the process works or EPERM, with "child" for a child
+// that it starts and kills, and "cmdline:<pid>" the first word of its command line.
 package main
 
 import (
@@ -113,6 +117,61 @@ func probe(kind, target string) string {
 			return errnoName(err)
 		}
 		return "ok"
+	case "caps":
+		status, err := os.ReadFile("/proc/self/status")
+		if err != nil {
+			return "error"
+		}
+		var sets []string
+		for line := range strings.Lines(string(status)) {
+			if name, v, ok := strings.Cut(line, ":"); ok && strings.HasPrefix(name, "Cap") {
+				sets = append(sets, name+"="+strings.TrimSpace(v))
+			}
+		}
+		return strings.Join(sets, " ")
+	case "env":
+		return os.Getenv(target)
+	case "unix":
+		c, err := net.DialTimeout("unix", target, 10*time.Second)
+		if err != nil {
+			return "refused"
+		}
+		if err := c.Close(); err != nil {
+			return "refused"
+		}
+		return "ok"
+	case "ptrace":
+		pid, err := strconv.Atoi(target)
+		if target == "child" {
+			child := exec.Command("sleep", "30")
+			if err := child.Start(); err != nil {
+				return "error: " + err.Error()
+			}
+			defer func() {
+				if err := child.Process.Kill(); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
+				if err := child.Wait(); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
+			}()
+			pid, err = child.Process.Pid, nil
+		}
+		if err != nil {
+			return "error"
+		}
+		// The tracee stays attached until the probe exits.
+		if err := syscall.PtraceAttach(pid); err != nil {
+			return errnoName(err)
+		}
+		return "ok"
+	case "cmdline":
+		data, err := os.ReadFile("/proc/" + target + "/cmdline")
+		if err != nil {
+			return "error"
+		}
+		first, _, _ := strings.Cut(string(data), "\x00")
+		return first
 	case "dial":
 		c, err := net.DialTimeout("tcp", target, 10*time.Second)
 		if err != nil {

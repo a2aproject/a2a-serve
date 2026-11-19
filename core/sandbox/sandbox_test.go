@@ -419,6 +419,8 @@ func TestServedNeedsBoundary(t *testing.T) {
 		"local":                   {rt: sandbox.Local()},
 		"docker without boundary": {rt: sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()})},
 		"docker unrestricted":     {rt: sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()}), spec: sandbox.Spec{Egress: openEndpoint(t, egress.Policy{Mode: egress.ModeUnrestricted})}},
+		"bwrap without boundary":  {rt: sandbox.Bubblewrap(sandbox.BubblewrapOptions{StateDir: t.TempDir()})},
+		"bwrap unrestricted":      {rt: sandbox.Bubblewrap(sandbox.BubblewrapOptions{StateDir: t.TempDir()}), spec: sandbox.Spec{Egress: openEndpoint(t, egress.Policy{Mode: egress.ModeUnrestricted})}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

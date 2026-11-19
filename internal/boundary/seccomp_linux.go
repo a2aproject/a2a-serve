@@ -28,7 +28,9 @@ import (
 // refusedSyscalls fail with EPERM under [confine]: the system calls that
 // make or enter namespaces, mount, or reach keyrings, bpf, perf events and
 // userfaultfd, which Docker's default seccomp profile refuses a container
-// without CAP_SYS_ADMIN.
+// without CAP_SYS_ADMIN, and the ones that read or change another process,
+// which could reach a process of the sandbox that has no filter, such as
+// bubblewrap's, where ptrace_scope allows it.
 var refusedSyscalls = []uint32{
 	unix.SYS_UNSHARE, unix.SYS_SETNS,
 	unix.SYS_MOUNT, unix.SYS_UMOUNT2, unix.SYS_PIVOT_ROOT,
@@ -36,6 +38,7 @@ var refusedSyscalls = []uint32{
 	unix.SYS_FSOPEN, unix.SYS_FSCONFIG, unix.SYS_FSMOUNT, unix.SYS_FSPICK,
 	unix.SYS_KEYCTL, unix.SYS_ADD_KEY, unix.SYS_REQUEST_KEY,
 	unix.SYS_BPF, unix.SYS_PERF_EVENT_OPEN, unix.SYS_USERFAULTFD,
+	unix.SYS_PTRACE, unix.SYS_PROCESS_VM_READV, unix.SYS_PROCESS_VM_WRITEV, unix.SYS_KCMP,
 }
 
 // cloneNamespaces are the flags of clone that make namespaces.

@@ -154,10 +154,11 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 			if eg.Relay != "" {
 				return nil, errors.Join(&ServedMountError{Dst: spec.Served[0].Dst, Reason: "an egress container can't carry a live workspace"}, closeFn())
 			}
-			closeServed, err := serveTrees(r, spec.Served, filepath.Dir(eg.Socket))
+			served, closeServed, err := serveTrees(spec.Served, filepath.Dir(eg.Socket))
 			if err != nil {
 				return nil, errors.Join(err, closeFn())
 			}
+			r.Served = served
 			closeEgress := closeFn
 			closeFn = func() error { return errors.Join(closeServed(), closeEgress()) }
 		}

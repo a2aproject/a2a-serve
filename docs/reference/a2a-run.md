@@ -36,11 +36,11 @@ Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stder
 | --- | --- |
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
-| `sandbox` | `docker`, `docker (rootless)` or `local` |
+| `sandbox` | `docker`, `docker (rootless)`, `bwrap` or `local` |
 | `workspace` | `dir`, `memory` or `url` |
 | `workspace_sync` | `turn` or `live` |
 | `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |
-| `egress` | What decides the agent's connections, with `--sandbox docker`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
+| `egress` | What decides the agent's connections, with `--sandbox docker` or `bwrap`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
 | `error` | Why it failed to start, with `ready` false |
 
 When it fails to start, it prints `{"ready":false,"error":"..."}` and exits with code 2 for invalid flags, or 1 for other errors.
@@ -56,7 +56,7 @@ $ a2a-run --agent claude --workspace dir:$PWD \
 {"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"proxy"}
 ```
 
-The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker`, and replaces `--egress`, `--egress-allow` and `--inject-model-key`. [a2a-run egress proxy protocol](a2a-run-egress-proxy.md) specifies what the proxy gets and answers.
+The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker` or `bwrap`, and replaces `--egress`, `--egress-allow` and `--inject-model-key`. [a2a-run egress proxy protocol](a2a-run-egress-proxy.md) specifies what the proxy gets and answers.
 
 ## A2A endpoint
 
@@ -99,11 +99,28 @@ The agent's instructions list each contact with the description and skills from 
 $ a2a send -a http://a2a/reviewer "Review the diff in PR 12"
 ```
 
-`a2a-run` makes the call, so the agent needs no network access to the contact. With `--sandbox local`, the agent runs the `a2a` CLI from its `PATH`. The requests carry the A2A context ID of the conversation in the metadata key `a2a-run/context`. Canceling a task cancels the tasks it started at contacts.
+`a2a-run` makes the call, so the agent needs no network access to the contact. With `--sandbox bwrap` or `local`, the agent runs the `a2a` CLI that this machine has on its `PATH`. The requests carry the A2A context ID of the conversation in the metadata key `a2a-run/context`. Canceling a task cancels the tasks it started at contacts.
 
 A contact whose card can't be fetched shows as `failed` in the ready line. The agent doesn't see it until a later fetch succeeds. See [limits](limits.md#a2a-run) for how often `a2a-run` fetches the cards.
 
 When a contact asks for an approval, the task ends its turn in `input-required` with the contact's question, as [Approval Messages](approval-messages.md) describes. The status message metadata `a2a-run/contact-approval` names the contact and its task. `a2a-run` sends your answer to the contact, waits for its task, and gives the agent the result.
+
+## Sandbox
+
+`--sandbox` picks where the agent runs:
+
+- `docker`, the default, runs the agent in a container of its image.
+- `bwrap` runs the agent that this machine has with [bubblewrap](https://github.com/containers/bubblewrap), on Linux. It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `/dev/fuse` for a `memory` or URL workspace with `live` sync. Every connection of the agent goes through `a2a-run`, and it fails to start where that can't work. Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor by default; the error then names the setting and how to lift it, as [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes.
+- `local` runs the agent on this machine with no isolation.
+
+With `bwrap`, the agent sees the system directories, a few files of `/etc`, the workspace and its home. It finds its command, and the `a2a` CLI with `--contact`, on your `PATH`. An agent that needs other files of your home directory, such as one that npm installed under a version manager, doesn't start; use one that its own installer put in place, or `--sandbox docker`. [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes the setup.
+
+```console
+$ a2a-run --sandbox bwrap --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-run.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"bwrap","workspace":"dir","workspace_sync":"turn","egress":"policy"}
+```
 
 ## Stopping
 
@@ -120,7 +137,7 @@ On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent pro
 `--workspace-sync` decides how the agent changes them:
 
 - `turn`, the default, gives each A2A context a private copy of the workspace. Before each turn, the copy gets the changes of the workspace. After the turn, the agent's changes go back to the workspace, and the task gets them as an artifact. Other contexts see the changes from their next turn.
-- `live` lets every context change the workspace in place. Other contexts, and a host that serves the workspace, see each file as soon as the agent closes it, before the turn ends. The task gets no changes artifact. A `dir:` workspace is shared with the sandbox as it is. A `memory` or URL workspace needs `--sandbox docker`, which mounts it in the container.
+- `live` lets every context change the workspace in place. Other contexts, and a host that serves the workspace, see each file as soon as the agent closes it, before the turn ends. The task gets no changes artifact. A `dir:` workspace is shared with the sandbox as it is. A `memory` or URL workspace needs `--sandbox docker` or `bwrap`, which mount it in the sandbox.
 
 Serve the workspace from the host and let the agent change it live:
 
@@ -131,7 +148,7 @@ $ a2a-run --agent opencode --workspace unix:///run/host/fs.sock --workspace-sync
 {"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"url","workspace_sync":"live","egress":"policy"}
 ```
 
-At start, `a2a-run` checks that the host's file server answers and serves a directory. With `live`, it also checks that Docker here can mount the workspace. Docker Desktop can't yet, and neither can rootful Docker under its default AppArmor profile. When the check fails, `a2a-run` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
+At start, `a2a-run` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet, and neither can rootful Docker under its default AppArmor profile. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-run` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
 
 With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets. A `dir:` workspace larger than `turn` sync copies fails at start with a hint to use `live`. A workspace that grows past the [limits](limits.md#a2a-run) fails the turn with a status message that says to remove files. The next turns still run, so the agent can remove them.
 
@@ -182,15 +199,15 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--command words` |  | Command line of the agent, as shell words: replaces the command of --agent, or without --agent starts any agent that speaks ACP on stdio |
 | `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--image string` |  | Container image of the agent (default: the image of --agent); only applies to --sandbox docker |
-| `--sandbox string` | `docker` | Where the agent runs: docker, or local for this machine without isolation |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts and the hosts of --inject-model-key) (default internet) |
-| `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port |
-| `--egress-proxy URL` |  | HTTP proxy that decides every connection of the Docker sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow and --inject-model-key |
+| `--sandbox string` | `docker` | Where the agent runs: docker, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
+| `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts and the hosts of --inject-model-key) (default internet) |
+| `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port |
+| `--egress-proxy URL` |  | HTTP proxy that decides every connection of the sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow and --inject-model-key |
 | `--env NAME=value` |  | Variable for the agent: NAME=value, such as DEBUG=1 |
 | `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
-| `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
+| `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
 | `--workspace source` |  | Files of the agent, a source: dir:path for a directory, memory for files that a2a-run keeps in memory and drops at exit, or the URL of a file server of the host: http://, https:// or unix:///path |
-| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker unless the workspace is a dir: |
+| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker or bwrap unless the workspace is a dir: |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises |
 | `--contact name=url` |  | Other A2A agent the agent may call, through a2a-run: name=url, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
 | `--contact-auth name=value` |  | Authorization header of the requests to a --contact, which the agent never sees: name=value; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer="Bearer env:REVIEWER_TOKEN" |

@@ -29,10 +29,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fusefs"
 )
 
-// Main runs the commands that Docker sandboxes start this binary with. A
-// binary that uses Docker with an egress endpoint calls it first in main,
-// with os.Args[1:], and exits with code when ok. It returns ok false for
-// any other arguments.
+// Main runs the commands that Docker and bubblewrap sandboxes start this
+// binary with. A binary that uses either with an egress endpoint calls it
+// first in main, with os.Args[1:], and exits with code when ok. It returns
+// ok false for any other arguments.
 func Main(args []string) (code int, ok bool) {
 	if len(args) == 0 {
 		return 0, false

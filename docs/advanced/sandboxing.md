@@ -66,7 +66,7 @@ The launcher mounts the tree with FUSE:
 1. `docker run` adds `--device /dev/fuse` and the `SYS_ADMIN` capability.
 1. The launcher mounts FUSE at the workspace path before it drops its capabilities. It keeps serving the mount after it drops them, and sends each operation over the fs socket.
 1. The agent inherits no capability and no file of the launcher, so it can't answer the mount's calls or unmount it.
-1. Docker relaxes its seccomp profile for a container with `SYS_ADMIN`, so the launcher installs its own filter before it starts the agent. The filter refuses new namespaces, mounts, keyrings and bpf, as Docker's default profile does.
+1. Docker relaxes its seccomp profile for a container with `SYS_ADMIN`, so the launcher installs its own filter before it starts the agent. The filter refuses new namespaces, mounts, keyrings and bpf, as Docker's default profile does, and ptrace and the other calls that read or change another process.
 
 The agent can reach the fs socket directly. The server applies the masks and the read-only setting there too, follows no symlink, and refuses symlinks that lead into masked paths.
 
@@ -81,7 +81,25 @@ A live workspace needs the launcher, so it runs only behind the egress boundary.
 | Docker rootless on Linux | Yes, verified |
 | Docker rootful on Linux | Docker's default AppArmor profile denies the mount, and the container doesn't start where Docker applies AppArmor. Embedders can name another profile with `DockerOptions.ServedAppArmor`, such as `unconfined`, which runs the container without AppArmor. Not verified yet. |
 | Docker Desktop | No: the egress container doesn't carry the fs socket yet |
+| bubblewrap on Linux | Yes, verified. It needs `/dev/fuse` and unprivileged user namespaces. |
 | Local | No: the agent runs on the host, with no mount namespace |
+
+## Bubblewrap
+
+`a2a-run --sandbox bwrap`, and the `sandbox.Bubblewrap` runtime in Go, run the agent of this machine with bubblewrap, in new user, PID, IPC, UTS, cgroup, mount and network namespaces. No daemon and no image are involved, and no privileges beyond unprivileged user namespaces.
+
+The agent sees:
+
+- `/usr` and the other system directories, read-only.
+- Of `/etc`, only the users and groups, name resolution, the dynamic linker's files, the alternatives, the CA certificates and the time zone. The host's credentials and keys in `/etc` stay out.
+- Private `/tmp`, `/var/tmp` and `/run`, `/proc`, and a minimal `/dev`.
+- The workspace and mounts, its home at `/home/agent`, and the directories of its command and the `a2a` CLI, read-only. Hidden paths appear empty, as in a container.
+
+With the egress boundary, the launcher starts first, as root of the sandbox's user namespace, which is the user who started the sandbox. It gets `/dev/net/tun`, the `NET_ADMIN` and `SETPCAP` capabilities, and, with a live workspace, `/dev/fuse` and `SYS_ADMIN`. It runs as PID 1 of the sandbox, sets up the network as in a container, mounts the live workspace, drops every capability, and installs the seccomp filter of live workspaces, which refuses new namespaces, mounts and ptrace. Then it starts the agent, so every process of the agent has the filter. The network namespace has only loopback and the TUN device, so every connection goes through the boundary. Where the launcher can't set this up, the sandbox doesn't start. It never falls back to the host's network.
+
+Ubuntu 23.10 and later restrict unprivileged user namespaces with AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`). Where bwrap's AppArmor profile lets it make the namespaces, the profile can still deny the capabilities in them, so the launcher can't create the TUN device or mount FUSE. To run the sandbox there, give bwrap an AppArmor profile that allows user namespaces with their capabilities, or set `kernel.apparmor_restrict_unprivileged_userns=0`, which lifts the restriction for every program. The errors of `a2a-run` name this setting when it applies.
+
+Without an egress endpoint, or with an unrestricted policy, the sandbox has only loopback and doesn't start the launcher. In Go, `BubblewrapOptions.HostNetwork` shares the host's network in that case. The agent then reaches every service of the host on loopback and on abstract Unix sockets, such as the X11 display, which can read and send keystrokes. Bubblewrap applies no memory, CPU or process limits.
 
 ## Calling the Network
 

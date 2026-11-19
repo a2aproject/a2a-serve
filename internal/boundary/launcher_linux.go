@@ -80,11 +80,16 @@ func Launch(cfg LaunchConfig) (int, error) {
 		return 0, &SetupError{Err: err}
 	}
 	defer eng.Close()
-	if len(cfg.Mounts) > 0 {
+	switch {
+	case len(cfg.Mounts) > 0:
 		// The FUSE mount took CAP_SYS_ADMIN, for which Docker relaxes its
 		// seccomp profile.
 		if err := confine(); err != nil {
 			return 0, &MountError{Dst: cfg.Mounts[0].Dst, Err: err}
+		}
+	case cfg.Confine:
+		if err := confine(); err != nil {
+			return 0, &SetupError{Err: err}
 		}
 	}
 	if cfg.Check {
@@ -288,7 +293,7 @@ func dropPrivileges(uid, gid int) error {
 			return fmt.Errorf("bounding set: %w", err)
 		}
 	}
-	if err := syscall.Setgroups(nil); err != nil {
+	if err := syscall.Setgroups(nil); err != nil && !(errors.Is(err, syscall.EPERM) && setgroupsDenied()) {
 		return fmt.Errorf("setgroups: %w", err)
 	}
 	if err := syscall.Setgid(gid); err != nil {
@@ -304,6 +309,15 @@ func dropPrivileges(uid, gid int) error {
 		return fmt.Errorf("dumpable: %w", err)
 	}
 	return checkNoCapabilities()
+}
+
+// setgroupsDenied reports whether the user namespace of the process denies
+// setgroups, as one that an unprivileged process made does, such as the
+// bubblewrap sandbox's. The agent then keeps the groups of the user who
+// started the sandbox.
+func setgroupsDenied() bool {
+	b, err := os.ReadFile("/proc/self/setgroups")
+	return err == nil && strings.TrimSpace(string(b)) == "deny"
 }
 
 // checkNoCapabilities confirms that the process holds no capability.

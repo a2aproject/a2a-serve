@@ -39,9 +39,9 @@ const (
 	ContainerCABundle = "/run/a2a-egress-ca-bundle.pem"
 )
 
-// systemBundles are where images keep their CA bundle: Debian and Ubuntu,
-// Fedora and RHEL, and Alpine.
-var systemBundles = []string{"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"}
+// SystemBundles are where images and hosts keep their CA bundle: Debian
+// and Ubuntu, Fedora and RHEL, and Alpine.
+var SystemBundles = []string{"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"}
 
 // EgressCAEnv returns the variable that passes the PEM certificate cert to
 // the launcher.
@@ -80,7 +80,7 @@ func trustCA(root string, env []string) ([]string, error) {
 	}
 	env = setEnv(env, "NODE_EXTRA_CA_CERTS", ContainerCAFile)
 	system := ""
-	for _, p := range systemBundles {
+	for _, p := range SystemBundles {
 		if _, err := os.Stat(at(p)); err == nil {
 			system = p
 			break
