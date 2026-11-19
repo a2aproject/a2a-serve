@@ -98,3 +98,9 @@
 
 * Build binaries for manual checks the way releases are built, with `CGO_ENABLED=0`.
 * Walk the examples a change touches, step by step as written, and report each step as passed, failed or skipped with the reason.
+
+### Pull Requests
+
+* After a PR lands, remove what you created for it: its worktree (`git worktree remove`), its local branch, its remote branch if GitHub didn't delete it, and your scratch files and caches.
+* Confirm the PR is merged before you delete its branch. Deleting the head branch of an open PR closes it.
+* Leave worktrees, branches and files you didn't create. Ask first if you're unsure whose they are.
