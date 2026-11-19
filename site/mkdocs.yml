@@ -136,3 +136,4 @@ nav:
       - The a2a CLI: reference/a2a-cli.md
       - a2a-run: reference/a2a-run.md
       - a2a-run Egress Proxy Protocol: reference/a2a-run-egress-proxy.md
+      - a2a-run Tools Endpoint: reference/a2a-run-tools.md

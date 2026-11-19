@@ -77,6 +77,9 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "invalid port", edit: func(c *serve.Config) { c.Listen = "127.0.0.1:99999" }, want: "the port isn't a number from 0 to 65535"},
 		{name: "all interfaces", edit: func(c *serve.Config) { c.Listen = ":8080" }, want: "listens only on a loopback address"},
 		{name: "public address", edit: func(c *serve.Config) { c.Listen = "192.0.2.1:8080" }, want: "listens only on a loopback address"},
+		{name: "tools that aren't a URL", edit: func(c *serve.Config) { c.Tools = "localhost:9000" }, want: "invalid --tools: want an http:// or https:// URL"},
+		{name: "tools on a relative socket", edit: func(c *serve.Config) { c.Tools = "unix://tools.sock" }, want: "invalid --tools: want unix:///absolute/path"},
+		{name: "tools on a socket with local", edit: func(c *serve.Config) { c.Tools = "unix:///run/tools.sock" }, want: "--tools unix:// needs --sandbox docker"},
 		{name: "too many processes", edit: func(c *serve.Config) { c.MaxProcesses = 65 }, want: "invalid --max-processes 65: want 1 to 64"},
 		{name: "negative processes", edit: func(c *serve.Config) { c.MaxProcesses = -1 }, want: "invalid --max-processes -1"},
 	}

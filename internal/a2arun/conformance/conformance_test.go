@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/refhost"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -31,33 +32,47 @@ var (
 	refuse        = flag.String("refuse", "", "host:port that the egress proxy refuses")
 	forward       = flag.Bool("forward", false, "the egress proxy forwards plain HTTP requests to 127.0.0.1; needs -allow-loopback")
 	allowLoopback = flag.Bool("allow-loopback", false, "the egress proxy means to reach this host's loopback")
+	tools         = flag.String("tools", "", "tools endpoint to test: http://, https:// or unix:///path (default: the reference host)")
 )
 
+var allHooks = hosttools.HookSupport{BeforeTool: true, AfterTool: true}
+
 func TestConformance(t *testing.T) {
-	if *egressProxy != "" {
-		Run(t, Config{EgressProxy: *egressProxy, Intercept: *intercept, Refuse: *refuse, Forward: *forward, AllowLoopback: *allowLoopback})
+	if *egressProxy != "" || *tools != "" {
+		Run(t, Config{EgressProxy: *egressProxy, Intercept: *intercept, Refuse: *refuse, Forward: *forward, AllowLoopback: *allowLoopback, Tools: *tools})
 		return
 	}
 	t.Run("reference host", func(t *testing.T) {
-		Run(t, Config{EgressProxy: serveRefhost(t, false), Intercept: "api.anthropic.com:443", Refuse: "blocked.example:443"})
+		url := serveRefhost(t, false, refhost.ToolsConfig{Hooks: allHooks})
+		Run(t, Config{EgressProxy: url, Intercept: "api.anthropic.com:443", Refuse: "blocked.example:443", Tools: url})
 	})
 	t.Run("reference host reaching loopback", func(t *testing.T) {
-		Run(t, Config{EgressProxy: serveRefhost(t, true), Forward: true, AllowLoopback: true})
+		Run(t, Config{EgressProxy: serveRefhost(t, true, refhost.ToolsConfig{}), Forward: true, AllowLoopback: true})
+	})
+	t.Run("reference host with event streams", func(t *testing.T) {
+		Run(t, Config{Tools: serveRefhost(t, false, refhost.ToolsConfig{Hooks: allHooks, Stream: true})})
+	})
+	t.Run("reference host without hooks", func(t *testing.T) {
+		Run(t, Config{Tools: serveRefhost(t, false, refhost.ToolsConfig{})})
 	})
 }
 
-// serveRefhost serves the reference host on a Unix socket, refusing
-// blocked.example, and private destinations unless allowPrivate, and
-// returns its URL.
-func serveRefhost(t *testing.T, allowPrivate bool) string {
+// serveRefhost serves the reference host on a Unix socket, with its egress
+// proxy refusing blocked.example, and private destinations unless
+// allowPrivate, and its tools endpoint of tools. It returns its URL.
+func serveRefhost(t *testing.T, allowPrivate bool, tools refhost.ToolsConfig) string {
 	t.Helper()
-	h := refhost.New(refhost.Config{AllowPrivate: allowPrivate, Decide: func(c refhost.Connect) refhost.Decision {
-		if c.Target == "blocked.example:443" {
-			return refhost.Refuse("blocked.example is off limits")
-		}
-		return refhost.Intercept()
-	}})
-	sock := filepath.Join(testutil.ShortTempDir(t), "egress.sock")
+	h := refhost.New(refhost.Config{
+		AllowPrivate: allowPrivate,
+		Decide: func(c refhost.Connect) refhost.Decision {
+			if c.Target == "blocked.example:443" {
+				return refhost.Refuse("blocked.example is off limits")
+			}
+			return refhost.Intercept()
+		},
+		Tools: refhost.NewTools(tools),
+	})
+	sock := filepath.Join(testutil.ShortTempDir(t), "host.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("net.Listen() error = %v", err)

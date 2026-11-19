@@ -16,8 +16,11 @@ package agentrun
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"net/url"
+	"regexp"
 	"slices"
+	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
@@ -48,7 +51,7 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
-	params, found, err := r.sessionMCP(ctx, ws, env)
+	params, names, err := r.sessionMCP(ctx, ws, env)
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
@@ -56,10 +59,6 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	// follows the rules and gets the MCP servers added since the agent
 	// process started.
 	if r.rt.kind == agentprofile.SandboxDocker {
-		names := make([]string, len(found))
-		for i, srv := range found {
-			names[i] = srv.Name
-		}
 		if _, err := r.policies.write(r.cfg.Profile, r.askCommands(), key != "", names); err != nil {
 			return a2aacp.SessionParams{}, err
 		}
@@ -68,22 +67,25 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 }
 
 // sessionMCP returns the params of a session in the workspace ws of a
-// process with env, with the MCP servers it gets, and the servers it found.
-func (r *Runner) sessionMCP(ctx context.Context, ws string, env Environment) (a2aacp.SessionParams, []projectfiles.MCPServer, error) {
-	proc := env.process()
-	if proc.NoMCP {
-		return a2aacp.SessionParams{Cwd: ws}, nil, nil
+// process with env, with the MCP servers it gets: those of env, then those
+// of the workspace. It returns the names of the servers.
+func (r *Runner) sessionMCP(ctx context.Context, ws string, env Environment) (a2aacp.SessionParams, []string, error) {
+	params := a2aacp.SessionParams{Cwd: ws}
+	var names []string
+	for _, srv := range env.MCPServers {
+		if err := checkCallerMCP(srv, names); err != nil {
+			return a2aacp.SessionParams{}, nil, err
+		}
+		raw, err := srv.ACP()
+		if err != nil {
+			return a2aacp.SessionParams{}, nil, err
+		}
+		params.MCPServers = append(params.MCPServers, raw)
+		names = append(names, srv.Name)
 	}
-	src := ws
-	if proc.MCPDir != "" {
-		src = proc.MCPDir
-	}
-	found, err := projectfiles.LoadMCP(src)
-	if err != nil {
-		r.log().WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
-		return a2aacp.SessionParams{Cwd: ws}, nil, nil
-	}
-	vars := proc.MCPVars
+	r.callerMCP.add(names...)
+	found := r.workspaceMCP(ctx, ws, env)
+	vars := env.process().MCPVars
 	if vars == nil {
 		vars = projectfiles.EnvVars(env.Env, nil)
 	}
@@ -91,8 +93,13 @@ func (r *Runner) sessionMCP(ctx context.Context, ws string, env Environment) (a2
 	if r.cfg.Options.DisabledMCP != nil {
 		disabled = r.cfg.Options.DisabledMCP()
 	}
-	var servers []json.RawMessage
+	callers := len(names)
 	for _, srv := range found {
+		if slices.Contains(names[:callers], srv.Name) {
+			r.log().WarnContext(ctx, "leaving out an MCP server of the workspace with the name of a server the caller gives", "server", srv.Name)
+			continue
+		}
+		names = append(names, srv.Name)
 		if slices.Contains(disabled, srv.Name) {
 			continue
 		}
@@ -109,9 +116,77 @@ func (r *Runner) sessionMCP(ctx context.Context, ws string, env Environment) (a2
 		if err != nil {
 			return a2aacp.SessionParams{}, nil, err
 		}
-		servers = append(servers, raw)
+		params.MCPServers = append(params.MCPServers, raw)
 	}
-	return a2aacp.SessionParams{Cwd: ws, MCPServers: servers}, found, nil
+	return params, names, nil
+}
+
+// workspaceMCP returns the MCP servers of the .mcp.json that sessions of
+// a process with env get, in the workspace ws.
+func (r *Runner) workspaceMCP(ctx context.Context, ws string, env Environment) []projectfiles.MCPServer {
+	proc := env.process()
+	if proc.NoMCP {
+		return nil
+	}
+	src := ws
+	if proc.MCPDir != "" {
+		src = proc.MCPDir
+	}
+	found, err := projectfiles.LoadMCP(src)
+	if err != nil {
+		r.log().WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
+		return nil
+	}
+	return found
+}
+
+var mcpServerName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// checkCallerMCP refuses an MCP server of an Environment that agents
+// can't name in their tool names, that isn't served over HTTP, or whose
+// name is in taken.
+func checkCallerMCP(srv projectfiles.MCPServer, taken []string) error {
+	if !mcpServerName.MatchString(srv.Name) {
+		return fmt.Errorf("invalid MCP server name %q: want 1 to 64 letters, digits, _ or -", srv.Name)
+	}
+	if slices.Contains(taken, srv.Name) {
+		return fmt.Errorf("two MCP servers named %s", srv.Name)
+	}
+	u, err := url.Parse(srv.URL)
+	if srv.Type != projectfiles.MCPHTTP || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("invalid MCP server %s: want an http or https URL", srv.Name)
+	}
+	return nil
+}
+
+// toolServerNames returns the names of the MCP servers that tool calls
+// may come from: those of the workspace of the agent's settings, and
+// those that sessions got from Environments.
+func (r *Runner) toolServerNames() []string {
+	return append(r.mcpServerNames(), r.callerMCP.list()...)
+}
+
+// nameSet is a set of names that only grows, as sessions with them may
+// live as long as the runner.
+type nameSet struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (s *nameSet) add(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range names {
+		if !slices.Contains(s.names, n) {
+			s.names = append(s.names, n)
+		}
+	}
+}
+
+func (s *nameSet) list() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.names)
 }
 
 // mcpServerNames returns the names of the MCP servers of the workspace of

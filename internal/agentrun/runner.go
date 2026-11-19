@@ -46,6 +46,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
@@ -129,6 +130,10 @@ type Environment struct {
 	Name        string
 	Labels      map[string]string
 	Pool        string
+	// MCPServers are MCP servers of the caller that every new session of
+	// the process gets, besides those of the workspace's .mcp.json. A
+	// workspace server with the same name is left out.
+	MCPServers []projectfiles.MCPServer
 	// Process is what the frontend of this module sets; nil for others.
 	Process *ProcessOptions
 }
@@ -253,6 +258,10 @@ type Hooks struct {
 	Prompt func(ctx context.Context, execCtx *a2asrv.ExecutorContext) ([]*a2a.Part, error)
 	// Denied notes a tool call that Tools denied.
 	Denied func(execCtx *a2asrv.ExecutorContext, title string)
+	// ToolDone receives each tool call of a turn that the agent reports
+	// as completed or failed. It runs on the goroutine that reads the
+	// agent's output, so it must return quickly.
+	ToolDone func(ctx context.Context, execCtx *a2asrv.ExecutorContext, t ToolResult)
 	// Refused words the error that refuses a turn, or returns "" for the
 	// error's text.
 	Refused func(err error) string
@@ -332,9 +341,13 @@ type Runner struct {
 	main       *endpoint
 	policies   *policies
 	stalls     *stallGuard
+	toolsDone  *toolWatch
 	decider    *toolDecider
-	split      *splitExecutor
-	pools      map[string]*procs
+	// callerMCP are the names of the MCP servers of Environments that
+	// sessions got, which name the MCP tools of calls.
+	callerMCP *nameSet
+	split     *splitExecutor
+	pools     map[string]*procs
 	// workspaces are where the running processes see their workspace, and
 	// turns the turn hooks of their attachments.
 	workspaces sync.Map
@@ -394,7 +407,9 @@ func New(cfg Config) (*Runner, error) {
 	r.egress = newEgressState()
 	r.boundaries = sandboxrt.NewBoundaries(r.egressDir(), sandboxrt.SocketIDLen, idAlphabet, nil)
 	r.rt.init(r)
-	r.decider = &toolDecider{tools: cfg.Tools, servers: r.mcpServerNames, denied: cfg.Hooks.Denied, log: r.log}
+	r.toolsDone = newToolWatch(cfg.Hooks.ToolDone)
+	r.callerMCP = &nameSet{}
+	r.decider = &toolDecider{tools: cfg.Tools, servers: r.toolServerNames, denied: cfg.Hooks.Denied, log: r.log}
 	l, err := r.listen(cfg.Options.Executor == nil)
 	if err != nil {
 		return nil, errors.Join(err, r.boundaries.Close(context.Background()), r.removeState())

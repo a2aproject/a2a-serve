@@ -49,9 +49,10 @@ func ToolCallOf(ctx context.Context) *ToolCall {
 }
 
 // Call is a tool call that the agent asks permission for, in the
-// conversation ContextID and the task TaskID.
+// conversation ContextID and the task TaskID. ID and Title are the agent's.
 type Call struct {
 	toolrules.Call
+	ID, Title         string
 	ContextID, TaskID string
 }
 
@@ -79,7 +80,7 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	if d.servers != nil {
 		servers = d.servers()
 	}
-	call := Call{Call: toolrules.NewCall(q.Tool.Kind, q.Tool.Title, q.Tool.Input, servers)}
+	call := Call{Call: toolrules.NewCall(q.Tool.Kind, q.Tool.Title, q.Tool.Input, servers), ID: q.Tool.ID, Title: q.Tool.Title}
 	var taskID a2a.TaskID
 	if execCtx != nil {
 		taskID = execCtx.TaskID

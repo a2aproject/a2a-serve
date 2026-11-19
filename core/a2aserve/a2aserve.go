@@ -28,6 +28,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
+	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
 
@@ -147,8 +149,25 @@ type Environment struct {
 	Labels map[string]string
 	// Pool is the pool the process runs in; "" for Main.
 	Pool string
+	// MCPServers are MCP servers that every new session of the process
+	// gets, besides those of the workspace's .mcp.json. A workspace server
+	// with the same name is left out, so the agent can't replace one.
+	MCPServers []MCPServer
 
 	process *agentrun.ProcessOptions
+}
+
+// MCPServer is an MCP server that the agent reaches over streamable HTTP.
+type MCPServer struct {
+	// Name names the server in the agent's tool names and in the
+	// "tool:<server>.<tool>" entries of [ToolRules]: 1 to 64 letters,
+	// digits, _ or -.
+	Name string
+	// URL is the http or https URL where the agent reaches the server,
+	// as seen from its sandbox.
+	URL string
+	// Headers are added to the agent's requests to the server.
+	Headers map[string]string
 }
 
 // Callers runs different callers in different processes. Keys are opaque;
@@ -206,6 +225,26 @@ type Hooks struct {
 	// since the agent sent nothing for d, while a tool call ran if tool, or
 	// nil for the Agent's own.
 	Stalled func(d time.Duration, tool bool) []*a2a.Part
+	// ToolDone receives each tool call that the agent reports as completed
+	// or failed during a turn. It runs on the goroutine that reads the
+	// agent's output, so it must return quickly.
+	ToolDone func(ctx context.Context, r ToolResult)
+}
+
+// ToolResult is a tool call that the agent reported as ended.
+type ToolResult struct {
+	// ID, Kind and Title are the agent's, as in [ToolCall].
+	ID, Kind, Title string
+	// Status is completed or failed.
+	Status string
+	// Output is the text the agent reported for the call, cut to 64 KiB,
+	// and Truncated whether it was cut.
+	Output    string
+	Truncated bool
+	// ContextID and TaskID identify the conversation and the task that
+	// made the call.
+	ContextID string
+	TaskID    string
 }
 
 // A2A configures the A2A request handler of an [Agent].
@@ -406,8 +445,18 @@ func (e Environment) engine() agentrun.Environment {
 		Name:        e.Name,
 		Labels:      e.Labels,
 		Pool:        e.Pool,
+		MCPServers:  mcpServers(e.MCPServers),
 		Process:     e.process,
 	}
+}
+
+// mcpServers returns servers for the engine.
+func mcpServers(servers []MCPServer) []projectfiles.MCPServer {
+	out := make([]projectfiles.MCPServer, len(servers))
+	for i, s := range servers {
+		out[i] = projectfiles.MCPServer{Name: s.Name, Type: projectfiles.MCPHTTP, URL: s.URL, Headers: maps.Clone(s.Headers)}
+	}
+	return out
 }
 
 // attach returns the engine's workspace of w, or nil without one.
@@ -447,6 +496,11 @@ func turnError(err error) error {
 func (h Hooks) engine(frontend agentrun.Hooks, cfg A2A) agentrun.Hooks {
 	out := frontend
 	out.Turn, out.Explain, out.Prompt, out.Stalled = h.Turn, h.Explain, h.Prompt, h.Stalled
+	if done := h.ToolDone; done != nil {
+		out.ToolDone = func(ctx context.Context, execCtx *a2asrv.ExecutorContext, t agentrun.ToolResult) {
+			done(ctx, ToolResult{ID: t.ID, Kind: t.Kind, Title: t.Title, Status: t.Status, Output: t.Output, Truncated: t.Truncated, ContextID: execCtx.ContextID, TaskID: string(execCtx.TaskID)})
+		}
+	}
 	if out.Abandoned == nil {
 		materializer := cfg.Materializer
 		if materializer == nil {

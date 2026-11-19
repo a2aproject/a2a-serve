@@ -75,21 +75,36 @@ func placeholderKeys(env []string) []string {
 
 // newBoundary returns the egress boundary of the Docker sandbox: one whose
 // router is the egress proxy, with the proxy router, or one of the policy.
-func newBoundary(s settings, log *slog.Logger, turns *turns) (*egress.Boundary, *egress.ProxyRouter, error) {
-	if s.egressProxy == "" {
+// A non-nil wrap wraps the router, which makes the policy a router too.
+func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Router) egress.Router) (*egress.Boundary, *egress.ProxyRouter, error) {
+	if s.egressProxy == "" && wrap == nil {
 		policy := s.policy
 		b, err := egress.New(egress.Config{Policy: func() egress.Policy { return policy }, Log: log})
 		return b, nil, err
 	}
-	r, err := egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task})
-	if err != nil {
+	var (
+		r     egress.Router
+		proxy *egress.ProxyRouter
+		err   error
+	)
+	if s.egressProxy != "" {
+		if proxy, err = egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task}); err != nil {
+			return nil, nil, err
+		}
+		r = proxy
+	} else if r, err = s.policy.Router(s.credentials...); err != nil {
+		// The router allows the hosts of the credentials in every mode; the
+		// endpoints of the processes add the credentials themselves.
 		return nil, nil, err
+	}
+	if wrap != nil {
+		r = wrap(r)
 	}
 	b, err := egress.New(egress.Config{Router: r, Log: log})
 	if err != nil {
 		return nil, nil, err
 	}
-	return b, r, nil
+	return b, proxy, nil
 }
 
 // turns knows the task that each context's process works on, for the

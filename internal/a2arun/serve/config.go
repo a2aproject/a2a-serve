@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
@@ -80,6 +81,8 @@ type Config struct {
 	ModelKeys []string
 	// Workspace is dir:<path>.
 	Workspace string
+	// Tools is the URL of the host's tools endpoint, or "".
+	Tools string
 	// Listen is unix:///path or host:port; "" is DefaultListen.
 	Listen string
 	// MaxProcesses bounds the agent processes; 0 is DefaultMaxProcesses.
@@ -120,6 +123,7 @@ type settings struct {
 	env          []string
 	credentials  []egress.Credential
 	workspace    workspace
+	tools        *hosttools.Endpoint
 	listen       address
 	maxProcesses int
 	home         string
@@ -167,6 +171,9 @@ func (cfg Config) resolve() (settings, error) {
 		return settings{}, err
 	}
 	if s.workspace, err = parseWorkspace(cfg.Workspace, s.sandbox); err != nil {
+		return settings{}, err
+	}
+	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
 		return settings{}, err
 	}
 	if s.listen, err = parseListen(cfg.Listen); err != nil {

@@ -17,11 +17,13 @@
 // a2a-serve with
 //
 //	go test ./internal/a2arun/conformance -egress-proxy <url> -intercept api.anthropic.com:443 -refuse blocked.example:443
+//	go test ./internal/a2arun/conformance -tools <url>
 //
 // A proxy must refuse this host's loopback; -allow-loopback skips that
-// check for one that means to reach it.
+// check for one that means to reach it. The tools endpoint is http://,
+// https:// or unix:///path, and the suite checks the hooks it advertises.
 //
-// Without -egress-proxy it tests the reference host.
+// Without -egress-proxy or -tools it tests the reference host.
 package conformance
 
 import (
@@ -39,6 +41,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 )
 
 // Config says which host endpoints to test.
@@ -58,6 +61,8 @@ type Config struct {
 	// AllowLoopback is set for a proxy that means to reach this host's
 	// loopback, which skips the check that it refuses it.
 	AllowLoopback bool
+	// Tools is the URL of the tools endpoint; "" skips its tests.
+	Tools string
 }
 
 // timeout bounds each step; a2a-run waits less for a decision.
@@ -66,9 +71,28 @@ const timeout = 10 * time.Second
 // contextID is the context the suite sends.
 const contextID = "conformance-context"
 
-// Run runs the suite.
+// Run runs the suite: the tests of each endpoint that cfg names.
 func Run(t *testing.T, cfg Config) {
 	t.Helper()
+	t.Run("egress proxy", func(t *testing.T) {
+		if cfg.EgressProxy == "" {
+			t.Skip("no egress proxy")
+		}
+		testEgressProxy(t, cfg)
+	})
+	t.Run("tools", func(t *testing.T) {
+		if cfg.Tools == "" {
+			t.Skip("no tools endpoint")
+		}
+		ep, err := hosttools.Parse(cfg.Tools)
+		if err != nil {
+			t.Fatalf("invalid tools URL: %v", err)
+		}
+		testTools(t, ep)
+	})
+}
+
+func testEgressProxy(t *testing.T, cfg Config) {
 	network, addr, err := proxyAddr(cfg.EgressProxy)
 	if err != nil {
 		t.Fatal(err)
