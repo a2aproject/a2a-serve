@@ -38,6 +38,12 @@ type BubblewrapOptions struct {
 	// besides its own, such as "a2a". Create finds each on PATH and shows
 	// its directory read-only.
 	Programs []string
+	// HostNetwork shares this machine's network with a sandbox without an
+	// Egress endpoint, or with an unrestricted policy, which otherwise has
+	// only loopback. The command then reaches every service of this
+	// machine, on loopback and on abstract Unix sockets, such as the X11
+	// display, which can read and send keystrokes.
+	HostNetwork bool
 }
 
 // Bubblewrap returns the runtime that runs commands on this machine with
@@ -66,8 +72,8 @@ type BubblewrapOptions struct {
 // the [Served] trees with FUSE, drops every capability and installs a
 // seccomp filter that refuses new namespaces and mounts, and then runs the
 // command as the user who started the sandbox. Without an Egress endpoint,
-// or with an unrestricted policy, the sandbox shares the network of this
-// machine, its loopback included, and Served mounts fail with an
+// or with an unrestricted policy, the sandbox has only loopback, or the
+// network of this machine with HostNetwork, and Served mounts fail with an
 // [UnsupportedMountError].
 //
 // The sandbox reaches Unix listeners among Sockets.
@@ -76,7 +82,7 @@ func Bubblewrap(opts BubblewrapOptions) Runtime {
 		stateDir: opts.StateDir,
 		launcher: opts.Launcher,
 		newBackend: func(dir string, launcher func() string) *sandboxrt.Bubblewrap {
-			return sandboxrt.NewBubblewrap(filepath.Join(dir, "bwrap"), launcher, opts.Programs)
+			return sandboxrt.NewBubblewrap(sandboxrt.BubblewrapConfig{Dir: filepath.Join(dir, "bwrap"), Launcher: launcher, Programs: opts.Programs, HostNetwork: opts.HostNetwork})
 		},
 	}}
 }
@@ -90,7 +96,7 @@ type bubblewrap struct {
 const bubblewrapName = "bwrap"
 
 func (b *bubblewrap) Probe(ctx context.Context) (Capabilities, error) {
-	c, err := sandboxrt.NewBubblewrap("", func() string { return b.opts.Launcher }, b.opts.Programs).Probe(ctx)
+	c, err := sandboxrt.NewBubblewrap(sandboxrt.BubblewrapConfig{Launcher: func() string { return b.opts.Launcher }, Programs: b.opts.Programs}).Probe(ctx)
 	if err != nil {
 		return Capabilities{}, err
 	}

@@ -44,12 +44,10 @@ import (
 // egress boundary, the launcher runs first in the sandbox, as in a Docker
 // container: it gives the sandbox its only route, mounts the live
 // workspaces, drops every capability and installs a seccomp filter, and
-// then starts the command. Without it, the sandbox shares the network of
-// this machine.
+// then starts the command. Without it, the sandbox has only loopback, or
+// the network of this machine with BubblewrapConfig.HostNetwork.
 type Bubblewrap struct {
-	dir      string
-	launcher func() string
-	programs []string
+	cfg BubblewrapConfig
 
 	// probeMu serializes the checks of the launcher's setup, which run
 	// once for the backend, without and with live workspaces.
@@ -59,15 +57,8 @@ type Bubblewrap struct {
 
 var _ Backend = (*Bubblewrap)(nil)
 
-// NewBubblewrap returns the bubblewrap backend, which keeps the files of
-// its sandboxes in dir, where no sandbox must see it. launcher returns the
-// host path of the binary that the sandboxes with the egress boundary run
-// as their launcher, or "" to use this binary. programs name the programs
-// of this machine that the commands run, besides their own, such as the
-// a2a CLI.
-func NewBubblewrap(dir string, launcher func() string, programs []string) *Bubblewrap {
-	return &Bubblewrap{dir: dir, launcher: launcher, programs: programs}
-}
+// NewBubblewrap returns the bubblewrap backend of cfg.
+func NewBubblewrap(cfg BubblewrapConfig) *Bubblewrap { return &Bubblewrap{cfg: cfg} }
 
 // bwrapTimeout bounds the check that bwrap can make a sandbox.
 const bwrapTimeout = DockerTimeout
@@ -146,8 +137,8 @@ func checkSetup(ctx context.Context, launcher string, served bool) error {
 
 // launcherPath returns the launcher that the sandboxes run.
 func (b *Bubblewrap) launcherPath() (string, error) {
-	if b.launcher != nil {
-		if l := b.launcher(); l != "" {
+	if b.cfg.Launcher != nil {
+		if l := b.cfg.Launcher(); l != "" {
 			return CheckLauncher(l)
 		}
 	}
@@ -168,26 +159,27 @@ func (b *Bubblewrap) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		return nil, err
 	}
 	view := hostSystemView()
-	cmdPath, programDirs, err := hostPrograms(spec.Command, b.programs, view)
+	cmdPath, programDirs, err := hostPrograms(spec.Command, b.cfg.Programs, view)
 	if err != nil {
 		return nil, err
 	}
-	if err := fsutil.MkdirPrivate(b.dir); err != nil {
+	if err := fsutil.MkdirPrivate(b.cfg.Dir); err != nil {
 		return nil, fmt.Errorf("creating the directory of the sandboxes' files: %w", err)
 	}
-	dir, err := os.MkdirTemp(b.dir, "bwrap-")
+	dir, err := os.MkdirTemp(b.cfg.Dir, "bwrap-")
 	if err != nil {
 		return nil, fmt.Errorf("creating the directory of the sandbox's files: %w", err)
 	}
 	run := &bwrapRun{
-		system:   view.args,
-		mounts:   spec.Mounts,
-		masks:    spec.Masks,
-		scratch:  spec.Scratch,
-		home:     spec.Home,
-		programs: programDirs,
-		command:  append([]string{cmdPath}, spec.Command.Args...),
-		dir:      spec.Command.Dir,
+		system:      view.args,
+		hostNetwork: b.cfg.HostNetwork,
+		mounts:      spec.Mounts,
+		masks:       spec.Masks,
+		scratch:     spec.Scratch,
+		home:        spec.Home,
+		programs:    programDirs,
+		command:     append([]string{cmdPath}, spec.Command.Args...),
+		dir:         spec.Command.Dir,
 	}
 	if len(spec.Expose) > 0 && spec.Expose[0].Path != "" {
 		run.expose = spec.Expose[0].Path
@@ -482,12 +474,15 @@ type bundleCopy struct {
 // bwrapRun is what the arguments of bwrap are built from.
 type bwrapRun struct {
 	// system are the arguments that show the system directories.
-	system   []string
-	mounts   []Mount
-	masks    []Mask
-	scratch  []string
-	home     string
-	programs []programDir
+	system []string
+	// hostNetwork shares this machine's network with a sandbox without the
+	// egress boundary.
+	hostNetwork bool
+	mounts      []Mount
+	masks       []Mask
+	scratch     []string
+	home        string
+	programs    []programDir
 	// expose is the host path of the socket that the command reaches.
 	expose string
 	// launcher is the host path of the launcher, and egressDir the
@@ -522,7 +517,7 @@ func (r *bwrapRun) args(check bool) []string {
 		if len(r.served) > 0 {
 			args = append(args, "--cap-add", "CAP_SYS_ADMIN")
 		}
-	} else {
+	} else if r.hostNetwork {
 		args = append(args, "--share-net")
 	}
 	args = append(args, r.system...)
@@ -530,7 +525,7 @@ func (r *bwrapRun) args(check bool) []string {
 	for _, f := range etcFiles {
 		args = append(args, "--ro-bind-try", "/etc/"+f, "/etc/"+f)
 	}
-	if !behind {
+	if !behind && r.hostNetwork {
 		// The launcher points the sandbox at its own resolver.
 		args = append(args, "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf")
 	}

@@ -43,7 +43,7 @@ const noCaps = "CapInh=0000000000000000 CapPrm=0000000000000000 CapEff=000000000
 // to a server on this machine and refuses the rest.
 func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 	t.Parallel()
-	rt, probe := bubblewrapRuntime(t, sandbox.MountHostDir)
+	rt, probe := bubblewrapRuntime(t, sandbox.MountHostDir, sandbox.BubblewrapOptions{})
 
 	ro, rw, home := t.TempDir(), t.TempDir(), t.TempDir()
 	userHome, err := os.UserHomeDir()
@@ -130,7 +130,7 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 // changes by the command the tree sees.
 func TestBubblewrapServesLiveWorkspace(t *testing.T) {
 	t.Parallel()
-	rt, probe := bubblewrapRuntime(t, sandbox.MountServed)
+	rt, probe := bubblewrapRuntime(t, sandbox.MountServed, sandbox.BubblewrapOptions{})
 
 	tree := fsys.Memory()
 	put(t, tree, "host.txt", "from host")
@@ -160,22 +160,33 @@ func TestBubblewrapServesLiveWorkspace(t *testing.T) {
 	}
 }
 
-// TestBubblewrapWithoutEgressSharesNetwork runs a command without an
-// endpoint, which reaches this machine's loopback.
-func TestBubblewrapWithoutEgressSharesNetwork(t *testing.T) {
+// TestBubblewrapNetworkWithoutEgress runs a command without an endpoint,
+// which has no network unless the runtime shares the host's.
+func TestBubblewrapNetworkWithoutEgress(t *testing.T) {
 	t.Parallel()
-	rt, probe := bubblewrapRuntime(t, sandbox.MountHostDir)
-
-	server := listen(t)
-	var stderr bytes.Buffer
-	sb := create(t, rt, sandbox.Spec{
-		Command: sandbox.Command{Path: probe, Args: []string{"dial:127.0.0.1:" + server, "ls:/root"}},
-		Stderr:  &stderr,
-	})
-	got := strings.Split(strings.TrimSpace(run(t, sb)), "\n")
-	want := []string{"dial:127.0.0.1:" + server + " ok", "ls:/root error"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
+	tests := map[string]struct {
+		hostNetwork bool
+		want        string
+	}{
+		"no network":   {want: "refused"},
+		"host network": {hostNetwork: true, want: "ok"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rt, probe := bubblewrapRuntime(t, sandbox.MountHostDir, sandbox.BubblewrapOptions{HostNetwork: tc.hostNetwork})
+			server := listen(t)
+			var stderr bytes.Buffer
+			sb := create(t, rt, sandbox.Spec{
+				Command: sandbox.Command{Path: probe, Args: []string{"dial:127.0.0.1:" + server, "ls:/root"}},
+				Stderr:  &stderr,
+			})
+			got := strings.Split(strings.TrimSpace(run(t, sb)), "\n")
+			want := []string{"dial:127.0.0.1:" + server + " " + tc.want, "ls:/root error"}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
+			}
+		})
 	}
 }
 
@@ -207,9 +218,9 @@ func TestBubblewrapRefusesMissingProgram(t *testing.T) {
 }
 
 // bubblewrapRuntime returns the bubblewrap runtime with a launcher built
-// from this tree, and the probe program, or skips the test where the
+// from this tree and opts, and the probe program, or skips the test where the
 // runtime can't mount kind or route through the boundary.
-func bubblewrapRuntime(t *testing.T, kind sandbox.MountKind) (sandbox.Runtime, string) {
+func bubblewrapRuntime(t *testing.T, kind sandbox.MountKind, opts sandbox.BubblewrapOptions) (sandbox.Runtime, string) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("bubblewrap runs only on Linux")
@@ -226,7 +237,8 @@ func bubblewrapRuntime(t *testing.T, kind sandbox.MountKind) (sandbox.Runtime, s
 			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
 		}
 	}
-	rt := sandbox.Bubblewrap(sandbox.BubblewrapOptions{Launcher: launcher, StateDir: t.TempDir()})
+	opts.Launcher, opts.StateDir = launcher, t.TempDir()
+	rt := sandbox.Bubblewrap(opts)
 	caps, err := rt.Probe(context.Background())
 	if err != nil {
 		t.Skipf("bubblewrap isn't available: %v", err)

@@ -34,18 +34,20 @@ func TestBwrapArgs(t *testing.T) {
 	for _, f := range etcFiles {
 		etc = append(etc, "--ro-bind-try", "/etc/"+f, "/etc/"+f)
 	}
-	head := func(behind bool, extra ...string) []string {
+	// head returns the arguments up to /etc; network is "boundary", "host"
+	// or "".
+	head := func(network string, extra ...string) []string {
 		args := []string{"--unshare-all", "--die-with-parent", "--new-session"}
-		if behind {
+		if network == "boundary" {
 			args = append(args, "--uid", "0", "--gid", "0", "--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP")
 		}
 		args = append(args, extra...)
-		if !behind {
+		if network == "host" {
 			args = append(args, "--share-net")
 		}
 		args = append(args, "--symlink", "usr/bin", "/bin", "--tmpfs", "/etc")
 		args = append(args, etc...)
-		if !behind {
+		if network == "host" {
 			args = append(args, "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf")
 		}
 		return args
@@ -59,16 +61,17 @@ func TestBwrapArgs(t *testing.T) {
 	}{
 		"host network": {
 			run: bwrapRun{
-				mounts:   []Mount{{Src: "/host/ws/sub", Dst: "/ws/sub", ReadOnly: true}, {Src: "/host/ws", Dst: "/ws"}},
-				masks:    []Mask{{Dst: "/ws/secret"}, {Src: "/host/mask.json", Dst: "/ws/.mcp.json"}},
-				scratch:  []string{"/ws/cache"},
-				home:     "/host/home",
-				programs: []programDir{{dir: "/opt/agent/bin", onPath: true}},
-				expose:   "/state/api/api.sock",
-				command:  []string{"/opt/agent/bin/agent", "acp"},
-				dir:      "/ws",
+				hostNetwork: true,
+				mounts:      []Mount{{Src: "/host/ws/sub", Dst: "/ws/sub", ReadOnly: true}, {Src: "/host/ws", Dst: "/ws"}},
+				masks:       []Mask{{Dst: "/ws/secret"}, {Src: "/host/mask.json", Dst: "/ws/.mcp.json"}},
+				scratch:     []string{"/ws/cache"},
+				home:        "/host/home",
+				programs:    []programDir{{dir: "/opt/agent/bin", onPath: true}},
+				expose:      "/state/api/api.sock",
+				command:     []string{"/opt/agent/bin/agent", "acp"},
+				dir:         "/ws",
 			},
-			want: join(head(false), dirs,
+			want: join(head("host"), dirs,
 				[]string{"--ro-bind", "/state/api", "/run/a2a"},
 				[]string{"--bind", "/host/ws", "/ws"},
 				[]string{"--ro-bind", "/host/ws/sub", "/ws/sub"},
@@ -89,7 +92,7 @@ func TestBwrapArgs(t *testing.T) {
 				command:   []string{"/usr/bin/agent"},
 				dir:       "/ws",
 			},
-			want: join(head(true, "--cap-add", "CAP_SYS_ADMIN"),
+			want: join(head("boundary", "--cap-add", "CAP_SYS_ADMIN"),
 				[]string{"--bind", "/state/bwrap-1/ca-bundle.pem", "/etc/ssl/certs/ca-certificates.crt"},
 				dirs,
 				[]string{"--dev-bind", "/dev/net/tun", "/dev/net/tun", "--dev-bind", "/dev/fuse", "/dev/fuse"},
@@ -100,10 +103,14 @@ func TestBwrapArgs(t *testing.T) {
 				[]string{"/run/a2a-egress/egress.sock", "0", "0", "/usr/bin/agent"},
 			),
 		},
+		"no network": {
+			run:  bwrapRun{command: []string{"/usr/bin/agent"}},
+			want: join(head(""), dirs, []string{"--dir", "/home/agent", "--", "/usr/bin/agent"}),
+		},
 		"check of the boundary": {
 			run:   bwrapRun{launcher: "/state/launcher", egressDir: "/state/egress/abc", command: []string{"/usr/bin/agent"}},
 			check: true,
-			want: join(head(true), dirs,
+			want: join(head("boundary"), dirs,
 				[]string{"--dev-bind", "/dev/net/tun", "/dev/net/tun"},
 				[]string{"--ro-bind", "/state/launcher", "/run/a2a-init", "--ro-bind", "/state/egress/abc", "/run/a2a-egress"},
 				[]string{"--dir", "/home/agent"},

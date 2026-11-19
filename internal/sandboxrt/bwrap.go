@@ -35,6 +35,21 @@ func (e *BubblewrapError) Error() string {
 
 func (e *BubblewrapError) Unwrap() error { return e.Err }
 
+// BubblewrapConfig configures the bubblewrap backend.
+type BubblewrapConfig struct {
+	// Dir keeps the files of the sandboxes, where no sandbox must see it.
+	Dir string
+	// Launcher returns the host path of the binary that the sandboxes with
+	// the egress boundary run as their launcher, or "" to use this binary.
+	Launcher func() string
+	// Programs name the programs of this machine that the commands run,
+	// besides their own, such as the a2a CLI.
+	Programs []string
+	// HostNetwork shares this machine's network with the sandboxes without
+	// the egress boundary, which otherwise have only loopback.
+	HostNetwork bool
+}
+
 // errBroadProgramDir is the error of a program whose directory holds the
 // home directory, which the sandbox would show.
 var errBroadProgramDir = errors.New("its directory holds your home directory, so the agent could read your credentials there")

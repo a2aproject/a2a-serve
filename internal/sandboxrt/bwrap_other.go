@@ -29,7 +29,7 @@ var _ Backend = (*Bubblewrap)(nil)
 
 // NewBubblewrap returns the bubblewrap backend, which fails on this
 // system.
-func NewBubblewrap(string, func() string, []string) *Bubblewrap { return &Bubblewrap{} }
+func NewBubblewrap(BubblewrapConfig) *Bubblewrap { return &Bubblewrap{} }
 
 var errNoBubblewrap = &BubblewrapError{Problem: "runs only on Linux", Fix: "use the Docker sandbox", Err: errors.ErrUnsupported}
 

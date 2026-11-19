@@ -97,7 +97,7 @@ The agent sees:
 
 With the egress boundary, the launcher starts first, as root of the sandbox's user namespace, which is the user who started the sandbox. It gets `/dev/net/tun`, the `NET_ADMIN` and `SETPCAP` capabilities, and, with a live workspace, `/dev/fuse` and `SYS_ADMIN`. It sets up the network as in a container, mounts the live workspace, drops every capability, and installs the seccomp filter of live workspaces, which refuses new namespaces and mounts. Then it starts the agent. The network namespace has only loopback and the TUN device, so every connection goes through the boundary. Where the launcher can't set this up, the sandbox doesn't start. It never falls back to the host's network.
 
-Without an egress endpoint, or with an unrestricted policy, the sandbox shares the host's network, its loopback included, and doesn't start the launcher. Bubblewrap applies no memory, CPU or process limits.
+Without an egress endpoint, or with an unrestricted policy, the sandbox has only loopback and doesn't start the launcher. In Go, `BubblewrapOptions.HostNetwork` shares the host's network in that case. The agent then reaches every service of the host on loopback and on abstract Unix sockets, such as the X11 display, which can read and send keystrokes. Bubblewrap applies no memory, CPU or process limits.
 
 ## Calling the Network
 
