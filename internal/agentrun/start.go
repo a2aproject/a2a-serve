@@ -395,7 +395,11 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		forget()
 		detach()
 		r.workspaces.CompareAndDelete(key, seen)
-		return errors.Join(p.Close(ctx), cleanup())
+		cerr := cleanup()
+		if cerr != nil {
+			r.log().Warn("releasing the workspace of a stopped agent process", "key", key, "error", cerr)
+		}
+		return errors.Join(p.Close(ctx), cerr)
 	}
 	return &prepared{prepared: p, stop: stop, maxMessage: r.cfg.Options.MaxAgentMessage}, nil
 }
@@ -546,9 +550,7 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 		Abandoned:    r.abandoned,
 		Failure:      r.cfg.Hooks.Explain,
 	}
-	if r.cfg.Hooks.Prompt != nil {
-		cfg.Prompt = r.cfg.Hooks.Prompt
-	}
+	cfg.Prompt = r.turns.prompt(r.cfg.Hooks.Prompt)
 	return cfg
 }
 

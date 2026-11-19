@@ -15,19 +15,23 @@
 package a2aserve_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/google/go-cmp/cmp"
@@ -252,6 +256,28 @@ func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
 			wantPaths:    []string{"d"},
 		},
 		{
+			name:         "tree replaces a directory the agent added to between turns",
+			treeEdit:     func(t *testing.T, tree fsys.FS) { remove(t, tree, "d"); put(t, tree, "d", "theirs", 0o644) },
+			localEdit:    func(t *testing.T, local fsys.FS) { put(t, local, "d/mine.txt", "mine", 0o644) },
+			betweenTurns: true,
+			want:         map[string]string{"f.txt": "-rw-r--r-- base", "d": "-rw-r--r-- theirs"},
+			wantPaths:    []string{"d"},
+		},
+		{
+			name:      "tree replaces a directory the agent added to",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { remove(t, tree, "d"); put(t, tree, "d", "theirs", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "d/mine.txt", "mine", 0o644) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "-rw-r--r-- theirs"},
+			wantPaths: []string{"d"},
+		},
+		{
+			name:      "agent replaces a directory the tree added to",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "d/new.txt", "new", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { remove(t, local, "d"); put(t, local, "d", "mine", 0o644) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "d/new.txt": "-rw-r--r-- new"},
+			wantPaths: []string{"d"},
+		},
+		{
 			name:      "both change a file",
 			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "f.txt", "theirs", 0o644) },
 			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "f.txt", "mine", 0o644) },
@@ -351,6 +377,31 @@ func TestTurnSyncedReleaseWritesBackAndRemovesTheDirectory(t *testing.T) {
 	}
 	if err := att.AfterTurn(context.Background()); err != nil {
 		t.Fatalf("AfterTurn() after Release() error = %v, want nil", err)
+	}
+}
+
+func TestTurnSyncedReleaseReportsConflicts(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	put(t, tree, "f.txt", "base", 0o644)
+	att, local := attachSynced(t, tree, t.TempDir(), "a")
+	if err := att.BeforeTurn(context.Background()); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	put(t, local, "f.txt", "mine", 0o644)
+	put(t, tree, "f.txt", "theirs", 0o644)
+
+	err := att.Release()
+
+	conflict, ok := errors.AsType[*a2aserve.SyncConflictError](err)
+	if !ok {
+		t.Fatalf("Release() error = %v, want a SyncConflictError", err)
+	}
+	if diff := cmp.Diff([]string{"f.txt"}, conflict.Paths); diff != "" {
+		t.Fatalf("Release() wrong conflicts (-want +got) diff = %s", diff)
+	}
+	if got := snapshot(t, tree)["f.txt"]; got != "-rw-r--r-- theirs" {
+		t.Fatalf("tree f.txt after Release() = %q, want the tree's version", got)
 	}
 }
 
@@ -575,4 +626,167 @@ func TestTurnSyncedAgentFailsATurnWithConflicts(t *testing.T) {
 	if got := readFile(t, filepath.Join(syncedDir(t, root), "f.txt")); got != "theirs" {
 		t.Fatalf("directory f.txt = %q, want the tree's version", got)
 	}
+}
+
+// turnLog is a workspace in a shared directory that records the turn
+// boundaries it sees.
+type turnLog struct {
+	dir string
+
+	mu     sync.Mutex
+	events []string
+}
+
+func (w *turnLog) Attach(context.Context, string) (a2aserve.Attachment, error) {
+	return a2aserve.Attachment{
+		Dir:        w.dir,
+		Release:    func() error { return nil },
+		BeforeTurn: func(context.Context) error { w.add("before"); return nil },
+		AfterTurn:  func(context.Context) error { w.add("after"); return nil },
+	}, nil
+}
+
+func (w *turnLog) add(event string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, event)
+}
+
+func (w *turnLog) log() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.events)
+}
+
+// sendAsync sends text in the conversation contextID without waiting for
+// its result, and returns its task.
+func sendAsync(t *testing.T, c *a2aclient.Client, contextID, text string) *a2a.Task {
+	t.Helper()
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))
+	msg.ContextID = contextID
+	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+	if err != nil {
+		t.Fatalf("Client.SendMessage(%q) error = %v", text, err)
+	}
+	return res.(*a2a.Task)
+}
+
+func cancelTask(t *testing.T, c *a2aclient.Client, id a2a.TaskID) {
+	t.Helper()
+	if _, err := c.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: id}); err != nil {
+		t.Fatalf("Client.CancelTask() error = %v", err)
+	}
+}
+
+func TestTurnBoundariesOfAKeyDontOverlap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// first and second are the conversations of the turn that runs and
+		// of the turn sent meanwhile.
+		first, second string
+		pool          bool
+	}{
+		{name: "same conversation", first: "c1", second: "c1"},
+		{name: "another conversation of the key", first: "c1", second: "c2"},
+		{name: "two conversations of a pool process", first: "a-1", second: "a-2", pool: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := &turnLog{dir: t.TempDir()}
+			store := taskstore.NewInMemory(nil)
+			cfg := a2aserve.Config{
+				Main: a2aserve.Environment{Workspace: w, Home: filepath.Join(t.TempDir(), "home")},
+				A2A:  a2aserve.A2A{TaskStore: store},
+			}
+			if tc.pool {
+				cfg.Main = environment(t, "")
+				cfg.Callers = keyedCallers{envs: map[string]a2aserve.Environment{"a": {Workspace: w, Home: filepath.Join(t.TempDir(), "home"), Pool: "users"}}}
+				cfg.Pools = map[string]a2aserve.Pool{"users": {MaxProcesses: 1}}
+			}
+			a := newAgent(t, cfg)
+			c := client(t, a)
+			first := sendAsync(t, c, tc.first, "slow 500ms")
+			waitStored(t, store, first.ID, a2a.TaskStateWorking)
+
+			if got := sendTask(t, c, tc.second, "hello").Status.State; got != a2a.TaskStateCompleted {
+				t.Fatalf("second task state = %v, want %v", got, a2a.TaskStateCompleted)
+			}
+
+			waitStored(t, store, first.ID, a2a.TaskStateCompleted)
+			if diff := cmp.Diff([]string{"before", "after", "before", "after"}, w.log()); diff != "" {
+				t.Fatalf("turn boundaries wrong order (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestCanceledWaitingTurnLetsTheNextTurnRun(t *testing.T) {
+	t.Parallel()
+	w := &turnLog{dir: t.TempDir()}
+	store := taskstore.NewInMemory(nil)
+	a := newAgent(t, a2aserve.Config{
+		Main: a2aserve.Environment{Workspace: w, Home: filepath.Join(t.TempDir(), "home")},
+		A2A:  a2aserve.A2A{TaskStore: store},
+	})
+	c := client(t, a)
+	first := sendAsync(t, c, "c1", "slow")
+	waitStored(t, store, first.ID, a2a.TaskStateWorking)
+	waiting := sendAsync(t, c, "c2", "hello")
+
+	cancelTask(t, c, waiting.ID)
+	waitStored(t, store, waiting.ID, a2a.TaskStateCanceled)
+	cancelTask(t, c, first.ID)
+	waitStored(t, store, first.ID, a2a.TaskStateCanceled)
+
+	if got := sendTask(t, c, "c3", "hello").Status.State; got != a2a.TaskStateCompleted {
+		t.Fatalf("next task state = %v, want %v", got, a2a.TaskStateCompleted)
+	}
+	if diff := cmp.Diff([]string{"before", "after", "before", "after"}, w.log()); diff != "" {
+		t.Fatalf("turn boundaries wrong order (-want +got) diff = %s", diff)
+	}
+}
+
+// failingRelease is a workspace in a shared directory whose Release fails.
+type failingRelease struct{ dir string }
+
+func (w failingRelease) Attach(context.Context, string) (a2aserve.Attachment, error) {
+	return a2aserve.Attachment{Dir: w.dir, Release: func() error { return errors.New("release failed") }}, nil
+}
+
+func TestAgentLogsAFailedRelease(t *testing.T) {
+	t.Parallel()
+	var logs syncBuffer
+	a, cancel := startAgent(t, a2aserve.Config{
+		Main: a2aserve.Environment{Workspace: failingRelease{dir: t.TempDir()}, Home: filepath.Join(t.TempDir(), "home")},
+		Log:  slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	defer cancel()
+
+	if err := a.Close(context.Background()); err == nil || !strings.Contains(err.Error(), "release failed") {
+		t.Fatalf("Agent.Close() error = %v, want the error of Release", err)
+	}
+
+	if got := logs.String(); !strings.Contains(got, "release failed") {
+		t.Fatalf("Agent logs = %q, want the error of Release", got)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent use.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

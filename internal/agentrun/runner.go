@@ -92,10 +92,11 @@ type Workspace func(ctx context.Context, key, stateDir string) (Attachment, erro
 
 // Attachment is the directory of a process: Dir on the host, seen at Path,
 // or at Dir if Path is empty. BeforeTurn, if set, runs before the agent
-// gets a message other than an answer, and its error fails the turn.
-// AfterTurn, if set, runs once the agent stopped working on a message, on
-// every exit path, and its error fails the turn; a [*TurnError] adds its
-// metadata to the final status message.
+// gets the prompt of a turn, and its error fails the turn. AfterTurn, if
+// set, runs once the agent stopped working on a message, on every exit
+// path, and its error fails the turn; a [*TurnError] adds its metadata to
+// the final status message. With either set, the turns of the process run
+// one at a time, from BeforeTurn to AfterTurn.
 type Attachment struct {
 	Dir, Path  string
 	ReadOnly   bool

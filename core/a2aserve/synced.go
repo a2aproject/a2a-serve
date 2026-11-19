@@ -102,16 +102,16 @@ const (
 // with the conflicts in its status message when its final event comes
 // after the sync. A change of the directory between turns, such as by a
 // process the agent left running, goes back at the end of the next turn.
-// Turns of other conversations in the same process share the directory,
-// so a sync sees their changes too.
+// The turns of the process run one at a time, as [Attachment] describes.
 //
 // The sync skips the agent directories (.a2a) at any depth. It doesn't
 // write back the agent's configuration files and .mcp.json at the root,
 // which a sandbox hides from the agent and puts empty placeholders for.
 // Release writes the last changes back and removes the directory; if that
 // fails, the directory and its state stay, and the next Attach of the key
-// writes them back first. Attach of a key waits for the Release of its
-// last attachment.
+// writes them back first. Release returns a [*SyncConflictError] for the
+// conflicts of changes made after the last turn. Attach of a key waits for
+// the Release of its last attachment.
 func TurnSynced(tree fsys.FS, opts TurnSyncOptions) Workspace {
 	opts.MaxBytes = cmp.Or(opts.MaxBytes, defaultSyncBytes)
 	opts.MaxEntries = cmp.Or(opts.MaxEntries, defaultSyncEntries)
@@ -291,8 +291,8 @@ func (st *syncState) afterTurn(ctx context.Context) error {
 }
 
 // release writes the last changes back and removes the directory and its
-// state. Its conflicts go to an AfterTurn that runs later, such as of the
-// turn whose process exited.
+// state. It returns the conflicts that no AfterTurn reported, such as of
+// changes the agent made after its last turn.
 func (st *syncState) release() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -305,7 +305,12 @@ func (st *syncState) release() error {
 	if err := st.syncOut(ctx); err != nil {
 		return fmt.Errorf("writing the changes of %s back: %w", st.dir, err)
 	}
-	return errors.Join(os.RemoveAll(st.dir), os.Remove(st.stateFile))
+	err := errors.Join(os.RemoveAll(st.dir), os.Remove(st.stateFile))
+	if len(st.conflicts) > 0 {
+		err = errors.Join(err, &SyncConflictError{Paths: st.conflicts, Omitted: st.omitted})
+		st.conflicts, st.omitted = nil, 0
+	}
+	return err
 }
 
 func (st *syncState) conflict(p string) {
@@ -429,6 +434,9 @@ func (st *syncState) pull(ctx context.Context, info fsys.Info) error {
 	if !bothDirs && (there && (!ok || version(l) != b.Local) || !there && ok) {
 		return nil
 	}
+	if there && l.Mode.IsDir() && !info.Mode.IsDir() && st.changedUnder(ctx, p) {
+		return nil
+	}
 	switch {
 	case info.Mode.IsDir():
 		if there && !l.Mode.IsDir() {
@@ -509,6 +517,31 @@ func (st *syncState) forget(p string) {
 	}
 }
 
+// treeChangedUnder reports whether the tree changed an entry under the
+// directory p since the last sync. The entries it didn't change go with
+// the directory, which the directory of the process no longer has.
+func (st *syncState) treeChangedUnder(ctx context.Context, p string) (bool, error) {
+	entries, err := st.tree.ReadDir(ctx, p)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if skipped(e.Path) {
+			continue
+		}
+		b, ok := st.base.Entries[e.Path]
+		if !ok || version(e) != b.Tree {
+			return true, nil
+		}
+		if e.Mode.IsDir() {
+			if changed, err := st.treeChangedUnder(ctx, e.Path); changed || err != nil {
+				return changed, err
+			}
+		}
+	}
+	return false, nil
+}
+
 // syncOut writes the directory's changes to the tree.
 func (st *syncState) syncOut(ctx context.Context) error {
 	local, err := walk(ctx, st.local, st.limits)
@@ -558,15 +591,15 @@ func (st *syncState) syncOut(ctx context.Context) error {
 }
 
 // removedAncestor returns the nearest directory above p that the last sync
-// saw, if the tree removed it since, so that a change under it doesn't
-// bring it back.
+// saw, if the tree removed it or replaced it with another kind of entry
+// since, so that a change under it doesn't bring it back.
 func (st *syncState) removedAncestor(ctx context.Context, p string) (string, error) {
 	for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
 		if _, ok := st.base.Entries[dir]; !ok {
 			continue
 		}
-		_, err := st.tree.Stat(ctx, dir)
-		if errors.Is(err, fs.ErrNotExist) {
+		cur, err := st.tree.Stat(ctx, dir)
+		if errors.Is(err, fs.ErrNotExist) || err == nil && !cur.Mode.IsDir() {
 			return dir, nil
 		}
 		return "", err
@@ -590,6 +623,15 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 		return true, nil
 	case ok && (!there || version(cur) != b.Tree), !ok && there:
 		return false, st.takeTree(ctx, p)
+	}
+	if there && cur.Mode.IsDir() {
+		changed, err := st.treeChangedUnder(ctx, p)
+		if err != nil {
+			return false, err
+		}
+		if changed {
+			return false, st.takeTree(ctx, p)
+		}
 	}
 	ifVersion := fsys.IfMissing
 	if there && cur.Mode.IsRegular() && l.Mode.IsRegular() {
@@ -642,11 +684,11 @@ func (st *syncState) pushRemoved(ctx context.Context, p string) error {
 		return st.takeTree(ctx, p)
 	}
 	if cur.Mode.IsDir() {
-		entries, err := st.tree.ReadDir(ctx, p)
+		changed, err := st.treeChangedUnder(ctx, p)
 		if err != nil {
 			return err
 		}
-		if len(entries) > 0 {
+		if changed {
 			return st.takeTree(ctx, p)
 		}
 	}

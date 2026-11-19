@@ -45,6 +45,11 @@ type Attachment struct {
 	// when it finished, failed or was canceled, or its process exited. Its
 	// error fails the task through Hooks.Explain, also one the agent
 	// completed.
+	//
+	// With BeforeTurn or AfterTurn set, the turns of the process run one at
+	// a time, from BeforeTurn to AfterTurn, also those of different
+	// conversations. A turn that waits for the agent's question to be
+	// answered holds the others until it ends.
 	AfterTurn func(ctx context.Context) error
 }
 

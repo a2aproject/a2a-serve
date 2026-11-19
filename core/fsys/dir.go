@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -105,8 +106,13 @@ func infoOf(r *os.Root, p string, fi fs.FileInfo) (Info, error) {
 	return info, nil
 }
 
+// lstat describes the entry at p. A path under a file doesn't exist, as
+// in Memory.
 func lstat(r *os.Root, p string) (Info, error) {
 	fi, err := r.Lstat(filepath.FromSlash(p))
+	if errors.Is(err, syscall.ENOTDIR) {
+		return Info{}, &fs.PathError{Op: "stat", Path: p, Err: fs.ErrNotExist}
+	}
 	if err != nil {
 		return Info{}, err
 	}

@@ -223,6 +223,17 @@ func TestWriteRefusesDirectory(t *testing.T) {
 	})
 }
 
+func TestStatUnderAFileDoesNotExist(t *testing.T) {
+	t.Parallel()
+	forEach(t, func(t *testing.T, newFS func(int) fsys.FS) {
+		f := newTree(t, newFS)
+		write(t, f, "file", "x", 0o644)
+		if _, err := f.Stat(context.Background(), "file/child"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("FS.Stat() under a file error = %v, want %v", err, fs.ErrNotExist)
+		}
+	})
+}
+
 func TestMkdir(t *testing.T) {
 	t.Parallel()
 	forEach(t, func(t *testing.T, newFS func(int) fsys.FS) {

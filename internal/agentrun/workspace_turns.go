@@ -33,9 +33,12 @@ import (
 const maxEndedTurns = 1024
 
 // workspaceTurns runs the turn hooks of the workspaces of the running
-// processes: BeforeTurn before an execution starts a turn, and AfterTurn
-// when the agent ends it. An error of AfterTurn fails the task in its final
-// event, which the agent sends after the end of the turn.
+// processes: BeforeTurn before the agent gets the prompt of a turn, and
+// AfterTurn when the agent ends it. The turns of a process whose workspace
+// has hooks run one at a time, from BeforeTurn to AfterTurn, so that a
+// sync never sees another turn half done. An error of AfterTurn fails the
+// task in its final event, which the agent sends after the end of the
+// turn.
 type workspaceTurns struct {
 	keyOf   func(ctx context.Context, contextID string) (string, error)
 	explain func(ctx context.Context, execCtx *a2asrv.ExecutorContext, err error) []*a2a.Part
@@ -43,6 +46,8 @@ type workspaceTurns struct {
 
 	mu    sync.Mutex
 	hooks map[string]*turnHooks
+	// held are the hooks whose lock a task took before its turn started.
+	held map[a2a.TaskID]*turnHooks
 	// ended are the errors of AfterTurn by task, in the order of order.
 	ended map[a2a.TaskID]error
 	order []a2a.TaskID
@@ -50,10 +55,12 @@ type workspaceTurns struct {
 
 type turnHooks struct {
 	before, after func(context.Context) error
+	// lock is held from BeforeTurn to AfterTurn.
+	lock chan struct{}
 }
 
 func newWorkspaceTurns(keyOf func(context.Context, string) (string, error), explain func(context.Context, *a2asrv.ExecutorContext, error) []*a2a.Part, log func() *slog.Logger) *workspaceTurns {
-	return &workspaceTurns{keyOf: keyOf, explain: explain, log: log, hooks: map[string]*turnHooks{}, ended: map[a2a.TaskID]error{}}
+	return &workspaceTurns{keyOf: keyOf, explain: explain, log: log, hooks: map[string]*turnHooks{}, held: map[a2a.TaskID]*turnHooks{}, ended: map[a2a.TaskID]error{}}
 }
 
 // attach runs the turn hooks of att for the turns of key until detach.
@@ -61,7 +68,7 @@ func (w *workspaceTurns) attach(key string, att Attachment) (detach func()) {
 	if att.BeforeTurn == nil && att.AfterTurn == nil {
 		return func() {}
 	}
-	h := &turnHooks{before: att.BeforeTurn, after: att.AfterTurn}
+	h := &turnHooks{before: att.BeforeTurn, after: att.AfterTurn, lock: make(chan struct{}, 1)}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.hooks[key] = h
@@ -86,17 +93,83 @@ func (w *workspaceTurns) hooksOf(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	return w.hooks[key]
 }
 
-// turn wraps the Turn hook of a2aacp, so that AfterTurn of the workspace
-// the turn started in runs when it ends, before the end of next.
+// prompt wraps the Prompt hook of a2aacp, which runs once the turn before
+// in the conversation ended, and whose context ends when the task is
+// canceled. It waits for the turn of the workspace to end and runs
+// BeforeTurn, whose error fails the task, then returns the parts of next,
+// or of the message. The turn takes the lock over when it starts.
+func (w *workspaceTurns) prompt(next func(context.Context, *a2asrv.ExecutorContext) ([]*a2a.Part, error)) func(context.Context, *a2asrv.ExecutorContext) ([]*a2a.Part, error) {
+	return func(ctx context.Context, execCtx *a2asrv.ExecutorContext) ([]*a2a.Part, error) {
+		if h := w.hooksOf(ctx, execCtx); h != nil {
+			if err := w.begin(ctx, execCtx.TaskID, h); err != nil {
+				return nil, err
+			}
+		}
+		if next != nil {
+			return next(ctx, execCtx)
+		}
+		if execCtx.Message == nil {
+			return nil, errors.New("no message to send to the agent")
+		}
+		return execCtx.Message.Parts, nil
+	}
+}
+
+// begin takes the lock of h for the task id and runs BeforeTurn.
+func (w *workspaceTurns) begin(ctx context.Context, id a2a.TaskID, h *turnHooks) error {
+	select {
+	case h.lock <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if h.before != nil {
+		if err := h.before(ctx); err != nil {
+			<-h.lock
+			return err
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.held[id] = h
+	return nil
+}
+
+// takeHeld returns and forgets the hooks whose lock the task id took.
+func (w *workspaceTurns) takeHeld(id a2a.TaskID) *turnHooks {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h := w.held[id]
+	delete(w.held, id)
+	return h
+}
+
+// turn wraps the Turn hook of a2aacp, so that AfterTurn runs when the turn
+// ends, before the end of next, and the lock is released after it. A turn
+// whose process started during its prompt finds the hooks only now: it
+// waits for the lock and runs BeforeTurn here, before the agent gets the
+// prompt, and an error of BeforeTurn fails its final event.
 func (w *workspaceTurns) turn(next func(context.Context, *a2asrv.ExecutorContext) func()) func(context.Context, *a2asrv.ExecutorContext) func() {
 	return func(ctx context.Context, execCtx *a2asrv.ExecutorContext) func() {
-		h := w.hooksOf(ctx, execCtx)
+		h := w.takeHeld(execCtx.TaskID)
+		if h == nil {
+			if h = w.hooksOf(ctx, execCtx); h != nil {
+				h.lock <- struct{}{}
+				if h.before != nil {
+					if err := h.before(ctx); err != nil {
+						w.end(execCtx.TaskID, err)
+					}
+				}
+			}
+		}
 		end := next(ctx, execCtx)
 		return func() {
-			if h != nil && h.after != nil {
-				if err := h.after(ctx); err != nil {
-					w.end(execCtx.TaskID, err)
+			if h != nil {
+				if h.after != nil {
+					if err := h.after(ctx); err != nil {
+						w.end(execCtx.TaskID, errors.Join(w.take(execCtx.TaskID), err))
+					}
 				}
+				<-h.lock
 			}
 			if end != nil {
 				end()
@@ -144,25 +217,16 @@ type workspaceGuardedExecutor struct {
 
 var _ a2asrv.AgentExecutor = (*workspaceGuardedExecutor)(nil)
 
-// Execute runs BeforeTurn of the workspace first, unless execCtx answers
-// the agent's question, which continues its turn. A process that doesn't
-// run yet prepares its workspace when it starts. The errors of AfterTurn
-// that the final event doesn't take, such as of a turn that the stop ended
-// first, are dropped once the execution returns.
+// Execute fails the final event of a turn whose AfterTurn failed. Once the
+// execution returns, it releases the lock of a turn that didn't start, and
+// drops the errors of AfterTurn that the final event didn't take, such as
+// of a turn that the stop ended first.
 func (e *workspaceGuardedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
-		if !AnswersWaiting(execCtx) {
-			if h := e.w.hooksOf(ctx, execCtx); h != nil && h.before != nil {
-				if err := h.before(ctx); err != nil {
-					if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
-						return
-					}
-					yield(e.w.failure(ctx, execCtx, err), nil)
-					return
-				}
-			}
-		}
 		defer func() {
+			if h := e.w.takeHeld(execCtx.TaskID); h != nil {
+				<-h.lock
+			}
 			if err := e.w.take(execCtx.TaskID); err != nil {
 				e.w.log().Warn("the workspace failed after a turn whose end was already sent", "task", execCtx.TaskID, "error", err)
 			}
