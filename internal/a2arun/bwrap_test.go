@@ -119,3 +119,36 @@ func bwrapTestEnv(t *testing.T) string {
 	}
 	return bin
 }
+
+func TestBwrapSandboxServesALiveMemoryWorkspace(t *testing.T) {
+	t.Parallel()
+	bin := bwrapTestEnv(t)
+	caps, err := sandbox.Bubblewrap(sandbox.BubblewrapOptions{Launcher: bin}).Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Bubblewrap().Probe() error = %v", err)
+	}
+	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+	args := []string{"--sandbox", "bwrap", "--command", fakeACP, "--egress", "allowlist", "--workspace", serve.WorkspaceMemory, "--workspace-sync", "live", "--listen", "unix://" + sock}
+	if !slices.Contains(caps.Mounts, sandbox.MountServed) {
+		ready := failedReady(t, bin, args...)
+		if !strings.Contains(ready.Error, "use --workspace-sync turn") {
+			t.Fatalf("ready line where bubblewrap can't mount a live workspace = %+v, want the hint to use turn sync", ready)
+		}
+		return
+	}
+	if ready := startBinary(t, bin, args...); ready.Workspace != serve.WorkspaceMemory || ready.WorkspaceSync != serve.SyncLive {
+		t.Fatalf("ready line = %+v, want a memory workspace with live sync", ready)
+	}
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
+
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+	during := testutil.AllArtifactText(sendWant(t, c, textIn("context-b", "read hello.txt"), a2a.TaskStateCompleted))
+	sendWant(t, c, allow(t, waiting), a2a.TaskStateCompleted)
+
+	if !strings.Contains(during, "written by fakeacp") {
+		t.Fatalf("hello.txt as another context sees it while the turn waits = %q, want the agent's file", during)
+	}
+}
