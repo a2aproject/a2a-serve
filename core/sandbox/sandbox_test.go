@@ -19,12 +19,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,8 +34,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/fsysmask"
 )
 
 func create(t *testing.T, rt sandbox.Runtime, spec sandbox.Spec) sandbox.Sandbox {
@@ -236,6 +240,7 @@ func TestMainRunsEntryPoints(t *testing.T) {
 		{args: []string{"sandbox-init"}, wantCode: 2, wantErr: "requires at least 3 arg(s), only received 0"},
 		{args: []string{"sandbox-init", "--check", "s", "x", "1"}, wantCode: 1, wantErr: `invalid uid "x"`},
 		{args: []string{"sandbox-init", "s", "1", "2"}, wantCode: 1, wantErr: "want <socket> <uid> <gid> and a command, or --check"},
+		{args: []string{"sandbox-init", "--check", "--fs", "workspace=/s", "s", "1", "2"}, wantCode: 1, wantErr: `invalid --fs "workspace=/s": want <dst>=<socket>[,ro] with absolute paths`},
 		{args: []string{"sandbox-relay"}, wantCode: 2, wantErr: "--egress-listen and --egress-to are required"},
 		{args: []string{"sandbox-relay", "--egress-listen", "a", "--egress-to", "b"}, wantCode: 1, wantErr: "A2A_SERVE_RELAY_KEY is not set"},
 	}
@@ -316,6 +321,155 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
 	}
+}
+
+// TestDockerServesLiveWorkspace mounts a tree in memory in a container,
+// whose command changes it in every way that the tree supports, behind a
+// mask that hides an agent directory and replaces .mcp.json.
+func TestDockerServesLiveWorkspace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rt, image := dockerRuntime(t)
+	caps, err := rt.Probe(ctx)
+	if err != nil {
+		t.Fatalf("Docker().Probe() error = %v", err)
+	}
+	if !slices.Contains(caps.Mounts, sandbox.MountServed) {
+		t.Skipf("served mounts can't work here: %s", caps.MountProblems[sandbox.MountServed])
+	}
+
+	tree := fsys.Memory()
+	put(t, tree, "host.txt", "from host")
+	put(t, tree, "delete.txt", "x")
+	put(t, tree, ".mcp.json", `{"mcpServers":{"evil":{}}}`)
+	put(t, tree, "sub/.a2a/secret", "secret")
+	masked := fsysmask.New(tree, fsysmask.Rules{
+		Files:  map[string][]byte{".mcp.json": []byte(`{"mcpServers": {}}`)},
+		Hidden: func(name string) bool { return name == ".a2a" },
+	})
+	var stderr bytes.Buffer
+	sb := create(t, rt, sandbox.Spec{
+		Name:  "a2a-sandbox-test-" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz"),
+		Image: image,
+		Command: sandbox.Command{Path: "/probe", Args: []string{
+			"read:/ws/host.txt", "write:/ws/new.txt", "mkdir:/ws/dir", "mv:/ws/new.txt=/ws/dir/moved.txt",
+			"cp:/probe=/ws/tool", "chmod:/ws/tool=755", "mode:/ws/tool", "exec:/ws/tool",
+			"ln:tool=/ws/link", "readlink:/ws/link", "rm:/ws/delete.txt",
+			"read:/ws/.mcp.json", "ls:/ws/sub", "write:/ws/.mcp.json", "mkdir:/ws/.a2a",
+		}},
+		Mounts: []sandbox.Mount{{Dst: "/ws", Src: sandbox.Served(masked)}},
+		Labels: map[string]string{"a2a.test": "sandbox"},
+		Egress: openEndpoint(t, egress.Policy{Mode: egress.ModeAllowlist}),
+		Stderr: &stderr,
+	})
+	got := strings.Split(strings.TrimSpace(run(t, sb)), "\n")
+	want := []string{
+		"read:/ws/host.txt from host",
+		"write:/ws/new.txt ok",
+		"mkdir:/ws/dir ok",
+		"mv:/ws/new.txt=/ws/dir/moved.txt ok",
+		"cp:/probe=/ws/tool ok",
+		"chmod:/ws/tool=755 ok",
+		"mode:/ws/tool 0755",
+		"exec:/ws/tool ok",
+		"ln:tool=/ws/link ok",
+		"readlink:/ws/link tool",
+		"rm:/ws/delete.txt ok",
+		`read:/ws/.mcp.json {"mcpServers": {}}`,
+		"ls:/ws/sub 0 entries",
+		"write:/ws/.mcp.json error",
+		"mkdir:/ws/.a2a error",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
+	}
+
+	if got := get(t, tree, "dir/moved.txt"); got != "written" {
+		t.Fatalf("the tree's dir/moved.txt = %q, want what the command wrote", got)
+	}
+	for p, want := range map[string]fsys.Info{"tool": {Mode: 0o755}, "link": {Mode: fs.ModeSymlink | 0o777, Target: "tool"}} {
+		info, err := tree.Stat(ctx, p)
+		if err != nil {
+			t.Fatalf("FS.Stat(%q) error = %v", p, err)
+		}
+		if info.Mode != want.Mode || info.Target != want.Target {
+			t.Fatalf("FS.Stat(%q) = %v %q, want %v %q", p, info.Mode, info.Target, want.Mode, want.Target)
+		}
+	}
+	for _, p := range []string{"delete.txt", "new.txt"} {
+		if _, err := tree.Stat(ctx, p); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("FS.Stat(%q) error = %v, want %v", p, err, fs.ErrNotExist)
+		}
+	}
+	if got := get(t, tree, ".mcp.json"); got != `{"mcpServers":{"evil":{}}}` {
+		t.Fatalf("the tree's .mcp.json = %q, want it unchanged", got)
+	}
+}
+
+func TestServedNeedsBoundary(t *testing.T) {
+	t.Parallel()
+	mount := sandbox.Mount{Dst: "/ws", Src: sandbox.Served(fsys.Memory())}
+	tests := map[string]struct {
+		rt   sandbox.Runtime
+		spec sandbox.Spec
+	}{
+		"local":                   {rt: sandbox.Local()},
+		"docker without boundary": {rt: sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()})},
+		"docker unrestricted":     {rt: sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()}), spec: sandbox.Spec{Egress: openEndpoint(t, egress.Policy{Mode: egress.ModeUnrestricted})}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			spec := tc.spec
+			spec.Command, spec.Mounts = sandbox.Command{Path: "true"}, []sandbox.Mount{mount}
+			_, err := tc.rt.Create(context.Background(), spec)
+			got, ok := errors.AsType[*sandbox.UnsupportedMountError](err)
+			if !ok || got.Kind != sandbox.MountServed || got.Dst != "/ws" {
+				t.Fatalf("Runtime.Create() with a served mount error = %v, want an UnsupportedMountError of it", err)
+			}
+		})
+	}
+}
+
+// dockerRuntime returns the Docker runtime with a launcher built from this
+// tree and the image of the probe, or skips the test where it can't run.
+func dockerRuntime(t *testing.T) (sandbox.Runtime, string) {
+	t.Helper()
+	if runtime.GOOS != "linux" || os.Getenv("A2A_SERVE_SANDBOX_RELAY") == "1" {
+		t.Skip("needs the egress boundary of Linux without an egress container")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("needs the docker CLI")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skipf("docker isn't available: %v", err)
+	}
+	launcher := filepath.Join(t.TempDir(), "launcher")
+	rt := sandbox.Docker(sandbox.DockerOptions{Launcher: launcher, StateDir: t.TempDir()})
+	return rt, buildTestContainer(t, launcher)
+}
+
+func put(t *testing.T, tree fsys.FS, p, data string) {
+	t.Helper()
+	if _, err := tree.Write(context.Background(), p, strings.NewReader(data), 0o644, ""); err != nil {
+		t.Fatalf("FS.Write(%q) error = %v", p, err)
+	}
+}
+
+func get(t *testing.T, tree fsys.FS, p string) string {
+	t.Helper()
+	rc, err := tree.Open(context.Background(), p)
+	if err != nil {
+		t.Fatalf("FS.Open(%q) error = %v", p, err)
+	}
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("reading %q error = %v", p, err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatalf("closing %q error = %v", p, err)
+	}
+	return string(data)
 }
 
 // buildTestContainer builds the launcher at launcher and an image whose

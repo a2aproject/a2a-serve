@@ -56,6 +56,30 @@ The server:
 1. The container can reach the Mac's loopback ports through `host.docker.internal`.
 1. The server gives the agent container a random key for its a2a-cli socket, and the egress container another one for its egress socket. On Linux, the socket proves which container sent a message, but on Mac every process can call on the loopback port.
 
+## Live Workspaces
+
+A live workspace is a file tree that another program holds, which the agent's container shows at the workspace path. Every file operation of the agent goes to the program, so it sees the agent's changes as they happen, and the agent sees its changes. The program serves the tree with the [workspace protocol](../reference/workspace-protocol.md), or passes it in Go to `sandbox.Served` or `a2aserve.Live`.
+
+The launcher mounts the tree with FUSE:
+
+1. The server serves the tree on a second Unix socket, the fs socket, next to the egress socket. A read-only workspace refuses changes on the socket too.
+1. `docker run` adds `--device /dev/fuse` and the `SYS_ADMIN` capability.
+1. The launcher mounts FUSE at the workspace path before it drops its capabilities. It keeps serving the mount after it drops them, and sends each operation over the fs socket.
+1. The agent inherits no capability and no file of the launcher, so it can't answer the mount's calls or unmount it.
+
+Files are written whole. The writes to an open file go to a buffer in the container, and reach the program when the agent closes, flushes or syncs the file. The last write wins. Many network file systems use these close-to-open semantics, and they suit editors and build tools. A program that changes a file in place through `mmap`, such as a database, changes it in the tree when it closes the file. The buffers are bounded per file and per container, as [Limits](../reference/limits.md#live-workspace) lists.
+
+With `a2aserve.Live`, the masks of the workspace apply to the tree before the agent sees it. `.mcp.json` and the agent's configuration files appear empty and read-only, the agent's configuration folders, such as `.opencode`, start empty and keep the agent's writes in the container, and `.a2a` directories are hidden at any depth.
+
+A live workspace needs the launcher, so it runs only behind the egress boundary. With `--egress unrestricted`, or where the boundary can't work, the container doesn't start, and the error says so. Syncing the workspace at turn boundaries works on every runtime.
+
+| Runtime | Live workspace |
+| --- | --- |
+| Docker rootless on Linux | Yes, verified |
+| Docker rootful on Linux | Docker's default AppArmor profile denies the mount, and the container doesn't start where Docker applies AppArmor. Embedders can name another profile with `DockerOptions.ServedAppArmor`, such as `unconfined`, which runs the container without AppArmor. Not verified yet. |
+| Docker Desktop | No: the egress container doesn't carry the fs socket yet |
+| Local | No: the agent runs on the host, with no mount namespace |
+
 ## Calling the Network
 
 When an agent runs a tool which initiates a network request:

@@ -19,20 +19,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
+	"strings"
 )
 
 // EnvRelayKey holds the key that a relay sends to reach its boundary.
 const EnvRelayKey = "A2A_SERVE_RELAY_KEY"
 
 // RunInit runs the launcher with the arguments of sandbox-init:
-// [--check] <socket> <uid> <gid> [<command> [args...]]. It returns the exit
-// code of the command. A failed setup writes its reason to stderr and
-// returns [SetupFailedExit].
-func RunInit(args, env []string, failSetup bool, stderr io.Writer) (int, error) {
+// [--check] [--fs <dst>=<socket>[,ro]]... <socket> <uid> <gid> [<command>
+// [args...]]. Each --fs is a live workspace that mount mounts. It returns
+// the exit code of the command. A failed setup writes its reason to stderr
+// and returns [SetupFailedExit], and a failed mount [MountFailedExit].
+func RunInit(args, env []string, failSetup bool, mount MountFunc, stderr io.Writer) (int, error) {
 	check := len(args) > 0 && args[0] == "--check"
 	if check {
 		args = args[1:]
+	}
+	var mounts []Mount
+	for len(args) > 1 && args[0] == "--fs" {
+		m, err := parseMount(args[1])
+		if err != nil {
+			return 0, err
+		}
+		mounts = append(mounts, m)
+		args = args[2:]
 	}
 	if len(args) < 3 || !check && len(args) < 4 {
 		return 0, fmt.Errorf("want <socket> <uid> <gid> and a command, or --check")
@@ -45,7 +57,13 @@ func RunInit(args, env []string, failSetup bool, stderr io.Writer) (int, error) 
 	if err != nil {
 		return 0, fmt.Errorf("invalid gid %q", args[2])
 	}
-	code, err := Launch(LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: env, Check: check, FailSetup: failSetup})
+	code, err := Launch(LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: env, Mounts: mounts, Mount: mount, Check: check, FailSetup: failSetup})
+	if mountErr, ok := errors.AsType[*MountError](err); ok {
+		if _, err := fmt.Fprintf(stderr, "%s%v\n", MountErrorPrefix, mountErr); err != nil {
+			return 0, err
+		}
+		return MountFailedExit, nil
+	}
 	if setupErr, ok := errors.AsType[*SetupError](err); ok {
 		if _, err := fmt.Fprintf(stderr, "a2a-init: setting up the sandbox's network: %v\n", setupErr); err != nil {
 			return 0, err
@@ -56,6 +74,24 @@ func RunInit(args, env []string, failSetup bool, stderr io.Writer) (int, error) 
 		return 0, fmt.Errorf("starting the sandbox: %w", err)
 	}
 	return code, nil
+}
+
+// MountArg returns the value of --fs for m.
+func MountArg(m Mount) string {
+	v := m.Dst + "=" + m.Socket
+	if m.ReadOnly {
+		v += ",ro"
+	}
+	return v
+}
+
+func parseMount(v string) (Mount, error) {
+	dst, socket, ok := strings.Cut(v, "=")
+	socket, ro := strings.CutSuffix(socket, ",ro")
+	if !ok || !path.IsAbs(dst) || !path.IsAbs(socket) {
+		return Mount{}, fmt.Errorf("invalid --fs %q: want <dst>=<socket>[,ro] with absolute paths", v)
+	}
+	return Mount{Dst: path.Clean(dst), Socket: socket, ReadOnly: ro}, nil
 }
 
 // RelayFlags are the flags of sandbox-relay.

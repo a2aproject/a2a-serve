@@ -27,12 +27,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 var (
-	errIsDir   = errors.New("is a directory")
-	errNotDir  = errors.New("not a directory")
+	errIsDir   = syscall.EISDIR
+	errNotDir  = syscall.ENOTDIR
 	errNotFile = errors.New("not a regular file")
 )
 

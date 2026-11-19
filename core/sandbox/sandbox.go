@@ -18,11 +18,13 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
@@ -32,7 +34,7 @@ func init() {
 		case local:
 			return sandboxrt.RuntimeInfo{Local: true}, true
 		case *docker:
-			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress, StateDir: rt.opts.StateDir}, true
+			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress, StateDir: rt.opts.StateDir, ServedAppArmor: rt.opts.ServedAppArmor}, true
 		}
 		return sandboxrt.RuntimeInfo{}, false
 	})
@@ -113,13 +115,17 @@ const (
 	MountHostDir MountKind = "host-dir"
 	// MountTmpfs is an empty directory in memory, which [Tmpfs] builds.
 	MountTmpfs MountKind = "tmpfs"
+	// MountServed is a tree that the sandbox shows live, which [Served]
+	// builds.
+	MountServed MountKind = "served"
 )
 
 // Source is what a mount shows. Only this package builds one, with
-// [HostDir] or [Tmpfs]; the zero Source is invalid.
+// [HostDir], [Tmpfs] or [Served]; the zero Source is invalid.
 type Source struct {
 	kind MountKind
 	path string
+	tree fsys.FS
 }
 
 // HostDir returns the source of the host directory or file at path.
@@ -129,11 +135,28 @@ func HostDir(path string) Source { return Source{kind: MountHostDir, path: path}
 // go away with the sandbox.
 func Tmpfs() Source { return Source{kind: MountTmpfs} }
 
+// Served returns the source of tree, which the sandbox shows live: every
+// file operation of the command goes to tree, and the command sees the
+// changes of tree as they happen. Files are written whole: the writes to
+// an open file reach tree when the command closes, flushes or syncs it,
+// so a file that the command changes in place, such as through mmap,
+// changes in tree when it is closed. The last write wins.
+//
+// The Docker runtime mounts it with FUSE in the launcher of the container,
+// which needs the egress boundary on Linux, and Docker's AppArmor profile
+// denies it unless DockerOptions.ServedAppArmor names another. Probe
+// reports whether it works, and Create fails with an
+// [UnsupportedMountError] where it doesn't.
+func Served(tree fsys.FS) Source { return Source{kind: MountServed, tree: tree} }
+
 // Kind returns the kind of s, or "" for the zero Source.
 func (s Source) Kind() MountKind { return s.kind }
 
 // HostPath returns the host path of a [HostDir] source, or "".
 func (s Source) HostPath() string { return s.path }
+
+// Tree returns the tree of a [Served] source, or nil.
+func (s Source) Tree() fsys.FS { return s.tree }
 
 // UnsupportedMountError is the error of Create for a mount the runtime
 // can't show.
@@ -178,14 +201,29 @@ type Capabilities struct {
 	Problem string
 	// Mounts are the kinds of sources the runtime mounts.
 	Mounts []MountKind
+	// MountProblems say why the runtime doesn't mount the other kinds of
+	// sources, such as MountServed, where it could on another machine.
+	MountProblems map[MountKind]string
 }
 
 // checkSource returns the error of a mount without a source.
 func checkSource(m Mount) error {
-	if m.Src.kind == "" {
-		return fmt.Errorf("the mount at %q has no source: use sandbox.HostDir or sandbox.Tmpfs", m.Dst)
+	switch {
+	case m.Src.kind == "":
+		return fmt.Errorf("the mount at %q has no source: use sandbox.HostDir, sandbox.Tmpfs or sandbox.Served", m.Dst)
+	case m.Src.kind == MountServed && m.Src.tree == nil:
+		return fmt.Errorf("the mount at %q serves no tree", m.Dst)
 	}
 	return nil
+}
+
+// unsupportedMount returns the [UnsupportedMountError] of err, a
+// [*sandboxrt.ServedMountError] of the backend, or err.
+func unsupportedMount(backend string, err error) error {
+	if sme, ok := errors.AsType[*sandboxrt.ServedMountError](err); ok {
+		return &UnsupportedMountError{Backend: backend, Dst: sme.Dst, Kind: MountServed, Reason: sme.Reason}
+	}
+	return err
 }
 
 func command(c Command) sandboxrt.Command {

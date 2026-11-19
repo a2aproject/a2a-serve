@@ -35,14 +35,20 @@ const exposeDir = "/run/a2a"
 
 // Docker is the backend that runs commands in Docker containers.
 type Docker struct {
-	envDir   string
-	launcher func() string
+	envDir         string
+	launcher       func() string
+	servedAppArmor string
 
-	// probeMu serializes the check of the containers' egress setup, which
-	// runs once for the backend, and probed and probeErr are its result.
-	probeMu  sync.Mutex
-	probed   bool
-	probeErr error
+	// probeMu serializes the checks of the containers' egress setup, which
+	// run once for the backend, without and with live workspaces, and
+	// probes are their results.
+	probeMu sync.Mutex
+	probes  [2]probeResult
+}
+
+type probeResult struct {
+	done bool
+	err  error
 }
 
 var _ Backend = (*Docker)(nil)
@@ -51,9 +57,11 @@ var _ Backend = (*Docker)(nil)
 // containers in envDir, where no container must see them. launcher returns
 // the host path of the a2a-serve binary that containers with the egress
 // boundary run as their launcher, or "" to use this binary; nil always
-// uses this binary.
-func NewDocker(envDir string, launcher func() string) *Docker {
-	return &Docker{envDir: envDir, launcher: launcher}
+// uses this binary. servedAppArmor is the AppArmor profile of containers
+// with live workspaces, which Docker's default denies the FUSE mount; empty
+// keeps Docker's default, and refuses live workspaces where it applies.
+func NewDocker(envDir string, launcher func() string, servedAppArmor string) *Docker {
+	return &Docker{envDir: envDir, launcher: launcher, servedAppArmor: servedAppArmor}
 }
 
 // Probe implements [Backend]: the docker daemon answers, and whether the
@@ -65,7 +73,25 @@ func (d *Docker) Probe(ctx context.Context) (Capabilities, error) {
 	}
 	c := d.egressEnv().Probe()
 	c.Rootless = rootless
+	c.Served = d.servedProblem(ctx, c)
 	return c, nil
+}
+
+// servedProblem returns why containers can't show live workspaces on this
+// machine, whose egress capabilities are c, or nil.
+func (d *Docker) servedProblem(ctx context.Context, c Capabilities) error {
+	switch {
+	case c.EgressRelay:
+		return errors.New("an egress container can't carry a live workspace")
+	case c.Boundary != nil:
+		return fmt.Errorf("a live workspace needs the egress boundary, whose launcher mounts it: %w", c.Boundary)
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		if _, err := os.Stat("/dev/fuse"); err != nil {
+			return fmt.Errorf("this machine has no FUSE device: %w", err)
+		}
+	}
+	return appArmorProblem(ctx, d.servedAppArmor)
 }
 
 // egressEnv returns the environment of this process, with the launcher of d.
@@ -91,6 +117,11 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(spec.Served) > 0 {
+		if err := checkServed(ctx, spec, d.servedAppArmor); err != nil {
+			return nil, err
+		}
+	}
 	image, what, err := EnsureImage(ctx, spec.Image, spec.Build, spec.Progress)
 	if err != nil {
 		return nil, err
@@ -108,6 +139,9 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		Labels:   spec.Labels,
 		Rootless: rootless,
 	}
+	if len(spec.Served) > 0 {
+		r.ServedAppArmor = d.servedAppArmor
+	}
 	info := Info{Summary: "docker: " + what, Image: image}
 	closeEgress := func() error { return nil }
 	if spec.Network.Boundary != nil {
@@ -116,12 +150,26 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 			return nil, err
 		}
 		r.Egress = eg
+		if len(spec.Served) > 0 {
+			if eg.Relay != "" {
+				return nil, errors.Join(&ServedMountError{Dst: spec.Served[0].Dst, Reason: "an egress container can't carry a live workspace"}, closeFn())
+			}
+			closeServed, err := serveTrees(r, spec.Served, filepath.Dir(eg.Socket))
+			if err != nil {
+				return nil, errors.Join(err, closeFn())
+			}
+			closeEgress := closeFn
+			closeFn = func() error { return errors.Join(closeServed(), closeEgress()) }
+		}
 		failSetup := os.Getenv(boundary.EnvFailSetup)
 		if failSetup == "all" {
 			r.Env = append(r.Env, boundary.EnvFailSetup+"=1")
 		}
-		if err := d.probeOnce(func() error { return r.Probe(ctx) }); err != nil {
+		if err := d.probeOnce(len(spec.Served) > 0, func() error { return r.Probe(ctx) }); err != nil {
 			cerr := errors.Join(closeFn(), r.Stop(ctx))
+			if _, ok := errors.AsType[*ServedMountError](err); ok {
+				return nil, errors.Join(err, cerr)
+			}
 			if !errors.Is(err, ErrNoBoundary) {
 				return nil, errors.Join(fmt.Errorf("checking the egress setup of the agent's container: %w", err), cerr)
 			}
@@ -236,19 +284,25 @@ func openRelay(ctx context.Context, spec Spec, entrypoint []string, rootless boo
 	return eg, func() error { return errors.Join(stop(context.Background()), ep.Close()) }, nil
 }
 
-// probeOnce runs probe, the check of a container's egress setup, and
-// returns its result to every later call once it passed or found that the
-// setup can't work on this host. Other failures, such as an error of the
-// Docker daemon, aren't kept, and the next call checks again.
-func (d *Docker) probeOnce(probe func() error) error {
+// probeOnce runs probe, the check of a container's egress setup, with
+// live workspaces if served, and returns its result to every later call
+// of the same kind once it passed or found that the setup can't work on
+// this host. Other failures, such as an error of the Docker daemon, aren't
+// kept, and the next call checks again.
+func (d *Docker) probeOnce(served bool, probe func() error) error {
 	d.probeMu.Lock()
 	defer d.probeMu.Unlock()
-	if d.probed {
-		return d.probeErr
+	res := &d.probes[0]
+	if served {
+		res = &d.probes[1]
+	}
+	if res.done {
+		return res.err
 	}
 	err := probe()
-	if err == nil || errors.Is(err, ErrNoBoundary) {
-		d.probeErr, d.probed = err, true
+	_, mountFailed := errors.AsType[*ServedMountError](err)
+	if err == nil || errors.Is(err, ErrNoBoundary) || mountFailed {
+		res.err, res.done = err, true
 	}
 	return err
 }

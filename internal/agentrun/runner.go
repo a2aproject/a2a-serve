@@ -43,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -97,10 +98,12 @@ type Workspace func(ctx context.Context, key, stateDir string) (Attachment, erro
 // set, runs once the agent stopped working on a message, on every exit
 // path, and its error fails the turn; a [*TurnError] adds its metadata to
 // the final status message. With either set, the turns of the process run
-// one at a time, from BeforeTurn to AfterTurn.
+// one at a time, from BeforeTurn to AfterTurn. Served, if set, is the tree
+// that the process sees at Path, live, over the empty directory Dir.
 type Attachment struct {
 	Dir, Path  string
 	ReadOnly   bool
+	Served     fsys.FS
 	Release    func() error
 	BeforeTurn func(ctx context.Context) error
 	AfterTurn  func(ctx context.Context) error

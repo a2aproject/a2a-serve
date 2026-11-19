@@ -46,6 +46,14 @@ type DockerOptions struct {
 	// endpoints. No container may see it. Empty uses a temporary
 	// directory, removed when the last sandbox closes.
 	StateDir string
+	// ServedAppArmor is the AppArmor profile of the containers with a
+	// [Served] mount, whose launcher mounts it with FUSE. Docker's default
+	// profile denies the mount, so where Docker applies AppArmor, such as
+	// rootful Docker on Ubuntu, a Served mount needs a profile that allows
+	// it, or "unconfined", which runs the container without AppArmor.
+	// Empty keeps Docker's default and refuses Served mounts where it
+	// applies.
+	ServedAppArmor string
 }
 
 // Docker returns the runtime that runs commands in Docker containers.
@@ -83,7 +91,7 @@ func (d *docker) acquire() (*sandboxrt.Docker, *sandboxrt.Boundaries, error) {
 		if d.opts.Launcher != "" {
 			launcher = func() string { return d.opts.Launcher }
 		}
-		d.backend = sandboxrt.NewDocker(filepath.Join(dir, "env"), launcher)
+		d.backend = sandboxrt.NewDocker(filepath.Join(dir, "env"), launcher, d.opts.ServedAppArmor)
 	}
 	d.users++
 	return d.backend, d.boundaries, nil
@@ -107,7 +115,7 @@ func (d *docker) release(ctx context.Context) error {
 }
 
 func (d *docker) Probe(ctx context.Context) (Capabilities, error) {
-	c, err := sandboxrt.NewDocker("", func() string { return d.opts.Launcher }).Probe(ctx)
+	c, err := sandboxrt.NewDocker("", func() string { return d.opts.Launcher }, d.opts.ServedAppArmor).Probe(ctx)
 	if err != nil {
 		return Capabilities{}, err
 	}
@@ -146,6 +154,9 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 		}
 	}
 	behind := spec.Egress != nil && ep.Mode() != egressrules.ModeUnrestricted
+	if len(sb.Served) > 0 && !behind {
+		return nil, &UnsupportedMountError{Backend: "docker", Dst: sb.Served[0].Dst, Kind: MountServed, Reason: "a live workspace needs the egress boundary, whose launcher mounts it: give the sandbox an egress endpoint with a policy other than unrestricted"}
+	}
 	if err := expose(&sb, spec.Sockets, behind); err != nil {
 		return nil, err
 	}
@@ -158,13 +169,14 @@ func (d *docker) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 	}
 	s, err := backend.Prepare(ctx, sb)
 	if err != nil {
-		return nil, errors.Join(err, d.release(ctx))
+		return nil, errors.Join(unsupportedMount("docker", err), d.release(ctx))
 	}
 	return &dockerSandbox{Sandbox: s, d: d}, nil
 }
 
 // dockerMounts gives the container of sb the mounts: a host directory as
-// a bind mount, and a tmpfs in memory, read-only as an empty mask.
+// a bind mount, a tmpfs in memory, read-only as an empty mask, and a
+// served tree as a live workspace.
 func dockerMounts(sb *sandboxrt.Spec, mounts []Mount) error {
 	for _, m := range mounts {
 		if err := checkSource(m); err != nil {
@@ -176,6 +188,8 @@ func dockerMounts(sb *sandboxrt.Spec, mounts []Mount) error {
 		switch {
 		case m.Src.kind == MountHostDir:
 			sb.Mounts = append(sb.Mounts, sandboxrt.Mount{Src: m.Src.path, Dst: m.Dst, ReadOnly: m.ReadOnly})
+		case m.Src.kind == MountServed:
+			sb.Served = append(sb.Served, sandboxrt.ServedMount{Dst: m.Dst, Tree: m.Src.tree, ReadOnly: m.ReadOnly})
 		case m.ReadOnly:
 			sb.Masks = append(sb.Masks, sandboxrt.Mask{Dst: m.Dst})
 		default:
@@ -229,16 +243,18 @@ func (s *dockerSandbox) Close(ctx context.Context) error {
 
 // capabilities converts what the runtime found on this machine.
 func capabilities(c sandboxrt.Capabilities) Capabilities {
-	if c.Boundary != nil {
-		return Capabilities{Problem: c.Boundary.Error(), Mounts: dockerMountKinds()}
+	caps := Capabilities{Boundary: true, Mounts: []MountKind{MountHostDir, MountTmpfs}}
+	switch {
+	case c.Boundary != nil:
+		caps.Boundary, caps.Problem = false, c.Boundary.Error()
+	case c.RelayImage != nil:
+		_, missing := errors.AsType[*sandboxrt.MissingRelayImage](c.RelayImage)
+		caps.Boundary, caps.Problem = missing, c.RelayImage.Error()
 	}
-	if c.RelayImage != nil {
-		if _, missing := errors.AsType[*sandboxrt.MissingRelayImage](c.RelayImage); !missing {
-			return Capabilities{Problem: c.RelayImage.Error(), Mounts: dockerMountKinds()}
-		}
-		return Capabilities{Boundary: true, Problem: c.RelayImage.Error(), Mounts: dockerMountKinds()}
+	if c.Served != nil {
+		caps.MountProblems = map[MountKind]string{MountServed: c.Served.Error()}
+	} else {
+		caps.Mounts = append(caps.Mounts, MountServed)
 	}
-	return Capabilities{Boundary: true, Mounts: dockerMountKinds()}
+	return caps
 }
-
-func dockerMountKinds() []MountKind { return []MountKind{MountHostDir, MountTmpfs} }

@@ -30,8 +30,8 @@ import (
 // The command sees the host's files in place, so Local takes a [HostDir]
 // mount whose Dst is its own host path, and does nothing for it. It
 // confines nothing, so it ignores ReadOnly and Hide. Create refuses other
-// mounts with an [UnsupportedMountError]: a host directory at another path
-// and a [Tmpfs], which need a mount namespace.
+// mounts with an [UnsupportedMountError]: a host directory at another path,
+// a [Tmpfs] and a [Served] tree, which need a mount namespace.
 func Local() Runtime { return local{} }
 
 type local struct{}
@@ -43,6 +43,7 @@ func (local) Probe(ctx context.Context) (Capabilities, error) {
 	}
 	caps := capabilities(c)
 	caps.Mounts = []MountKind{MountHostDir}
+	caps.MountProblems = map[MountKind]string{MountTmpfs: localNoNamespace, MountServed: localNoNamespace}
 	return caps, nil
 }
 
@@ -67,14 +68,17 @@ func (local) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 	return sandboxrt.Local{}.Prepare(ctx, sb)
 }
 
+// localNoNamespace is why Local doesn't mount a Tmpfs or a Served tree.
+const localNoNamespace = "the command runs on the host, with no mount namespace"
+
 // checkLocalMount refuses a mount that the host can't show as asked.
 func checkLocalMount(m Mount) error {
 	if err := checkSource(m); err != nil {
 		return err
 	}
 	switch {
-	case m.Src.kind == MountTmpfs:
-		return &UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.kind, Reason: "the command runs on the host, with no mount namespace"}
+	case m.Src.kind == MountTmpfs || m.Src.kind == MountServed:
+		return &UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.kind, Reason: localNoNamespace}
 	case filepath.Clean(m.Dst) != filepath.Clean(m.Src.path):
 		return &UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.kind, Reason: "the command runs on the host, where " + m.Src.path + " stays at its own path"}
 	}

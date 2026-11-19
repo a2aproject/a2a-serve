@@ -17,10 +17,12 @@ package a2aserve
 import (
 	"context"
 	"errors"
+
+	"github.com/a2aproject/a2a-serve/core/fsys"
 )
 
 // Workspace gives each process its project directory. [SharedDir], [Copies],
-// [EmptyDir] and [TurnSynced] are the workspaces of this package.
+// [EmptyDir], [TurnSynced] and [Live] are the workspaces of this package.
 type Workspace interface {
 	// Attach returns the directory of the process of key, and keeps it until
 	// Release. [Copies] prepares a copy here.
@@ -53,6 +55,12 @@ type Attachment struct {
 	AfterTurn func(ctx context.Context) error
 }
 
+// servedWorkspace is a workspace whose tree the process sees live, at the
+// Path of its attachment over the empty directory Dir.
+type servedWorkspace interface {
+	served() fsys.FS
+}
+
 // stateWorkspace is a workspace that keeps its directories in the state
 // directory of the Agent unless it was given one.
 type stateWorkspace interface {
@@ -79,6 +87,13 @@ type readOnly struct{ w Workspace }
 
 func (r readOnly) Attach(ctx context.Context, key string) (Attachment, error) {
 	return r.attachIn(ctx, key, "")
+}
+
+func (r readOnly) served() fsys.FS {
+	if sw, ok := r.w.(servedWorkspace); ok {
+		return sw.served()
+	}
+	return nil
 }
 
 func (r readOnly) attachIn(ctx context.Context, key, stateDir string) (Attachment, error) {

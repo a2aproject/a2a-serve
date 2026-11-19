@@ -101,10 +101,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 	if err := fsutil.WriteAtomic(spec.ConfigMask, []byte(emptyConfig), 0o644); err != nil {
 		return configMasks{}, fmt.Errorf("writing %s: %w", spec.ConfigMask, err)
 	}
-	mounts := slices.Clone(spec.Mounts)
-	if spec.WorkspaceSrc != "" {
-		mounts[0].Src = spec.WorkspaceSrc
-	}
+	mounts := hostMounts(spec)
 	entries, readsParents := configFiles(spec.Profile)
 	var cm configMasks
 	var files, dirs, unmasked []string

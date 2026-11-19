@@ -30,6 +30,9 @@ type RuntimeInfo struct {
 	// StateDir keeps the env files of the containers in env, and the
 	// sockets of their egress boundaries in egress, or is "".
 	StateDir string
+	// ServedAppArmor is the AppArmor profile of Docker containers with
+	// live workspaces, or "" for Docker's default.
+	ServedAppArmor string
 }
 
 var runtimeOf func(any) (RuntimeInfo, bool)

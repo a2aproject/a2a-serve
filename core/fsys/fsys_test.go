@@ -38,6 +38,12 @@ var impls = map[string]func(t *testing.T, maxChanges int) fsys.FS{
 	"dir": func(t *testing.T, maxChanges int) fsys.FS {
 		return fsys.NewDir(t.TempDir(), maxChanges, 1000, 20*time.Millisecond)
 	},
+	"client of memory over http": func(t *testing.T, maxChanges int) fsys.FS {
+		return serveHTTP(t, fsys.NewMemory(maxChanges))
+	},
+	"client of dir over unix": func(t *testing.T, maxChanges int) fsys.FS {
+		return serveUnix(t, fsys.NewDir(t.TempDir(), maxChanges, 1000, 20*time.Millisecond))
+	},
 }
 
 // forEach runs test against every tree.

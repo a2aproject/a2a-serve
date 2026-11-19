@@ -18,6 +18,8 @@ import (
 	"context"
 	"io"
 	"slices"
+
+	"github.com/a2aproject/a2a-serve/core/fsys"
 )
 
 // Backend sets up the sandboxes of one kind, such as Docker containers.
@@ -45,6 +47,8 @@ type Spec struct {
 	Command Command
 	Mounts  []Mount
 	Masks   []Mask
+	// Served are the trees that the sandbox shows live.
+	Served []ServedMount
 	// Scratch are paths in the sandbox which appear as empty directories,
 	// whose changes stay in the sandbox.
 	Scratch []string
@@ -63,6 +67,27 @@ type Spec struct {
 	// Stderr receives the stderr of the process, and Progress the output of
 	// pulling or building the image. Discarded if nil.
 	Stderr, Progress io.Writer
+}
+
+// ServedMount shows Tree in the sandbox at Dst, live: every file operation
+// goes to Tree. A Docker container's launcher mounts it with FUSE and
+// sends the operations to a file server on a socket next to the egress
+// socket.
+type ServedMount struct {
+	Dst      string
+	Tree     fsys.FS
+	ReadOnly bool
+}
+
+// ServedMountError is the error of a [ServedMount] that the sandbox can't
+// show.
+type ServedMountError struct {
+	Dst    string
+	Reason string
+}
+
+func (e *ServedMountError) Error() string {
+	return "the sandbox can't show the live workspace at " + e.Dst + ": " + e.Reason
 }
 
 // Network is the network of a sandbox: the runtime's own, or none but the
@@ -120,6 +145,9 @@ func (Local) Probe(context.Context) (Capabilities, error) {
 // Prepare implements [Backend]. Each process gets a [ProcessMark], so the
 // processes it starts are killed once it exits.
 func (Local) Prepare(_ context.Context, spec Spec) (Sandbox, error) {
+	if len(spec.Served) > 0 {
+		return nil, &ServedMountError{Dst: spec.Served[0].Dst, Reason: "the command runs on the host, with no mount namespace"}
+	}
 	if spec.Network.Boundary != nil {
 		return nil, &boundaryError{why: "the command runs on the host"}
 	}
