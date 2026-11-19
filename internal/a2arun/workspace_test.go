@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -285,6 +286,22 @@ func TestURLWorkspaceConflictFailsTheTask(t *testing.T) {
 	}
 	if got, err := readTree(t, tree, "hello.txt"); err != nil || got != "the host's\n" {
 		t.Fatalf("reading hello.txt of the host's tree after the conflict = %q, %v, want the host's file", got, err)
+	}
+}
+
+func TestURLWorkspaceThatStopsAnsweringFailsTheTurnWithoutItsPath(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.StripPrefix("/secret-value", fsys.Handler(fsys.Memory())))
+	t.Cleanup(srv.Close)
+	_, c := startWorkspace(t, "--workspace", srv.URL+"/secret-value/")
+
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+	srv.Close()
+	failed := sendWant(t, c, allow(t, waiting), a2a.TaskStateFailed)
+
+	text := statusText(failed)
+	if !strings.Contains(text, "The workspace at "+srv.URL+" didn't answer") || strings.Contains(text, "secret-value") {
+		t.Fatalf("status of a turn whose workspace stopped answering = %q, want it to name %s without the path", text, srv.URL)
 	}
 }
 

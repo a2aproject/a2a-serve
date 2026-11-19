@@ -293,3 +293,79 @@ func TestClientSpeaksTLSForHTTPS(t *testing.T) {
 		t.Fatalf("Client.Stat() of a server with an untrusted certificate error = %v, want a certificate error", err)
 	}
 }
+
+func TestClientErrorsLeaveOutThePathOfTheURL(t *testing.T) {
+	t.Parallel()
+	c, err := fsys.Client("http://127.0.0.1:1/secret-value/")
+	if err != nil {
+		t.Fatalf("fsys.Client() error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want error
+	}{
+		{name: "refused", ctx: context.Background(), want: syscall.ECONNREFUSED},
+		{name: "canceled", ctx: canceled, want: context.Canceled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := c.Stat(tc.ctx, ".")
+
+			if !errors.Is(err, tc.want) || strings.Contains(err.Error(), "secret-value") || !strings.Contains(err.Error(), "http://127.0.0.1:1") {
+				t.Fatalf("Client.Stat() error = %v, want %v naming http://127.0.0.1:1 without the path", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandlerOfAClientLeavesOutThePathOfItsURL(t *testing.T) {
+	t.Parallel()
+	c, err := fsys.Client("http://127.0.0.1:1/secret-value/")
+	if err != nil {
+		t.Fatalf("fsys.Client() error = %v", err)
+	}
+	srv := httptest.NewServer(fsys.Handler(c))
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Get(srv.URL + "/stat?path=.")
+	if err != nil {
+		t.Fatalf("GET /stat error = %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err := errors.Join(err, resp.Body.Close()); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode < 500 || strings.Contains(string(body), "secret-value") {
+		t.Fatalf("GET /stat of an unreachable client = %d %q, want 5xx without the path of its URL", resp.StatusCode, body)
+	}
+}
+
+// failingFS fails Stat with err.
+type failingFS struct {
+	fsys.FS
+	err error
+}
+
+func (f failingFS) Stat(context.Context, string) (fsys.Info, error) { return fsys.Info{}, f.err }
+
+func TestHandlerHidesTheTextOfServerErrors(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(fsys.Handler(failingFS{FS: fsys.Memory(), err: errors.New("inner secret-value")}))
+	t.Cleanup(srv.Close)
+	c, err := fsys.Client(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Stat(context.Background(), ".")
+
+	if err == nil || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("Client.Stat() of a failing tree error = %v, want an error without its inner text", err)
+	}
+}

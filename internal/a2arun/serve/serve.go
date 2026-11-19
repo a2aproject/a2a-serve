@@ -112,10 +112,12 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating the state directory: %w", err)
 	}
-	rt, summary, boundary, err := srv.runtime(ctx, s, stderr)
+	rt, summary, caps, err := srv.runtime(ctx, s, stderr)
 	if err != nil {
 		return nil, err
 	}
+	boundary := caps.Boundary
+	s.workspace.liveOK = s.workspace.kind == WorkspaceDir || slices.Contains(caps.Mounts, sandbox.MountServed)
 	if s.tools != nil {
 		if srv.tools, err = startTools(ctx, *s.tools, cfg.Version, srv.log); err != nil {
 			return nil, err
@@ -266,36 +268,37 @@ func (s *Server) dir(dir, pattern string) (string, error) {
 	return tmp, nil
 }
 
-// runtime returns the sandbox runtime of set, and how the ready line
-// describes it, and whether the egress boundary decides the sandbox's
-// connections. It checks that Docker answers before anything starts.
-func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_ sandbox.Runtime, summary string, boundary bool, _ error) {
+// runtime returns the sandbox runtime of set, how the ready line describes
+// it, and its capabilities, whose Boundary is set only where the egress
+// boundary decides the sandbox's connections. It checks that Docker
+// answers before anything starts.
+func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_ sandbox.Runtime, summary string, _ sandbox.Capabilities, _ error) {
 	if set.sandbox == SandboxLocal {
-		return sandbox.Local(), SandboxLocal, false, nil
+		return sandbox.Local(), SandboxLocal, sandbox.Capabilities{Mounts: []sandbox.MountKind{sandbox.MountHostDir}}, nil
 	}
 	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
 	caps, err := rt.Probe(ctx)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", sandbox.Capabilities{}, err
 	}
 	if !caps.Boundary && set.egressProxy != "" {
-		return nil, "", false, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
 	}
 	if !caps.Boundary && set.tools != nil {
-		return nil, "", false, fmt.Errorf("--tools with --sandbox docker needs a sandbox that routes the agent's connections through a2a-run, which Docker here can't: %s; use --sandbox local with an http:// URL", caps.Problem)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--tools with --sandbox docker needs a sandbox that routes the agent's connections through a2a-run, which Docker here can't: %s; use --sandbox local with an http:// URL", caps.Problem)
 	}
 	if set.workspace.served() && !slices.Contains(caps.Mounts, sandbox.MountServed) {
-		return nil, "", false, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %s; %s", set.workspace.shown, caps.MountProblems[sandbox.MountServed], liveHint)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %s; %s", set.workspace.shown, caps.MountProblems[sandbox.MountServed], liveHint)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)
 	}
 	rootless, err := sandboxrt.CheckDocker(ctx)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", sandbox.Capabilities{}, err
 	}
 	if rootless {
-		return rt, SandboxDocker + " (rootless)", caps.Boundary, nil
+		return rt, SandboxDocker + " (rootless)", caps, nil
 	}
-	return rt, SandboxDocker, caps.Boundary, nil
+	return rt, SandboxDocker, caps, nil
 }

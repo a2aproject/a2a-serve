@@ -18,8 +18,10 @@ import (
 	"context"
 	"flag"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/core/fsys"
@@ -97,4 +99,24 @@ func serveRefhost(t *testing.T, allowPrivate bool, tools refhost.ToolsConfig) st
 		}
 	})
 	return "unix://" + sock
+}
+
+func TestLongPollCheckFailsAServerThatIgnoresWait(t *testing.T) {
+	t.Parallel()
+	h := fsys.Handler(fsys.Memory())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		q.Set("wait", "0")
+		r.URL.RawQuery = q.Encode()
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	f, err := newFileServer(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkLongPoll(t.Context(), f); err == nil || !strings.Contains(err.Error(), "want it to wait") {
+		t.Fatalf("checkLongPoll() of a server that ignores wait error = %v, want it to say the server didn't wait", err)
+	}
 }

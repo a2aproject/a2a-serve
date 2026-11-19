@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -37,6 +38,9 @@ import (
 const (
 	changesWait  = 10 * time.Second
 	changesDelay = 300 * time.Millisecond
+	// idleWait is the wait of a request for changes when nothing changes,
+	// which must hold the answer for at least half of it.
+	idleWait = time.Second
 )
 
 // entry is an entry of the workspace protocol.
@@ -237,6 +241,11 @@ func testWorkspace(t *testing.T, rawURL string) {
 		}
 	})
 	t.Run("feeds changes", func(t *testing.T) { testChanges(t, f, dir+"/feed") })
+	t.Run("waits for changes", func(t *testing.T) {
+		if err := checkLongPoll(t.Context(), f); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("asks to resync for an unknown cursor", func(t *testing.T) {
 		fl := f.wantFailure(t, http.StatusGone, "resync", http.MethodGet, "/changes", neturl.Values{"cursor": {"a2a-run-conformance-unknown"}}, nil, nil)
 		if fl.Cursor == "" {
@@ -360,9 +369,6 @@ func testChanges(t *testing.T, f *fileServer, dir string) {
 		c := f.changes(t, cursor, changesWait)
 		cursor, got = c.Cursor, c.Changes
 	}
-	if elapsed := time.Since(began); elapsed < changesDelay/2 {
-		t.Fatalf("GET /changes answered after %v, before the write", elapsed)
-	}
 	if err := <-written; err != nil {
 		t.Fatal(err)
 	}
@@ -371,4 +377,35 @@ func testChanges(t *testing.T, f *fileServer, dir string) {
 	if !slices.ContainsFunc(c.Changes, func(e entry) bool { return e.Path == p && e.Removed }) {
 		t.Fatalf("GET /changes after a removal = %+v, want %s removed", c.Changes, p)
 	}
+}
+
+// checkLongPoll checks that a request for changes with a wait holds its
+// answer while nothing changes. Changes that others make to the tree
+// answer it early, so it tries a few times.
+func checkLongPoll(ctx context.Context, f *fileServer) error {
+	cursor := ""
+	for range 5 {
+		q := neturl.Values{"cursor": {cursor}}
+		if cursor != "" {
+			q.Set("wait", fmt.Sprint(idleWait.Milliseconds()))
+		}
+		began := time.Now()
+		status, _, body, err := f.send(ctx, http.MethodGet, "/changes", q, nil, nil)
+		if err != nil {
+			return err
+		}
+		elapsed := time.Since(began)
+		var c changes
+		if status != http.StatusOK || json.Unmarshal(body, &c) != nil || c.Cursor == "" {
+			return fmt.Errorf("GET /changes?%s = %d %q, want 200 with a cursor", q.Encode(), status, body)
+		}
+		if cursor != "" && len(c.Changes) == 0 && elapsed < idleWait/2 {
+			return fmt.Errorf("GET /changes?%s answered no changes after %v, want it to wait about %v for one", q.Encode(), elapsed, idleWait)
+		}
+		if cursor != "" && len(c.Changes) == 0 {
+			return nil
+		}
+		cursor = c.Cursor
+	}
+	return errors.New("GET /changes kept answering with changes; run the suite on a tree that nothing else changes")
 }

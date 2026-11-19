@@ -42,6 +42,11 @@ import (
 // deadline of its context, in requests of up to [MaxChangesWait].
 func Client(rawURL string) (FS, error) {
 	u, err := url.Parse(rawURL)
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		// The error of url.Parse quotes the URL, whose path may carry a
+		// secret.
+		err = ue.Err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parsing the file server URL: %w", err)
 	}
@@ -60,6 +65,7 @@ func Client(rawURL string) (FS, error) {
 			return nil, errors.New("the file server URL has no host")
 		}
 		c.base = strings.TrimSuffix(u.String(), "/")
+		c.shown = u.Scheme + "://" + u.Host
 	case "unix":
 		if u.Host != "" || u.Path == "" {
 			return nil, errors.New("want the file server socket as unix:///path/to/socket")
@@ -70,6 +76,7 @@ func Client(rawURL string) (FS, error) {
 			return d.DialContext(ctx, "unix", socket)
 		}
 		c.base = "http://fsys"
+		c.shown = "unix://" + socket
 	default:
 		return nil, fmt.Errorf("the file server URL has the scheme %q; want http, https or unix", u.Scheme)
 	}
@@ -83,7 +90,34 @@ func noRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastR
 
 type client struct {
 	base string
-	http *http.Client
+	// shown names the server in errors: its scheme and host, or its
+	// socket, without the path, which may carry a secret.
+	shown string
+	http  *http.Client
+}
+
+// requestError is the error of a request that got no answer. Unlike the
+// *url.Error of net/http, it leaves out the URL of the request.
+type requestError struct {
+	method, shown string
+	err           error
+}
+
+func (e *requestError) Error() string { return e.method + " " + e.shown + ": " + e.err.Error() }
+func (e *requestError) Unwrap() error { return e.err }
+
+// Timeout reports whether the request timed out, as net.Error does.
+func (e *requestError) Timeout() bool {
+	t, ok := e.err.(interface{ Timeout() bool })
+	return ok && t.Timeout()
+}
+
+// requestErr returns err of a request without the URL of the request.
+func (c *client) requestErr(method string, err error) error {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		err = ue.Err
+	}
+	return &requestError{method: method, shown: c.shown, err: err}
 }
 
 var (
@@ -100,12 +134,12 @@ func (c *client) do(ctx context.Context, op, p, method, route string, query url.
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
-		return nil, &fs.PathError{Op: op, Path: p, Err: err}
+		return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, err)}
 	}
 	maps.Copy(req.Header, header)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, &fs.PathError{Op: op, Path: p, Err: err}
+		return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, err)}
 	}
 	if slices.Contains(ok, resp.StatusCode) {
 		return resp, nil

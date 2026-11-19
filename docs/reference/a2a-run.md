@@ -135,6 +135,8 @@ At start, `a2a-run` checks that the host's file server answers and serves a dire
 
 With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets. A `dir:` workspace larger than `turn` sync copies fails at start with a hint to use `live`. A workspace that grows past the [limits](limits.md#a2a-run) fails the turn with a status message that says to remove files. The next turns still run, so the agent can remove them.
 
+When the host's file server stops answering, a turn with `turn` sync fails with a status message that names the server. The agent's changes stay in its copy and go back to the workspace at its next turn.
+
 Changes that the agent makes after its turn ended, such as by a process it left running, reach the workspace when its agent process stops. No task lists them, and `a2a-run` logs their paths on stderr.
 
 ### Changes artifact

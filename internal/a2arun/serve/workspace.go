@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -78,6 +79,8 @@ type workspace struct {
 	// may carry a secret.
 	shown string
 	sync  string
+	// liveOK is set where --workspace-sync live works for the workspace.
+	liveOK bool
 }
 
 // served reports whether the sandbox mounts the workspace as a served
@@ -261,10 +264,14 @@ func (w workspace) build(tree fsys.FS, stateDir string, synced func(context.Cont
 func (w workspace) explain(_ context.Context, _ *a2asrv.ExecutorContext, err error) []*a2a.Part {
 	if errors.Is(err, a2aserve.ErrWorkspaceTooLarge) || errors.Is(err, fsys.ErrFull) {
 		text := fmt.Sprintf("The workspace is past a2a-run's limits of %d entries and %d bytes (%v). Ask the agent to remove files it doesn't need, or remove files yourself, then send the message again.", defaultWorkspaceLimits.entries, defaultWorkspaceLimits.bytes, err)
-		if w.kind != WorkspaceMemory && w.sync == SyncTurn {
+		if w.kind != WorkspaceMemory && w.sync == SyncTurn && w.liveOK {
 			text += " To work on a larger workspace, restart a2a-run with --workspace-sync live."
 		}
 		return []*a2a.Part{a2a.NewTextPart(text)}
+	}
+	if _, ok := errors.AsType[*net.OpError](err); (ok || errors.Is(err, context.DeadlineExceeded)) && w.kind == WorkspaceURL {
+		return []*a2a.Part{a2a.NewTextPart(fmt.Sprintf(
+			"The workspace at %s didn't answer: %s. The agent's changes stay in its copy and go back at the next turn.", w.shown, redactURLs(err.Error())))}
 	}
 	conflict, ok := errors.AsType[*a2aserve.SyncConflictError](err)
 	if !ok {
