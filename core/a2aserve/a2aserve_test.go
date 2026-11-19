@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/core/tools"
 	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -69,8 +70,23 @@ func environment(t *testing.T, pool string) a2aserve.Environment {
 	return a2aserve.Environment{Workspace: workspace.Dir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home"), Pool: pool}
 }
 
-// newAgent starts an agent of fakeacp without a sandbox, with cfg.
+// newAgent starts an agent of fakeacp without a sandbox, with cfg, and
+// closes it at the end of the test.
 func newAgent(t *testing.T, cfg a2aserve.Config) *a2aserve.Agent {
+	t.Helper()
+	a, cancel := startAgent(t, cfg)
+	t.Cleanup(func() {
+		cancel()
+		if err := a.Close(context.Background()); err != nil {
+			t.Errorf("Agent.Close() error = %v", err)
+		}
+	})
+	return a
+}
+
+// startAgent starts an agent of fakeacp without a sandbox, with cfg, and
+// returns it with the function that cancels the context of New.
+func startAgent(t *testing.T, cfg a2aserve.Config) (*a2aserve.Agent, context.CancelFunc) {
 	t.Helper()
 	cfg.Profile = agent.Command(fakeACP)
 	cfg.Runtime = sandbox.Local()
@@ -84,13 +100,7 @@ func newAgent(t *testing.T, cfg a2aserve.Config) *a2aserve.Agent {
 		cancel()
 		t.Fatalf("a2aserve.New() error = %v", err)
 	}
-	t.Cleanup(func() {
-		cancel()
-		if err := a.Close(context.Background()); err != nil {
-			t.Errorf("Agent.Close() error = %v", err)
-		}
-	})
-	return a
+	return a, cancel
 }
 
 // client returns an A2A client of the handler of a over JSON-RPC.
@@ -318,4 +328,63 @@ func TestUnansweredQuestionFailsTheTaskInTheStore(t *testing.T) {
 		t.Fatalf("Client.SendMessage(ask) state = %v, want %v", task.Status.State, a2a.TaskStateInputRequired)
 	}
 	waitStored(t, store, task.ID, a2a.TaskStateFailed)
+}
+
+func TestCloseEndsATaskThatWaitsForInput(t *testing.T) {
+	t.Parallel()
+	store := taskstore.NewInMemory(nil)
+	a, cancel := startAgent(t, a2aserve.Config{A2A: a2aserve.A2A{TaskStore: store}})
+	defer cancel()
+	task := sendTask(t, client(t, a), "", "ask")
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("Client.SendMessage(ask) state = %v, want %v", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+
+	if err := a.Close(ctx); err != nil {
+		t.Fatalf("Agent.Close() error = %v", err)
+	}
+
+	if ctx.Err() != nil {
+		t.Fatalf("Agent.Close() returned after its context ended, want it within")
+	}
+	stored, err := store.Get(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("Store.Get() error = %v", err)
+	}
+	if stored.Task.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("Store.Get() state after Agent.Close() = %v, want %v", stored.Task.Status.State, a2a.TaskStateFailed)
+	}
+}
+
+func TestCloseFailsATurnInProgress(t *testing.T) {
+	t.Parallel()
+	store := taskstore.NewInMemory(nil)
+	a, cancel := startAgent(t, a2aserve.Config{A2A: a2aserve.A2A{TaskStore: store}})
+	defer cancel()
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("slow"))
+	res, err := client(t, a).SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+	if err != nil {
+		t.Fatalf("Client.SendMessage(slow) error = %v", err)
+	}
+	task, ok := res.(*a2a.Task)
+	if !ok {
+		t.Fatalf("Client.SendMessage(slow) = %T, want a task", res)
+	}
+	waitStored(t, store, task.ID, a2a.TaskStateWorking)
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+
+	if err := a.Close(ctx); err != nil {
+		t.Fatalf("Agent.Close() error = %v", err)
+	}
+
+	stored, err := store.Get(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("Store.Get() error = %v", err)
+	}
+	if got := stored.Task.Status; got.State != a2a.TaskStateFailed || got.Message == nil || got.Message.Parts[0].Text() != agentrun.StoppedMessage {
+		t.Fatalf("Store.Get() status after Agent.Close() = %v, want failed with %q", got, agentrun.StoppedMessage)
+	}
 }

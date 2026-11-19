@@ -481,7 +481,7 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 		SessionStore: r.cfg.Sessions,
 		Session:      r.sessionParams,
 		Settings:     r.sessionSettings,
-		Turn:         r.stalls.turn(turn),
+		Turn:         r.countAgentTurn(r.stalls.turn(turn)),
 		Converter:    r.stalls,
 		Abandoned:    r.abandoned,
 		Failure:      r.cfg.Hooks.Explain,
@@ -492,11 +492,26 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 	return cfg
 }
 
+// countAgentTurn counts each turn of next until its end, for Close.
+func (r *Runner) countAgentTurn(next func(context.Context, *a2asrv.ExecutorContext) func()) func(context.Context, *a2asrv.ExecutorContext) func() {
+	return func(ctx context.Context, execCtx *a2asrv.ExecutorContext) func() {
+		r.agentTurns.Add()
+		end := next(ctx, execCtx)
+		return func() {
+			defer r.agentTurns.Done()
+			if end != nil {
+				end()
+			}
+		}
+	}
+}
+
 // abandoned stores the event that ends a task whose agent stopped while it
-// waited for an answer, since the executor can't emit it. The agent exits
-// when the runner stops, and the caller fails the open tasks then.
+// waited for an answer, since the executor can't emit it. With
+// KeepAbandonedOnStop, the agent exits when the runner stops, and the
+// caller fails the open tasks then.
 func (r *Runner) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
-	if r.split == nil || r.split.stopped() || r.cfg.Hooks.Abandoned == nil {
+	if r.split == nil || r.cfg.Hooks.Abandoned == nil || r.split.stopped() && r.cfg.Options.KeepAbandonedOnStop {
 		return
 	}
 	if err := r.cfg.Hooks.Abandoned(ctx, ev); err != nil {

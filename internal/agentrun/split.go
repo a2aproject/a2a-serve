@@ -220,8 +220,16 @@ func failed(ev a2a.Event) bool {
 	return ok && up.Status.State == a2a.TaskStateFailed
 }
 
-// stopped reports whether the runner stopped, which ends the turns.
-func (e *splitExecutor) stopped() bool { return e.ctx != nil && e.ctx.Err() != nil }
+// stopped reports whether the runner stopped, which ends the turns: its
+// context ended, or Close stopped the turns.
+func (e *splitExecutor) stopped() bool {
+	if e.ctx != nil && e.ctx.Err() != nil {
+		return true
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.canceled
+}
 
 // StoppedMessage fails the turns that the stop ended.
 const StoppedMessage = "The server stopped before this task finished. Send the message again."
@@ -307,13 +315,14 @@ func (e *splitExecutor) pool(name string) (a2asrv.AgentExecutor, error) {
 	return exec, nil
 }
 
-// close waits for the turns in progress, which end when the runner stops,
-// and then stops the agent processes of the pools that started.
-func (e *splitExecutor) close(ctx context.Context) error {
+// close waits until wait ends for the turns in progress, which end when
+// the runner stops, and then stops the agent processes of the pools that
+// started.
+func (e *splitExecutor) close(ctx, wait context.Context) error {
 	e.mu.Lock()
 	e.closing = true
 	e.mu.Unlock()
-	e.running.Wait(context.Background())
+	e.running.Wait(wait)
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	e.mu.Lock()

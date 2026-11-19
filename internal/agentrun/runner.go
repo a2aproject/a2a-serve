@@ -49,6 +49,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
+	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
 
 // Config configures a [Runner].
@@ -174,6 +175,10 @@ type Options struct {
 	// Executor replaces the main process, and runs every conversation,
 	// for tests.
 	Executor a2asrv.AgentExecutor
+	// KeepAbandonedOnStop leaves the tasks whose agent stops at the stop
+	// while they wait for an answer as they are, for the frontend to fail
+	// at its next start.
+	KeepAbandonedOnStop bool
 	// Hooks are the hooks only the frontend sets; core/a2aserve adds the
 	// public ones to them.
 	Hooks Hooks
@@ -309,6 +314,9 @@ type Runner struct {
 	mainSince atomic.Pointer[time.Time]
 	closeMain func(context.Context) error
 	stopServe func(context.Context) error
+	// agentTurns counts the turns the agents work on, from the Turn hook
+	// of a2aacp to its end.
+	agentTurns turncount.Count
 }
 
 var _ a2asrv.AgentExecutor = (*Runner)(nil)
@@ -609,18 +617,35 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 	if r.split == nil {
 		return nil
 	}
-	return r.split.close(ctx)
+	return r.split.close(ctx, context.Background())
+}
+
+// StopTurns ends the turns in progress, as the end of the context of Start
+// does, and waits within ctx for them to return.
+func (r *Runner) StopTurns(ctx context.Context) {
+	if r.split == nil {
+		return
+	}
+	r.split.stopTurns()
+	r.split.running.Wait(ctx)
 }
 
 // Close stops serving AgentAPI and every process: those of the pools, as
-// Shutdown does, then the main one. It then closes the endpoints.
+// Shutdown does but waiting for the turns only within ctx, then the main
+// one. Once the turns that the agents worked on ended within ctx, which
+// stores the end of the tasks that waited for an answer, it closes the
+// endpoints.
 func (r *Runner) Close(ctx context.Context) error {
-	err := errors.Join(r.StopServe(ctx), r.Shutdown(ctx))
+	err := r.StopServe(ctx)
+	if r.split != nil {
+		err = errors.Join(err, r.split.close(ctx, ctx))
+	}
 	if r.closeMain != nil {
 		err = errors.Join(err, r.closeMain(ctx))
 		r.closeMain = nil
 		r.mainSince.Store(nil)
 	}
+	r.agentTurns.Wait(ctx)
 	return errors.Join(err, r.main.close(), r.listeners.close(), r.boundaries.Close(ctx), r.removeState())
 }
 

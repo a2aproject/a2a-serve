@@ -72,7 +72,7 @@ func TestSplitExecutorClosePoolsInParallel(t *testing.T) {
 		"users":  {stop: stop},
 	}}
 
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 }
@@ -109,7 +109,7 @@ func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
 		started = true
 		return emptyExecutor{}, func(context.Context) error { return nil }, nil
 	})
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
 	<-inner.started
 
 	stopServer()
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 

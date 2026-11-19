@@ -137,6 +137,9 @@ func (s *Server) newAgent(ctx context.Context, opts Options) error {
 		MainPrepared:    s.mainPrepared,
 		AllSessions:     s.store.Sessions(),
 		Executor:        opts.Executor,
+		// The tasks that wait for an answer at a stop fail as restarted at
+		// the next start.
+		KeepAbandonedOnStop: true,
 		Hooks: agentrun.Hooks{
 			Refused:   func(err error) string { return agentcfg.Explain(err).Error() },
 			Abandoned: runnerTasks{s}.Abandon,

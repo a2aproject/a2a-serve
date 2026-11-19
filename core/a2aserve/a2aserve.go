@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -44,6 +45,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
+	"github.com/a2aproject/a2a-serve/internal/turncount"
 )
 
 func init() {
@@ -235,11 +237,14 @@ type Agent struct {
 
 	once    sync.Once
 	handler a2asrv.RequestHandler
+	// executions counts the executions of the handler until a2a-go stored
+	// their last event.
+	executions turncount.Count
 }
 
 // New starts the process of Main and serves AgentAPI. The processes of
 // other keys start on their first turn. Everything runs until Close, and
-// the turns in progress end when ctx does.
+// the turns in progress end when ctx or Close does.
 func New(ctx context.Context, cfg Config) (*Agent, error) {
 	profile, err := agentprofile.Of(cfg.Profile)
 	if err != nil {
@@ -297,6 +302,7 @@ func (a *Agent) Handler() a2asrv.RequestHandler {
 		if a.a2a.Middleware != nil {
 			exec = a.a2a.Middleware(exec)
 		}
+		exec = &countedExecutor{AgentExecutor: exec, executions: &a.executions}
 		var opts []a2asrv.RequestHandlerOption
 		if a.a2a.TaskStore != nil {
 			opts = append(opts, a2asrv.WithTaskStore(a.a2a.TaskStore))
@@ -343,9 +349,42 @@ func (a *Agent) Processes() []ProcessStatus {
 	return out
 }
 
-// Close stops serving AgentAPI, waits for the turns in progress, which end
-// when the context of New does, and stops every process.
-func (a *Agent) Close(ctx context.Context) error { return a.r.Close(ctx) }
+// Close stops serving AgentAPI and ends the turns in progress: their tasks
+// fail, as when the context of New ends. It waits within ctx for the
+// handler to store their last events, then stops every process. A task
+// that waits for an answer fails when its process stops.
+func (a *Agent) Close(ctx context.Context) error {
+	err := a.r.StopServe(ctx)
+	a.r.StopTurns(ctx)
+	a.executions.Wait(ctx)
+	return errors.Join(err, a.r.Close(ctx))
+}
+
+// countedExecutor counts the executions of the handler until a2a-go is
+// done with their last event, which it stores before the cleanup.
+type countedExecutor struct {
+	a2asrv.AgentExecutor
+	executions *turncount.Count
+}
+
+func (e *countedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	e.executions.Hold(execCtx)
+	return e.AgentExecutor.Execute(ctx, execCtx)
+}
+
+func (e *countedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	e.executions.Hold(execCtx)
+	return e.AgentExecutor.Cancel(ctx, execCtx)
+}
+
+// Cleanup implements [a2asrv.AgentExecutionCleaner], after the cleanup of
+// the executor it wraps.
+func (e *countedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
+	defer e.executions.Release(execCtx)
+	if c, ok := e.AgentExecutor.(a2asrv.AgentExecutionCleaner); ok {
+		c.Cleanup(ctx, execCtx, result, err)
+	}
+}
 
 // engine returns e for the engine.
 func (e Environment) engine() agentrun.Environment {
