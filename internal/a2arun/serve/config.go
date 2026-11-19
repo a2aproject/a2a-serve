@@ -15,9 +15,11 @@
 package serve
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"path/filepath"
 	"regexp"
@@ -28,6 +30,7 @@ import (
 	"github.com/google/shlex"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/core/contact"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
@@ -79,6 +82,14 @@ type Config struct {
 	WorkspaceSync string
 	// Tools is the URL of the host's tools endpoint, or "".
 	Tools string
+	// Contacts are name=url pairs of the A2A agents the agent may call,
+	// and ContactAuth name=value pairs of the Authorization headers of
+	// their requests, whose last word may be env:VAR or -.
+	Contacts    []string
+	ContactAuth []string
+	// ContactTransport sends the requests to https:// contacts; nil uses
+	// a clone of http.DefaultTransport.
+	ContactTransport http.RoundTripper
 	// Listen is unix:///path or host:port; "" is DefaultListen.
 	Listen string
 	// MaxProcesses bounds the agent processes; 0 is DefaultMaxProcesses.
@@ -90,8 +101,10 @@ type Config struct {
 	// Version is the version of a2a-run, for the agent card.
 	Version string
 
-	// Getenv reads the variables of Secrets and ModelKeys.
+	// Getenv reads the variables of Secrets, ModelKeys and ContactAuth.
 	Getenv func(string) string
+	// Stdin is where a ContactAuth value of - is read from.
+	Stdin io.Reader
 	// Stderr receives the logs, the image pulls and the stderr of the
 	// agent.
 	Stderr io.Writer
@@ -120,6 +133,7 @@ type settings struct {
 	credentials  []egress.Credential
 	workspace    workspace
 	tools        *hosttools.Endpoint
+	contacts     []contact.Entry
 	listen       address
 	maxProcesses int
 	home         string
@@ -136,7 +150,7 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // resolve checks cfg and reads the variables it names. Its errors are
 // [UsageError]s.
-func (cfg Config) resolve() (settings, error) {
+func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	s := settings{model: cfg.Model, image: cfg.Image, home: cfg.Home, stateDir: cfg.StateDir}
 	var err error
 	if s.sandbox, err = resolveSandbox(cfg); err != nil {
@@ -164,6 +178,9 @@ func (cfg Config) resolve() (settings, error) {
 		return settings{}, err
 	}
 	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
+		return settings{}, err
+	}
+	if s.contacts, err = resolveContacts(ctx, cfg); err != nil {
 		return settings{}, err
 	}
 	if s.listen, err = parseListen(cfg.Listen); err != nil {

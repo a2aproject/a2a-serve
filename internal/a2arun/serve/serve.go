@@ -61,7 +61,9 @@ type Ready struct {
 	// Egress is how the Docker sandbox's connections are decided: by the
 	// egress policy or by the egress proxy.
 	Egress string `json:"egress,omitempty"`
-	Error  string `json:"error,omitempty"`
+	// Contacts are the states of the contacts' cards at start.
+	Contacts []ContactStatus `json:"contacts,omitempty"`
+	Error    string          `json:"error,omitempty"`
 }
 
 // Server serves the agent over A2A until Close.
@@ -71,6 +73,7 @@ type Server struct {
 	boundary *egress.Boundary
 	proxy    *egress.ProxyRouter
 	tools    *hostTools
+	contacts *contacts
 	ln       net.Listener
 	http     *http.Server
 	served   chan error
@@ -83,7 +86,7 @@ type Server struct {
 // cfg.Listen. The agent's turns end when ctx does. Errors of the flags are
 // [UsageError]s.
 func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
-	s, err := cfg.resolve()
+	s, err := cfg.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +118,9 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		}
 	}
 	turns := newTurns()
+	if srv.contacts, err = startContacts(ctx, s.contacts, cfg.ContactTransport, turns, srv.log); err != nil {
+		return nil, err
+	}
 	if s.sandbox == SandboxDocker {
 		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
 			return nil, err
@@ -158,8 +164,14 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
-		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone(), Explain: s.workspace.explain},
-		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}, Middleware: changes.middleware},
+		AgentAPI: srv.contacts.agentAPI(),
+		Hooks:    a2aserve.Hooks{Turn: turns.turn, Prompt: srv.contacts.prompt(), ToolDone: srv.tools.toolDone(), Explain: s.workspace.explain},
+		A2A: a2aserve.A2A{
+			TaskStore:     mem,
+			Middleware:    srv.contacts.middleware(turns, srv.log, changes.middleware),
+			MaxExecutions: maxExecutions,
+			Capabilities:  &a2a.AgentCapabilities{Streaming: true},
+		},
 		StateDir: stateDir,
 		Log:      srv.log,
 		Stderr:   stderr,
@@ -177,7 +189,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		}
 		srv.served <- err
 	}()
-	srv.ready = Ready{Ready: true, A2A: url(srv.ln), Sandbox: summary, Workspace: s.workspace.kind, WorkspaceSync: s.workspace.sync}
+	srv.ready = Ready{Ready: true, A2A: url(srv.ln), Sandbox: summary, Workspace: s.workspace.kind, WorkspaceSync: s.workspace.sync, Contacts: srv.contacts.status()}
 	switch {
 	case s.egressProxy != "":
 		srv.ready.Egress = EgressProxy
@@ -199,6 +211,7 @@ func (s *Server) Done() <-chan error { return s.served }
 // Close stops serving and stops the agent processes, whose tasks fail. It
 // removes the Unix socket and the temporary directories.
 func (s *Server) Close(ctx context.Context) error {
+	s.contacts.stop()
 	shutdown := make(chan error, 1)
 	go func() { shutdown <- s.http.Shutdown(ctx) }()
 	err := s.agent.Close(ctx)
@@ -224,13 +237,14 @@ func (s *Server) release() error {
 	if s.proxy != nil {
 		s.proxy.CloseIdleConnections()
 	}
+	errs = append(errs, s.contacts.close())
 	ctx, cancel := context.WithTimeout(context.Background(), toolsCloseTimeout)
 	defer cancel()
 	errs = append(errs, s.closeTools(ctx))
 	for _, dir := range s.temp {
 		errs = append(errs, fsutil.RemoveAll(dir))
 	}
-	s.agent, s.ln, s.boundary, s.proxy, s.temp = nil, nil, nil, nil, nil
+	s.agent, s.ln, s.boundary, s.proxy, s.contacts, s.temp = nil, nil, nil, nil, nil, nil
 	return errors.Join(errs...)
 }
 

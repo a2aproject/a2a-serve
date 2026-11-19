@@ -764,6 +764,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			a.chunk(sid, "env "+arg+" unset")
 		}
 		end("end_turn")
+	case "environ":
+		a.chunk(sid, "environ "+strings.Join(os.Environ(), "\n"))
+		end("end_turn")
 	case "write":
 		if err := os.WriteFile(arg, []byte("written by fakeacp\n"), 0o644); err != nil {
 			a.chunk(sid, "write error: "+err.Error())

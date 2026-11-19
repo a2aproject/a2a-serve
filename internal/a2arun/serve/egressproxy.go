@@ -108,33 +108,48 @@ func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Ro
 }
 
 // turns knows the task that each context's process works on, for the
-// requests that the egress proxy gets.
+// requests that the egress proxy and the contacts get.
 type turns struct {
 	mu sync.Mutex
-	// current holds the task of each context with a turn in progress.
-	current map[string]string
+	// running holds the turn of each context with a turn in progress.
+	running map[string]runningTurn
 }
 
-func newTurns() *turns { return &turns{current: map[string]string{}} }
+// runningTurn is the task of a turn in progress, and the hop count of the
+// request that started it.
+type runningTurn struct {
+	task string
+	hops int
+}
+
+func newTurns() *turns { return &turns{running: map[string]runningTurn{}} }
 
 // turn records the task of execCtx until the turn ends.
 func (t *turns) turn(_ context.Context, execCtx *a2asrv.ExecutorContext) func() {
 	contextID, task := execCtx.ContextID, string(execCtx.TaskID)
 	t.mu.Lock()
-	t.current[contextID] = task
+	t.running[contextID] = runningTurn{task: task, hops: hopsOf(execCtx)}
 	t.mu.Unlock()
 	return func() {
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		if t.current[contextID] == task {
-			delete(t.current, contextID)
+		if t.running[contextID].task == task {
+			delete(t.running, contextID)
 		}
 	}
 }
 
 // task returns the task of the process of key, a context ID, or "".
 func (t *turns) task(key string) string {
+	cur, _ := t.current(key)
+	return cur.task
+}
+
+// current returns the turn in progress of the process of key, a context
+// ID, if one runs.
+func (t *turns) current(key string) (runningTurn, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.current[key]
+	cur, ok := t.running[key]
+	return cur, ok
 }
