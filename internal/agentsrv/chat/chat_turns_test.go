@@ -64,7 +64,10 @@ type fakeTurnSender struct {
 	hold chan struct{}
 	// stopped ends a held stream with a failed status, as the server's
 	// executor ends the turns when the server stops.
-	stopped   <-chan struct{}
+	stopped <-chan struct{}
+	// turnEnd, if set, delays the end of a stopped turn until it is
+	// closed, as on a busy server.
+	turnEnd   chan struct{}
 	sendErr   error
 	cancelErr error
 
@@ -101,6 +104,13 @@ func (s *fakeTurnSender) SendStreamingMessage(ctx context.Context, req *a2a.Send
 			select {
 			case <-s.hold:
 			case <-s.stopped:
+				if s.turnEnd != nil {
+					select {
+					case <-s.turnEnd:
+					case <-ctx.Done():
+						return
+					}
+				}
 				msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(serverStoppedText))
 				yield(&a2a.TaskStatusUpdateEvent{TaskID: "stopped", ContextID: req.Message.ContextID, Status: a2a.TaskStatus{State: a2a.TaskStateFailed, Message: msg}}, nil)
 				return
@@ -117,6 +127,17 @@ func (s *fakeTurnSender) SendStreamingMessage(ctx context.Context, req *a2a.Send
 				return
 			}
 		}
+	}
+}
+
+// turnsEnded waits for the stopped turns to end, as the server does.
+func (s *fakeTurnSender) turnsEnded(ctx context.Context) {
+	if s.turnEnd == nil {
+		return
+	}
+	select {
+	case <-s.turnEnd:
+	case <-ctx.Done():
 	}
 }
 
@@ -242,6 +263,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 		Budget:     budget,
 		Posted:     &PostedTurns{},
 		Config:     config,
+		TurnsEnded: sender.turnsEnded,
 	})
 	turns.Start(fx.ctx)
 	t.Cleanup(func() {
@@ -1080,6 +1102,21 @@ func TestChatTurnsShowsTheEndOfATurnTheServerStopped(t *testing.T) {
 	fx.sender.nextStream(t)
 
 	fx.cancel()
+
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
+}
+
+func TestChatTurnsShowsTheEndOfATurnThatEndedLongAfterTheStop(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.sender.turnEnd = make(chan struct{})
+	fx.ch.Write("telegram:1", "dm1", "slow")
+	fx.sender.nextStream(t)
+
+	fx.cancel()
+	time.Sleep(stopGrace + time.Second)
+	close(fx.sender.turnEnd)
 
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
 }

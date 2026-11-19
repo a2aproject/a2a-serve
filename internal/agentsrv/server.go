@@ -535,6 +535,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Budget:      s.budget,
 			Posted:      posted,
 			Config:      s.rt.Config,
+			TurnsEnded:  s.waitTurns,
 		})
 		s.watches = agentproxy.NewWatches(ctx, agentproxy.WatchesDeps{
 			Store:   s.store,
@@ -736,9 +737,7 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 		shutDown := make(chan struct{})
 		defer close(shutDown)
 		go func() {
-			turnsCtx, cancel := context.WithTimeout(ctx, turnsGrace)
-			defer cancel()
-			s.turns.Wait(turnsCtx)
+			s.waitTurns(ctx)
 			select {
 			case <-time.After(requestGrace):
 				cancelRequests()
@@ -760,6 +759,14 @@ const (
 	requestGrace = 10 * time.Second
 	turnsGrace   = 10 * time.Second
 )
+
+// waitTurns returns once the turns in progress stored their final events,
+// or after turnsGrace, or when ctx ends.
+func (s *Server) waitTurns(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, turnsGrace)
+	defer cancel()
+	s.turns.Wait(ctx)
+}
 
 // reportFatal hands err to Run, which stops on the first one; later errors
 // are only logged.

@@ -59,6 +59,9 @@ type ChatTurns struct {
 	// downloads holds a place for each message being prepared.
 	downloads chan struct{}
 	config    func() *agentdir.Config
+	// turnsEnded returns once the turns that a stop ended stored their
+	// final events.
+	turnsEnded func(context.Context)
 	// running counts the dispatcher and the handlers it started.
 	running sync.WaitGroup
 }
@@ -86,6 +89,10 @@ type ChatTurnsDeps struct {
 	Posted *PostedTurns
 	// Config returns the current config of the agent.
 	Config func() *agentdir.Config
+	// TurnsEnded returns once the turns in progress stored their final
+	// events, or when ctx ends. When the server stops, the streams of chat
+	// turns last until then, so that they get those events.
+	TurnsEnded func(ctx context.Context)
 }
 
 // maxDownloads bounds the messages whose attachments are downloaded at once,
@@ -125,6 +132,7 @@ func NewChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		downloads:  make(chan struct{}, maxDownloads),
 		posted:     deps.Posted,
 		config:     deps.Config,
+		turnsEnded: deps.TurnsEnded,
 	}
 }
 
@@ -514,8 +522,9 @@ func (c *ChatTurns) stream(ctx context.Context, ch messenger.Messenger, conv mes
 // message, with its first event, or with the error it was refused with.
 // With quiet, a refusal isn't shown in the chat.
 //
-// The stream outlives ctx by stopGrace: when the server stops, it ends the
-// turn with a final status, which is still shown in the chat.
+// The stream outlives ctx until the turns ended, and then by stopGrace: when
+// the server stops, it ends the turn with a final status, which is still
+// shown in the chat.
 func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest, quiet bool, accepted func(error)) {
 	if err := ctx.Err(); err != nil {
 		accepted(err)
@@ -524,7 +533,7 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 	if c.voiceReplies(ctx, p) {
 		req = withVoiceReply(req)
 	}
-	streamCtx, stopStream := outlive(ctx, stopGrace)
+	streamCtx, stopStream := outlive(ctx, c.turnsEnded, stopGrace)
 	defer stopStream()
 	render := &graceContext{ctx: ctx, grace: stopGrace}
 	defer render.stop()
@@ -559,15 +568,19 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 	rd.finish(render.get())
 }
 
-// stopGrace bounds how long a turn waits for its end once the server began
-// to stop, and then how long it may take to show the end in its chat.
+// stopGrace bounds how long the stream of a turn lasts once the server began
+// to stop and the turns ended, and then how long it may take to show the end
+// in its chat.
 const stopGrace = 5 * time.Second
 
 // outlive returns a context with the values of ctx that ends grace after
-// ctx ends, or when the returned function is called.
-func outlive(ctx context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+// ctx ended and then ended returned, or when the returned function is called.
+func outlive(ctx context.Context, ended func(context.Context), grace time.Duration) (context.Context, context.CancelFunc) {
 	out, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	stop := context.AfterFunc(ctx, func() { time.AfterFunc(grace, cancel) })
+	stop := context.AfterFunc(ctx, func() {
+		ended(out)
+		time.AfterFunc(grace, cancel)
+	})
 	return out, func() {
 		stop()
 		cancel()
