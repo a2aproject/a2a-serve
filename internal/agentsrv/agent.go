@@ -335,7 +335,7 @@ func (s *Server) workspaceOf(env *a2aserve.Environment, proc *agentrun.ProcessOp
 	if local {
 		storage = workspaces.StorageShared
 	}
-	var w workspace.Workspace = workspace.Dir(ws.Src)
+	w := workspace.Dir(ws.Src)
 	switch {
 	case ws.Dst != ws.Src:
 		w = pathError{err: &agentprofile.WorkspacePathError{Src: ws.Src, Dst: ws.Dst}}
@@ -681,9 +681,9 @@ const egressNoticeFile = "egress-notice"
 // noticeEgress tells the owner of an agent that an earlier version created
 // once, at the first start with the egress boundary, that the sandbox now
 // blocks the LAN and the tailnet. A new agent only records it.
-func (s *Server) noticeEgress(boundary bool) {
+func (s *Server) noticeEgress(withBoundary bool) {
 	cfg := s.rt.Config()
-	if !boundary || cfg.Egress.Mode == egressrules.ModeAllowlist {
+	if !withBoundary || cfg.Egress.Mode == egressrules.ModeAllowlist {
 		return
 	}
 	marker := filepath.Join(s.dir.StateDir(), egressNoticeFile)
