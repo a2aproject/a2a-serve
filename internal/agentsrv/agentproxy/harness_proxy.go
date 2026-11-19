@@ -15,7 +15,6 @@
 package agentproxy
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,15 +22,12 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
-	"slices"
-	"strconv"
-	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/core/contact"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/question"
@@ -40,13 +36,16 @@ import (
 
 // HarnessProxy serves the agents URLs on the harness listener: the agents
 // the harness may call, proxied by this server for the user of the running
-// turn of the conversation.
+// turn of the conversation. The calls go through [contact.Proxy]; this
+// server resolves the names, records the calls and watches their tasks.
 type HarnessProxy struct {
 	store     *store.Store
 	claims    ClaimsSource
 	clients   *ContactClients
 	watches   *Watches
 	schedules SchedulesAgent
+	// calls cancels the calls of turns; it serves no requests.
+	calls *contact.Proxy
 }
 
 // ClaimsSource tells who calls through an agents URL.
@@ -76,7 +75,9 @@ type HarnessProxyDeps struct {
 
 // NewHarnessProxy returns the proxy of deps.
 func NewHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
-	return &HarnessProxy{store: deps.Store, claims: deps.Claims, clients: deps.Clients, watches: deps.Watches, schedules: deps.Schedules}
+	hp := &HarnessProxy{store: deps.Store, claims: deps.Claims, clients: deps.Clients, watches: deps.Watches, schedules: deps.Schedules}
+	hp.calls = hp.proxy(func(*http.Request) (string, bool) { return "", false })
+	return hp
 }
 
 // Claims are who calls through the agents URL of a conversation: the
@@ -91,520 +92,231 @@ type Claims struct {
 	GroupChat bool
 }
 
+// turn is the turn of the calls of c.
+func (c Claims) turn() contact.Turn {
+	return contact.Turn{ContextID: c.ContextID, TaskID: c.TaskID, Hops: c.User.Hops, Caller: c}
+}
+
+func claimsOf(t contact.Turn) Claims {
+	c, ok := t.Caller.(Claims)
+	if !ok {
+		return Claims{ContextID: t.ContextID, TaskID: t.TaskID}
+	}
+	return c
+}
+
 // Errors of [ClaimsSource.ClaimsOf].
 var (
-	ErrUnknownHandle = errors.New("unknown agents URL: use the one from the [a2a agents] line of this conversation")
-	ErrNoTurn        = errors.New("this conversation has no running turn, and its agents URL works only while one runs")
+	ErrUnknownHandle error = &turnError{msg: "unknown agents URL: use the one from the [a2a agents] line of this conversation", kind: contact.ErrNotFound}
+	ErrNoTurn        error = &turnError{msg: "this conversation has no running turn, and its agents URL works only while one runs", kind: contact.ErrNoTurn}
 )
+
+// turnError words an error of [contact.Turns] for the agents URL.
+type turnError struct {
+	msg  string
+	kind error
+}
+
+func (e *turnError) Error() string { return e.msg }
+
+func (e *turnError) Is(target error) bool { return target == e.kind }
 
 // Caller returns the agent key of the process a request on the harness
 // listener came from, or false when the request proves none.
 type Caller func(r *http.Request) (agentKey string, ok bool)
 
-// Routes serves the agents URLs on the harness listener.
+// Routes serves the agents URLs on the harness listener, at
+// /{handle}/{agent}/.... caller tells the agent process a request comes
+// from, which reaches only the handles of its own conversations.
 func (hp *HarnessProxy) Routes(caller Caller) http.Handler {
-	mux := http.NewServeMux()
-	agents := hp.agentsHandler(caller)
-	mux.Handle("/{handle}/{agent}", agents)
-	mux.Handle("/{handle}/{agent}/{rest...}", agents)
-	return jsonhttp.LimitBody(mux)
+	return hp.proxy(caller)
 }
 
-// agentsHandler serves the agents the harness may call, at
-// /{handle}/{agent}/..., as A2A agents proxied by this server: contacts are
-// called with this agent's identity, nodes in-process. caller tells the
-// agent process a request comes from, which reaches only the handles of
-// its own conversations.
-func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		process, ok := caller(r)
-		if !ok {
-			jsonhttp.Error(w, http.StatusUnauthorized, "agent key required")
-			return
-		}
-		handle, name := r.PathValue("handle"), r.PathValue("agent")
-		claims, err := hp.claims.ClaimsOf(r.Context(), handle, process)
-		switch {
-		case errors.Is(err, ErrUnknownHandle):
-			jsonhttp.Error(w, http.StatusNotFound, err.Error())
-			return
-		case errors.Is(err, ErrNoTurn):
-			jsonhttp.Error(w, http.StatusForbidden, err.Error())
-			return
-		case err != nil:
-			slog.Error("resolving an agents URL", "error", err)
-			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
-			return
-		}
-		rest := "/" + r.PathValue("rest")
-		base := "http://" + r.Host + "/" + handle + "/" + name
-		refusal, err := hp.refusal(r.Context(), claims, name)
-		if err != nil {
-			slog.Error("looking up a callable agent", "agent", name, "error", err)
-			jsonhttp.Error(w, http.StatusInternalServerError, "looking up "+name+" failed")
-			return
-		}
-		if refusal != nil {
-			serveRefusal(w, r, name, base, rest, refusal)
-			return
-		}
-		if name == pairings.SchedulesAgent {
-			hp.serveSchedules(w, r, claims, base, rest)
-			return
-		}
-		if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
-			a2asrv.NewStaticAgentCardHandler(proxyCard(name, base)).ServeHTTP(w, r)
-			return
-		}
-		h, principal, err := hp.clients.agentHandler(r.Context(), claims, name)
-		if err != nil {
-			slog.Warn("reaching an agent for the agent process", "agent", name, "error", err)
-			jsonhttp.Error(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		guarded := &guardedHandler{RequestHandler: h, proxy: hp, claims: claims, agent: name}
-		r2 := r.Clone(r.Context())
-		r2.URL.Path, r2.URL.RawPath = rest, ""
-		if principal != nil {
-			r2 = r2.WithContext(auth.WithPrincipal(r2.Context(), *principal))
-		}
-		inner := a2asrv.NewRESTHandler(guarded, a2asrv.WithTransportKeepAlive(15*time.Second))
-		if r.Method == http.MethodPost && rest == "/" {
-			inner = a2asrv.NewJSONRPCHandler(guarded, a2asrv.WithTransportKeepAlive(15*time.Second))
-		}
-		inner.ServeHTTP(w, r2)
+func (hp *HarnessProxy) proxy(caller Caller) *contact.Proxy {
+	p, err := contact.New(contact.Config{
+		Turns:     harnessTurns{claims: hp.claims, caller: caller},
+		Directory: hp,
+		Calls:     storeCalls{store: hp.store},
+		Followup:  hp.watches,
+		Scoped:    true,
 	})
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
-// refusal returns why the conversation of claims may not call name, or nil
-// when it may.
-func (hp *HarnessProxy) refusal(ctx context.Context, claims Claims, name string) (*a2a.Error, error) {
-	if !claims.User.MayCallAgents() {
-		return a2a.NewError(a2a.ErrUnauthorized, "the user of this conversation can't call other agents; answer without calling one"), nil
+// harnessTurns are the turns of the conversations that agents URLs stand
+// for: the handle in the path stands for the conversation.
+type harnessTurns struct {
+	claims ClaimsSource
+	caller Caller
+}
+
+func (ht harnessTurns) Turn(r *http.Request, handle string) (contact.Turn, error) {
+	process, ok := ht.caller(r)
+	if !ok {
+		return contact.Turn{}, contact.ErrUnauthenticated
 	}
-	if claims.User.Hops+1 > auth.MaxHops {
-		return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops)), nil
+	c, err := ht.claims.ClaimsOf(r.Context(), handle, process)
+	if err != nil {
+		return contact.Turn{}, err
 	}
+	if !c.User.MayCallAgents() {
+		return c.turn(), contact.Refusef("the user of this conversation can't call other agents; answer without calling one")
+	}
+	return c.turn(), nil
+}
+
+// Card implements [contact.Directory]: contacts, hosted nodes, the agents
+// of the private network the agent may call, and the schedules agent.
+func (hp *HarnessProxy) Card(ctx context.Context, _ contact.Turn, name string) (*a2a.AgentCard, error) {
 	if name == pairings.SchedulesAgent {
-		return nil, nil
+		return &a2a.AgentCard{Description: "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."}, nil
 	}
 	ok, err := hp.clients.callable(ctx, name)
-	if err != nil || ok {
+	if err != nil {
 		return nil, err
 	}
-	return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("%q is not an agent you can call; the [a2a agents] line lists them", name)), nil
+	if !ok {
+		return nil, contact.Refusef("%q is not an agent you can call; the [a2a agents] line lists them", name)
+	}
+	return nil, nil
 }
 
-// serveRefusal serves a card for name and fails every call with refusal.
-// A2A clients fetch the card before the call and report a failed card fetch
-// by its status alone, so the refusal travels on the call, where the client
-// shows its message.
-func serveRefusal(w http.ResponseWriter, r *http.Request, name, base, rest string, refusal *a2a.Error) {
-	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
-		card := proxyCard(name, base)
-		card.Description = refusal.Message
-		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
-		return
+// Target implements [contact.Directory].
+func (hp *HarnessProxy) Target(ctx context.Context, t contact.Turn, name string) (contact.Target, error) {
+	c := claimsOf(t)
+	if name == pairings.SchedulesAgent {
+		return contact.Local(a2asrv.NewHandler(hp.schedules.Agent(c.User, c.ContextID, c.GroupChat))), nil
 	}
-	h := refusingHandler{err: refusal}
-	r2 := r.Clone(r.Context())
-	r2.URL.Path, r2.URL.RawPath = rest, ""
-	inner := a2asrv.NewRESTHandler(h)
-	if r.Method == http.MethodPost && rest == "/" {
-		inner = a2asrv.NewJSONRPCHandler(h)
-	}
-	inner.ServeHTTP(w, r2)
+	return hp.clients.agentTarget(ctx, c, name)
 }
 
-// serveSchedules serves the built-in schedules agent for the conversation
-// of claims.
-func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, claims Claims, base, rest string) {
-	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
-		card := proxyCard(pairings.SchedulesAgent, base)
-		card.Description = "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."
-		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
-		return
+// CancelCalls cancels the tasks that the turn of the task of claims started
+// at other agents, and stops watching them, so that their results aren't
+// posted into the conversation. A task that it can't cancel stays watched,
+// and its result still comes back.
+func (hp *HarnessProxy) CancelCalls(ctx context.Context, claims Claims) error {
+	canceled, err := hp.calls.CancelCalls(ctx, claims.turn())
+	for _, c := range canceled {
+		hp.watches.dropCanceled(ctx, c.Contact, string(c.TaskID))
 	}
-	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID, claims.GroupChat))
-	r2 := r.Clone(r.Context())
-	r2.URL.Path, r2.URL.RawPath = rest, ""
-	inner := a2asrv.NewRESTHandler(h)
-	if r.Method == http.MethodPost && rest == "/" {
-		inner = a2asrv.NewJSONRPCHandler(h)
+	if err != nil {
+		return fmt.Errorf("canceling the calls of task %s: %w", claims.TaskID, err)
 	}
-	inner.ServeHTTP(w, r2)
+	return nil
 }
 
-func proxyCard(name, base string) *a2a.AgentCard {
-	return &a2a.AgentCard{
-		Name:        name,
-		Description: name + ", called through the server hosting you.",
-		Version:     "1.0.0",
-		SupportedInterfaces: []*a2a.AgentInterface{
-			a2a.NewAgentInterface(base, a2a.TransportProtocolJSONRPC),
-			a2a.NewAgentInterface(base, a2a.TransportProtocolHTTPJSON),
-		},
-		Capabilities:       a2a.AgentCapabilities{Streaming: true},
-		DefaultInputModes:  []string{"text/plain", "application/json"},
-		DefaultOutputModes: []string{"text/plain", "application/json"},
-	}
+// storeCalls keeps the calls of conversations in the store, so that they
+// outlive a restart.
+type storeCalls struct {
+	store *store.Store
 }
 
-// guardedHandler keeps a conversation to the tasks it started, and
-// approvals with the user: the harness can't answer another agent's
-// permission question, which is relayed to the user instead. Tasks
-// the harness doesn't wait for are watched, and their result is posted into
-// the conversation.
-type guardedHandler struct {
-	a2asrv.RequestHandler
-	proxy  *HarnessProxy
-	claims Claims
-	agent  string
+var _ contact.Calls = storeCalls{}
+
+func (sc storeCalls) Record(ctx context.Context, t contact.Turn, c contact.Call) error {
+	return sc.store.PutCallTask(ctx, store.CallTask{ContextID: t.ContextID, Agent: c.Contact, TaskID: string(c.TaskID), RemoteContextID: c.ContextID, OriginTaskID: t.TaskID})
 }
 
-func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
-	if err := g.checkMessage(ctx, req); err != nil {
+func (sc storeCalls) Started(ctx context.Context, t contact.Turn, agent string, id a2a.TaskID) (bool, error) {
+	return sc.store.HasCallTask(ctx, t.ContextID, agent, string(id))
+}
+
+func (sc storeCalls) InContext(ctx context.Context, t contact.Turn, agent, contextID string) (bool, error) {
+	return sc.store.HasCallContext(ctx, t.ContextID, agent, contextID)
+}
+
+func (sc storeCalls) List(ctx context.Context, t contact.Turn, agent, contextID string) ([]a2a.TaskID, error) {
+	ids, err := sc.store.CallTasks(ctx, t.ContextID, agent, contextID)
+	if err != nil {
 		return nil, err
 	}
-	if req.Config == nil || !req.Config.ReturnImmediately {
-		return g.sendStreamed(ctx, req)
+	out := make([]a2a.TaskID, len(ids))
+	for i, id := range ids {
+		out[i] = a2a.TaskID(id)
 	}
-	res, err := g.RequestHandler.SendMessage(ctx, req)
-	if task, ok := res.(*a2a.Task); ok && err == nil {
-		g.record(ctx, task.ID, task.ContextID)
-		g.after(ctx, task)
-	}
-	return res, g.unreachable(err)
+	return out, nil
 }
 
-// unreachable names the agent in an error of a network that doesn't reach
+func (sc storeCalls) OfTurn(ctx context.Context, t contact.Turn) ([]contact.Call, error) {
+	calls, err := sc.store.CallTasksOf(ctx, t.ContextID, t.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contact.Call, len(calls))
+	for i, c := range calls {
+		out[i] = contact.Call{Contact: c.Agent, TaskID: a2a.TaskID(c.TaskID), ContextID: c.RemoteContextID}
+	}
+	return out, nil
+}
+
+var _ contact.Followup = (*Watches)(nil)
+
+// Follow relays a permission question to the user and watches a task the
+// harness won't see finish: one waiting for an approval, or one it didn't
+// wait for. It implements [contact.Followup].
+func (ws *Watches) Follow(ctx context.Context, t contact.Turn, o contact.Outstanding) {
+	claims, agent, task := claimsOf(t), o.Contact, o.Task
+	var q *question.Question
+	if o.Approval != nil {
+		q = question.FromStatus(task.Status)
+	}
+	identity, err := json.Marshal(claims.User.Identity)
+	if err != nil {
+		slog.Error("storing watch", "agent", agent, "task", task.ID, "error", err)
+		if q != nil {
+			ws.relay(ws.ctx, claims, agent, task, q)
+		}
+		return
+	}
+	w := store.Watch{
+		Contact: agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: claims.ContextID,
+		OnBehalfOf: claims.User.ID, Identity: string(identity), GroupChat: claims.GroupChat,
+	}
+	// The watch is stored before the question is relayed, so that a
+	// question task never exists without it.
+	putErr := ws.store.PutWatch(ctx, w)
+	if putErr != nil {
+		slog.Error("storing watch", "agent", agent, "task", task.ID, "error", putErr)
+	}
+	if q != nil {
+		ws.relay(ws.ctx, claims, agent, task, q)
+	}
+	if putErr != nil {
+		return
+	}
+	ws.watch(w)
+}
+
+// networkNamed names the agent in an error of a network that doesn't reach
 // it, so that the agent process can tell which call failed.
-func (g *guardedHandler) unreachable(err error) error {
+type networkNamed struct {
+	a2asrv.RequestHandler
+	agent string
+}
+
+func (h networkNamed) unreachable(err error) error {
 	for _, target := range []error{network.ErrPeerUnavailable, network.ErrProviderStalled} {
 		if errors.Is(err, target) {
-			return fmt.Errorf("%s: %w", g.agent, target)
+			return fmt.Errorf("%s: %w", h.agent, target)
 		}
 	}
 	return err
 }
 
-// sendStreamed sends a message that waits for the task to settle as a
-// stream, so that the task is recorded once the agent starts it, and
-// canceling the turn that sent it cancels it too.
-func (g *guardedHandler) sendStreamed(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
-	var last a2a.Event
-	for ev, err := range g.stream(ctx, req) {
-		if err != nil {
-			return nil, err
-		}
-		last = ev
-	}
-	switch ev := last.(type) {
-	case nil:
-		return nil, fmt.Errorf("%s sent no result", g.agent)
-	case *a2a.Message:
-		return ev, nil
-	case *a2a.Task:
-		return ev, nil
-	}
-	// A blocking SendMessage returns no history unless asked, as the
-	// server's does.
-	history := new(int)
-	if req.Config != nil && req.Config.HistoryLength != nil {
-		history = req.Config.HistoryLength
-	}
-	return g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: last.TaskInfo().TaskID, HistoryLength: history})
+func (h networkNamed) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	res, err := h.RequestHandler.SendMessage(ctx, req)
+	return res, h.unreachable(err)
 }
 
-func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
-	if err := g.checkMessage(ctx, req); err != nil {
-		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
-	}
-	return g.stream(ctx, req)
-}
-
-// stream sends a checked message as a stream, records the task it starts
-// and watches it if the stream ends before the task does.
-func (g *guardedHandler) stream(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+func (h networkNamed) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
-		var last *a2a.Task
-		recorded := false
-		for ev, err := range g.RequestHandler.SendStreamingMessage(ctx, req) {
-			switch e := ev.(type) {
-			case *a2a.Task:
-				last = &a2a.Task{ID: e.ID, ContextID: e.ContextID, Status: e.Status}
-			case *a2a.TaskStatusUpdateEvent:
-				last = &a2a.Task{ID: e.TaskID, ContextID: e.ContextID, Status: e.Status}
-			}
-			if last != nil && !recorded {
-				g.record(ctx, last.ID, last.ContextID)
-				recorded = true
-			}
-			if !yield(ev, g.unreachable(err)) {
-				break
+		for ev, err := range h.RequestHandler.SendStreamingMessage(ctx, req) {
+			if !yield(ev, h.unreachable(err)) {
+				return
 			}
 		}
-		if last != nil {
-			// The harness may have dropped the stream, which cancels ctx;
-			// the task still has to be watched.
-			g.after(context.WithoutCancel(ctx), last)
-		}
 	}
-}
-
-func (g *guardedHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
-	if err := g.checkTask(ctx, req.ID); err != nil {
-		return nil, err
-	}
-	return g.RequestHandler.GetTask(ctx, req)
-}
-
-// Paging limits of ListTasks, which match the ones of the task stores.
-const (
-	defaultListPageSize = 50
-	maxListPageSize     = 100
-)
-
-// ListTasks lists the tasks which this conversation started, newest first,
-// from the call tasks the server recorded. It gets the tasks on the page
-// from the agent, or every task when req filters by status, and leaves out
-// a task the agent no longer has. A page token is the index of the first
-// task of the page.
-func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
-	pageSize := cmp.Or(req.PageSize, defaultListPageSize)
-	if pageSize < 1 || pageSize > maxListPageSize {
-		return nil, fmt.Errorf("page size must be between 1 and %d inclusive, got %d: %w", maxListPageSize, pageSize, a2a.ErrInvalidRequest)
-	}
-	offset := 0
-	if req.PageToken != "" {
-		var err error
-		if offset, err = strconv.Atoi(req.PageToken); err != nil || offset < 0 {
-			return nil, fmt.Errorf("invalid page token: %w", a2a.ErrInvalidRequest)
-		}
-	}
-	ids, err := g.proxy.store.CallTasks(ctx, g.claims.ContextID, g.agent, req.ContextID)
-	if err != nil {
-		return nil, err
-	}
-	page := func(total int) (start, end int) {
-		return min(offset, total), min(offset+pageSize, total)
-	}
-	out := &a2a.ListTasksResponse{PageSize: pageSize}
-	var start, end int
-	if req.Status == "" && req.StatusTimestampAfter == nil {
-		out.TotalSize = len(ids)
-		start, end = page(len(ids))
-		if out.Tasks, err = g.getTasks(ctx, ids[start:end], req); err != nil {
-			return nil, err
-		}
-	} else {
-		all, err := g.getTasks(ctx, ids, req)
-		if err != nil {
-			return nil, err
-		}
-		all = slices.DeleteFunc(all, func(t *a2a.Task) bool { return !statusMatches(t, req) })
-		out.TotalSize = len(all)
-		start, end = page(len(all))
-		out.Tasks = all[start:end]
-	}
-	if end < out.TotalSize {
-		out.NextPageToken = strconv.Itoa(end)
-	}
-	return out, nil
-}
-
-// getTasks gets the tasks with ids from the agent, with the history length
-// of req or no history, and leaves out the ones the agent no longer has.
-func (g *guardedHandler) getTasks(ctx context.Context, ids []string, req *a2a.ListTasksRequest) ([]*a2a.Task, error) {
-	history := cmp.Or(req.HistoryLength, new(int))
-	tasks := []*a2a.Task{}
-	for _, id := range ids {
-		t, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(id), HistoryLength: history})
-		if errors.Is(err, a2a.ErrTaskNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !req.IncludeArtifacts {
-			listed := *t
-			listed.Artifacts = nil
-			t = &listed
-		}
-		tasks = append(tasks, t)
-	}
-	return tasks, nil
-}
-
-func statusMatches(t *a2a.Task, req *a2a.ListTasksRequest) bool {
-	if req.Status != "" && t.Status.State != req.Status {
-		return false
-	}
-	after := req.StatusTimestampAfter
-	return after == nil || (t.Status.Timestamp != nil && t.Status.Timestamp.After(*after))
-}
-
-func (g *guardedHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
-	if err := g.checkTask(ctx, req.ID); err != nil {
-		return nil, err
-	}
-	return g.RequestHandler.CancelTask(ctx, req)
-}
-
-func (g *guardedHandler) SubscribeToTask(ctx context.Context, req *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
-	if err := g.checkTask(ctx, req.ID); err != nil {
-		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
-	}
-	return g.RequestHandler.SubscribeToTask(ctx, req)
-}
-
-func (g *guardedHandler) GetTaskPushConfig(ctx context.Context, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
-	if err := g.checkTask(ctx, req.TaskID); err != nil {
-		return nil, err
-	}
-	return g.RequestHandler.GetTaskPushConfig(ctx, req)
-}
-
-func (g *guardedHandler) ListTaskPushConfigs(ctx context.Context, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
-	if err := g.checkTask(ctx, req.TaskID); err != nil {
-		return nil, err
-	}
-	return g.RequestHandler.ListTaskPushConfigs(ctx, req)
-}
-
-func (g *guardedHandler) CreateTaskPushConfig(ctx context.Context, req *a2a.PushConfig) (*a2a.PushConfig, error) {
-	if err := g.checkTask(ctx, req.TaskID); err != nil {
-		return nil, err
-	}
-	return g.RequestHandler.CreateTaskPushConfig(ctx, req)
-}
-
-func (g *guardedHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.DeleteTaskPushConfigRequest) error {
-	if err := g.checkTask(ctx, req.TaskID); err != nil {
-		return err
-	}
-	return g.RequestHandler.DeleteTaskPushConfig(ctx, req)
-}
-
-// record notes that this conversation started a task.
-func (g *guardedHandler) record(ctx context.Context, id a2a.TaskID, contextID string) {
-	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID, OriginTaskID: g.claims.TaskID}
-	if err := g.proxy.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
-		slog.Error("recording a call task", "agent", g.agent, "task", id, "error", err)
-	}
-}
-
-// checkTask refuses a task this conversation didn't start.
-func (g *guardedHandler) checkTask(ctx context.Context, id a2a.TaskID) error {
-	ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(id))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("%w: this conversation didn't start task %s at %s", a2a.ErrTaskNotFound, id, g.agent)
-	}
-	return nil
-}
-
-// checkMessage refuses a message to, a reference to or a push config for a
-// task, or a message to a context, this conversation didn't start, and a reply to a pending permission question.
-func (g *guardedHandler) checkMessage(ctx context.Context, req *a2a.SendMessageRequest) error {
-	if req.Message == nil {
-		return nil
-	}
-	for _, id := range req.Message.ReferenceTasks {
-		if err := g.checkTask(ctx, id); err != nil {
-			return err
-		}
-	}
-	if pc := configPush(req); pc != nil && pc.TaskID != "" {
-		if err := g.checkTask(ctx, pc.TaskID); err != nil {
-			return err
-		}
-	}
-	switch m := req.Message; {
-	case m.TaskID != "":
-		if err := g.checkTask(ctx, m.TaskID); err != nil {
-			return err
-		}
-	case m.ContextID != "":
-		ok, err := g.proxy.store.HasCallContext(ctx, g.claims.ContextID, g.agent, m.ContextID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("%w: this conversation has no tasks in context %s of %s", a2a.ErrUnauthorized, m.ContextID, g.agent)
-		}
-	}
-	return g.checkAnswer(ctx, req)
-}
-
-func configPush(req *a2a.SendMessageRequest) *a2a.PushConfig {
-	if req.Config == nil {
-		return nil
-	}
-	return req.Config.PushConfig
-}
-
-// checkAnswer rejects a reply to a pending permission question.
-func (g *guardedHandler) checkAnswer(ctx context.Context, req *a2a.SendMessageRequest) error {
-	if req.Message.TaskID == "" {
-		return nil
-	}
-	task, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: req.Message.TaskID})
-	if errors.Is(err, a2a.ErrTaskNotFound) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("checking task %s at %s: %w", req.Message.TaskID, g.agent, err)
-	}
-	if task.Status.State != a2a.TaskStateInputRequired {
-		return nil
-	}
-	if q := question.FromStatus(task.Status); q != nil && q.Type == question.TypePermission {
-		g.after(ctx, task)
-		return fmt.Errorf("%w: this is an approval for the user, and the server asks them for it; don't answer it. End your turn: the result comes back into this conversation", a2a.ErrUnauthorized)
-	}
-	return nil
-}
-
-// after relays a permission question to the user and watches a task the
-// harness won't see finish: one waiting for an approval, or one it didn't wait for.
-func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
-	state := task.Status.State
-	if state.Terminal() || state == a2a.TaskStateAuthRequired {
-		return
-	}
-	var q *question.Question
-	if state == a2a.TaskStateInputRequired {
-		q = question.FromStatus(task.Status)
-		if q == nil || q.Type != question.TypePermission {
-			return
-		}
-	}
-	identity, err := json.Marshal(g.claims.User.Identity)
-	if err != nil {
-		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
-		if q != nil {
-			g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
-		}
-		return
-	}
-	w := store.Watch{
-		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
-		OnBehalfOf: g.claims.User.ID, Identity: string(identity), GroupChat: g.claims.GroupChat,
-	}
-	// The watch is stored before the question is relayed, so that a
-	// question task never exists without it.
-	putErr := g.proxy.store.PutWatch(ctx, w)
-	if putErr != nil {
-		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", putErr)
-	}
-	if q != nil {
-		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
-	}
-	if putErr != nil {
-		return
-	}
-	g.proxy.watches.watch(w)
 }

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/hops"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
@@ -58,7 +59,7 @@ const LocalPairing = store.LocalPairing
 
 // HeaderHops is set by agent servers calling each other to the number of
 // agent servers a request passed through.
-const HeaderHops = "X-A2A-Serve-Hops"
+const HeaderHops = hops.Header
 
 // HeaderCaller is set by agent servers calling each other to an opaque,
 // stable ID of the person a call is for. It keeps the agent processes of
@@ -69,7 +70,7 @@ const HeaderCaller = "X-A2A-Serve-Caller"
 const maxCallerLen = 64
 
 // MaxHops limits chains of agents calling agents.
-const MaxHops = 3
+const MaxHops = hops.Max
 
 // Principal is a caller with its role.
 type Principal struct {

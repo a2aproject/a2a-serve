@@ -98,3 +98,67 @@ func (p *ClientHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.Delet
 func (p *ClientHandler) GetExtendedAgentCard(ctx context.Context, req *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {
 	return p.Client.GetExtendedAgentCard(p.ctx(ctx), req)
 }
+
+// ContextHandler serves A2A requests with Handler, in the context that
+// Context prepares for each request.
+type ContextHandler struct {
+	Handler a2asrv.RequestHandler
+	Context func(context.Context) context.Context
+}
+
+var _ a2asrv.RequestHandler = (*ContextHandler)(nil)
+
+// GetTask forwards the request to Handler.
+func (h *ContextHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
+	return h.Handler.GetTask(h.Context(ctx), req)
+}
+
+// ListTasks forwards the request to Handler.
+func (h *ContextHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	return h.Handler.ListTasks(h.Context(ctx), req)
+}
+
+// CancelTask forwards the request to Handler.
+func (h *ContextHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	return h.Handler.CancelTask(h.Context(ctx), req)
+}
+
+// SendMessage forwards the request to Handler.
+func (h *ContextHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	return h.Handler.SendMessage(h.Context(ctx), req)
+}
+
+// SubscribeToTask forwards the request to Handler.
+func (h *ContextHandler) SubscribeToTask(ctx context.Context, req *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	return h.Handler.SubscribeToTask(h.Context(ctx), req)
+}
+
+// SendStreamingMessage forwards the request to Handler.
+func (h *ContextHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return h.Handler.SendStreamingMessage(h.Context(ctx), req)
+}
+
+// GetTaskPushConfig forwards the request to Handler.
+func (h *ContextHandler) GetTaskPushConfig(ctx context.Context, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+	return h.Handler.GetTaskPushConfig(h.Context(ctx), req)
+}
+
+// ListTaskPushConfigs forwards the request to Handler.
+func (h *ContextHandler) ListTaskPushConfigs(ctx context.Context, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+	return h.Handler.ListTaskPushConfigs(h.Context(ctx), req)
+}
+
+// CreateTaskPushConfig forwards the request to Handler.
+func (h *ContextHandler) CreateTaskPushConfig(ctx context.Context, req *a2a.PushConfig) (*a2a.PushConfig, error) {
+	return h.Handler.CreateTaskPushConfig(h.Context(ctx), req)
+}
+
+// DeleteTaskPushConfig forwards the request to Handler.
+func (h *ContextHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.DeleteTaskPushConfigRequest) error {
+	return h.Handler.DeleteTaskPushConfig(h.Context(ctx), req)
+}
+
+// GetExtendedAgentCard forwards the request to Handler.
+func (h *ContextHandler) GetExtendedAgentCard(ctx context.Context, req *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {
+	return h.Handler.GetExtendedAgentCard(h.Context(ctx), req)
+}

@@ -165,6 +165,8 @@ type observedExecutor struct {
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
 	watches *agentproxy.Watches
+	// proxy cancels the calls of a canceled turn to other agents.
+	proxy *agentproxy.HarnessProxy
 	// store has the records of those questions.
 	store *store.Store
 	// notes are put in the results of tasks.
@@ -408,10 +410,10 @@ func (e *observedExecutor) cancelingCalls(ctx context.Context, execCtx *a2asrv.E
 }
 
 func (e *observedExecutor) cancelCalls(ctx context.Context, execCtx *a2asrv.ExecutorContext) {
-	if e.watches == nil || e.claims == nil {
+	if e.proxy == nil || e.claims == nil {
 		return
 	}
-	if err := e.watches.CancelCalls(ctx, e.claims.claimsOf(ctx, execCtx)); err != nil {
+	if err := e.proxy.CancelCalls(ctx, e.claims.claimsOf(ctx, execCtx)); err != nil {
 		slog.Warn("canceling the calls of a canceled task", "task", execCtx.TaskID, "error", err)
 	}
 }

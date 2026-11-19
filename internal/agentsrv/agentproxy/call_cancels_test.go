@@ -46,7 +46,7 @@ func (f *proxyFixture) startThroughProxy(t *testing.T, srvURL, contextID, taskID
 	return task.ID
 }
 
-func TestWatchesCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
+func TestHarnessProxyCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newProxyFixture(t)
@@ -60,8 +60,8 @@ func TestWatchesCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
 		f.remote.waitState(t, id, a2a.TaskStateWorking)
 	}
 
-	if err := f.ws.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn2", User: auth.Owner()}); err != nil {
-		t.Fatalf("Watches.CancelCalls() error = %v", err)
+	if err := f.proxy.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn2", User: auth.Owner()}); err != nil {
+		t.Fatalf("HarnessProxy.CancelCalls() error = %v", err)
 	}
 
 	f.remote.waitState(t, held, a2a.TaskStateCanceled)
@@ -80,7 +80,7 @@ func TestWatchesCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
 		other:   a2a.TaskStateWorking,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("task states after Watches.CancelCalls() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("task states after HarnessProxy.CancelCalls() wrong result (-want +got) diff = %s", diff)
 	}
 	watches, err := f.store.Watches(ctx)
 	if err != nil {
@@ -91,11 +91,11 @@ func TestWatchesCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
 		watched = append(watched, w.TaskID)
 	}
 	if diff := cmp.Diff([]string{string(earlier), string(other)}, watched); diff != "" {
-		t.Fatalf("watched tasks after Watches.CancelCalls() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("watched tasks after HarnessProxy.CancelCalls() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
-func TestWatchesCancelCallsCancelsABlockingCall(t *testing.T) {
+func TestHarnessProxyCancelCallsCancelsABlockingCall(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newProxyFixture(t)
@@ -121,8 +121,8 @@ func TestWatchesCancelCallsCancelsABlockingCall(t *testing.T) {
 		return len(calls) == 1
 	})
 
-	if err := f.ws.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn1", User: auth.Owner()}); err != nil {
-		t.Fatalf("Watches.CancelCalls() error = %v", err)
+	if err := f.proxy.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn1", User: auth.Owner()}); err != nil {
+		t.Fatalf("HarnessProxy.CancelCalls() error = %v", err)
 	}
 
 	got := <-sent
@@ -135,7 +135,7 @@ func TestWatchesCancelCallsCancelsABlockingCall(t *testing.T) {
 	}
 }
 
-func TestWatchesCancelCallsKeepsTheWatchOfATaskItCannotCancel(t *testing.T) {
+func TestHarnessProxyCancelCallsKeepsTheWatchOfATaskItCannotCancel(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newProxyFixture(t)
@@ -143,8 +143,8 @@ func TestWatchesCancelCallsKeepsTheWatchOfATaskItCannotCancel(t *testing.T) {
 	held := f.startThroughProxy(t, srv.URL, "c1", "turn1", promptHold)
 	putContact(t, f.store, store.Contact{Name: "coder", URL: "http://127.0.0.1:1"})
 
-	if err := f.ws.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn1", User: auth.Owner()}); err == nil {
-		t.Fatalf("Watches.CancelCalls() of an unreachable agent error = nil, want an error")
+	if err := f.proxy.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn1", User: auth.Owner()}); err == nil {
+		t.Fatalf("HarnessProxy.CancelCalls() of an unreachable agent error = nil, want an error")
 	}
 
 	watches, err := f.store.Watches(ctx)
