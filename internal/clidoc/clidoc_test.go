@@ -130,6 +130,25 @@ func TestPages(t *testing.T) {
 	}
 }
 
+func TestFlagTable(t *testing.T) {
+	t.Parallel()
+	c := &cobra.Command{Use: "run"}
+	c.Flags().SortFlags = false
+	c.Flags().String("workspace", "", "Workspace: dir:`path`")
+	c.Flags().Int("max", 4, "Most processes")
+	c.Flags().Bool("hidden", false, "Hidden")
+	if err := c.Flags().MarkHidden("hidden"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := FlagTable(c)
+
+	want := "| Flag | Default | Description |\n|---|---|---|\n| `--workspace path` |  | Workspace: dir:path |\n| `--max int` | `4` | Most processes |"
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("FlagTable() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestWriteRemovesStalePages(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

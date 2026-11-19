@@ -80,6 +80,14 @@ func Write(dir string, root *cobra.Command, opts Options) error {
 	return nil
 }
 
+// FlagTable renders the flags of c as a markdown table, in the order of
+// c.Flags(), for a page that documents a command of its own.
+func FlagTable(c *cobra.Command) string {
+	var sb strings.Builder
+	writeFlagTable(&sb, flagList(c.Flags()))
+	return strings.TrimSuffix(sb.String(), "\n")
+}
+
 func rootPage(root *cobra.Command) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# %s\n\n", root.Name())

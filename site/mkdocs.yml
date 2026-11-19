@@ -134,3 +134,4 @@ nav:
       - Audio Messages: reference/audio-messages.md
       - Limits: reference/limits.md
       - The a2a CLI: reference/a2a-cli.md
+      - a2a-run: reference/a2a-run.md

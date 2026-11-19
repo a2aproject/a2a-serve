@@ -62,7 +62,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 | **Access & approvals** | [Approvals](guide/approvals.md) · [Inspector](guide/inspector.md) · [Identities](guide/identities.md) · [Email Sign-In](guide/email-sign-in.md) |
 | **Networks & chat** | [Networks](guide/networks.md) · [Relays](guide/relays.md) · [Messengers](guide/messengers.md) · [Voice](guide/voice.md) |
 | **Multi-agent** | [Agent2Agent](guide/agent2agent.md) · [Webhook Nodes](guide/webhook-nodes.md) |
-| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Sandboxing](advanced/sandboxing.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Audio Messages](reference/audio-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
+| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Sandboxing](advanced/sandboxing.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Audio Messages](reference/audio-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) · [a2a-run](reference/a2a-run.md) |
 
 ## Things to Know
 
