@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentrun
 
 import (
 	"context"
@@ -63,7 +63,9 @@ type endpoint struct {
 	// socket is the host path of its Unix socket, empty over TCP.
 	socket string
 	// key is what it sends to the TCP listener, empty with sockets.
-	key   string
+	key string
+	// ln is the listener of its socket, nil over TCP.
+	ln    net.Listener
 	close func() error
 }
 
@@ -136,7 +138,7 @@ func (hl *listeners) openSocket(agentKey string) (*endpoint, error) {
 		hl.pending = append(hl.pending, kl)
 	}
 	hl.mu.Unlock()
-	return &endpoint{socket: sock, close: func() error {
+	return &endpoint{socket: sock, ln: kl, close: func() error {
 		hl.mu.Lock()
 		hl.pending = slices.DeleteFunc(hl.pending, func(l net.Listener) bool { return l == kl })
 		hl.mu.Unlock()
@@ -145,9 +147,16 @@ func (hl *listeners) openSocket(agentKey string) (*endpoint, error) {
 }
 
 // serve serves handler on every endpoint, those opened later included,
-// and returns the function that shuts them down.
+// and returns the function that shuts them down. The requests that prove
+// their process carry its key, which [ProcessKey] reads.
 func (hl *listeners) serve(ctx context.Context, handler http.Handler, fatal func(error)) func(context.Context) error {
-	srv := httpserver.New(ctx, handler, httpserver.WithConnContext(func(ctx context.Context, c net.Conn) context.Context {
+	keyed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key, ok := hl.processOf(r); ok {
+			r = r.WithContext(context.WithValue(r.Context(), processKey{}, key))
+		}
+		handler.ServeHTTP(w, r)
+	})
+	srv := httpserver.New(ctx, keyed, httpserver.WithConnContext(func(ctx context.Context, c net.Conn) context.Context {
 		if kc, ok := c.(*keyedConn); ok {
 			return context.WithValue(ctx, processKey{}, kc.agentKey)
 		}
@@ -189,6 +198,13 @@ func (hl *listeners) close() error {
 }
 
 type processKey struct{}
+
+// ProcessKey returns the key of the process that the AgentAPI request of
+// ctx came from, or false when it proves none.
+func ProcessKey(ctx context.Context) (string, bool) {
+	key, ok := ctx.Value(processKey{}).(string)
+	return key, ok
+}
 
 // processOf returns the key of the process a request on the listeners
 // came from, or false when it proves none.

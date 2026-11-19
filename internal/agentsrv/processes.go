@@ -36,7 +36,7 @@ const maxUserAgents = 10
 // conversationKey returns the key of the agent process a conversation runs
 // in, logging a failure to look it up.
 func (s *Server) conversationKey(ctx context.Context, contextID string) string {
-	key, err := s.runner.KeyOf(ctx, contextID)
+	key, err := s.engine.KeyOf(ctx, contextID)
 	if err != nil {
 		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
 	}

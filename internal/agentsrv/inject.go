@@ -12,34 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentsrv
 
 import (
 	"cmp"
 	"fmt"
-	"net"
 	"slices"
-	"strconv"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
+	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
-
-// InjectRuleError is the error of an inject rule that can't apply.
-type InjectRuleError struct {
-	Rule agentprofile.InjectRule
-	Err  error
-}
-
-func (e *InjectRuleError) Error() string {
-	return "inject rule " + e.Rule.Entry() + ": " + e.Err.Error()
-}
-
-func (e *InjectRuleError) Unwrap() error { return e.Err }
 
 // secretEnv returns the secrets that a container with the grant g gets from
 // stored under the inject rules, as NAME=value: in its environment and in
@@ -53,7 +41,7 @@ func (e *InjectRuleError) Unwrap() error { return e.Err }
 // a placeholder too, whatever rules are pending, so that the value never
 // enters the container. A rule adds nothing to a container that isn't
 // granted all of its secrets.
-func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]string) (env []string, inject []boundary.Injection, missing []string, err error) {
+func secretEnv(rules []agentprofile.InjectRule, g access.Sandbox, stored map[string]string) (env []string, inject []boundary.Injection, missing []string, err error) {
 	values := map[string]string{}
 	for _, s := range g.Secrets {
 		v, ok := stored[s.From]
@@ -67,7 +55,7 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 	for _, r := range rules {
 		h, err := r.HeaderRule()
 		if err != nil {
-			return nil, nil, nil, &InjectRuleError{Rule: r, Err: err}
+			return nil, nil, nil, &agentcfg.InjectRuleError{Rule: r, Err: err}
 		}
 		secrets := r.Secrets()
 		for _, n := range secrets {
@@ -78,7 +66,7 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 		}
 		inj := boundary.Injection{Host: h.Host, Port: h.Port, Header: h.Name, Value: h.Expand(func(n string) string { return values[n] }), Secrets: secrets}
 		if !httpguts.ValidHeaderFieldValue(inj.Value) {
-			return nil, nil, nil, &InjectRuleError{Rule: r, Err: fmt.Errorf("the value of %s has a character that a header can't carry", strings.Join(secrets, " or "))}
+			return nil, nil, nil, &agentcfg.InjectRuleError{Rule: r, Err: fmt.Errorf("the value of %s has a character that a header can't carry", strings.Join(secrets, " or "))}
 		}
 		if r.IsModel() {
 			p, _ := egressrules.LookupProvider(r.Model)
@@ -102,30 +90,4 @@ func secretEnv(rules []agentprofile.InjectRule, g Grant, stored map[string]strin
 		}
 	}
 	return env, inject, missing, nil
-}
-
-// injectHosts returns the hosts of the inject rules, which the egress CA
-// covers.
-func injectHosts(rules []agentprofile.InjectRule) []string {
-	var out []string
-	for _, r := range rules {
-		h, err := r.HeaderRule()
-		if err != nil || slices.Contains(out, h.Host) {
-			continue
-		}
-		out = append(out, h.Host)
-	}
-	return out
-}
-
-// injectAllow returns the egress rules that allow the hosts of inject, the
-// headers a container's boundary adds, which a rule allows even with the
-// allowlist mode. A container without the secrets of a rule doesn't
-// get its host this way.
-func injectAllow(inject []boundary.Injection) []string {
-	out := make([]string, 0, len(inject))
-	for _, inj := range inject {
-		out = append(out, net.JoinHostPort(inj.Host, strconv.Itoa(int(inj.Port))))
-	}
-	return out
 }

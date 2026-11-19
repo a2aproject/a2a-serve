@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentrun
 
 import (
 	"context"
@@ -23,6 +23,10 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrStale refuses a turn in a busy process that [Runner.AdmitTurn] finds
+// stale.
+var ErrStale = errors.New("the process of this turn is stale and busy")
 
 // procs are the agent processes of a pool, by key. a2aacp has no way to
 // stop the process of one key, so Stop closes the process the runner
@@ -54,8 +58,10 @@ type proc struct {
 	turns    int
 	// idle is closed when turns drops to zero, for waitIdle.
 	idle chan struct{}
-	// grant is what the running process got when it started.
-	grant Grant
+	// state is the state of the Environment the running process started
+	// with, and since when it runs.
+	state any
+	since time.Time
 }
 
 // AgentsBusyError refuses a turn while the processes of its pool are
@@ -237,42 +243,43 @@ func (u *procs) hasRoom(key string) bool {
 	return u.max == 0 || running+u.starting < u.max || idle > 0
 }
 
-// started records proc as the running process of a, which got g.
-func (u *procs) started(a *proc, proc io.Closer, g Grant) {
+// started records proc as the running process of a, which started with
+// state.
+func (u *procs) started(a *proc, proc io.Closer, state any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	a.proc, a.grant = proc, g
+	a.proc, a.state, a.since = proc, state, time.Now()
 }
 
-// runningKeys returns the keys whose processes run.
-func (u *procs) runningKeys() []string {
+// running returns the keys whose processes run, and since when.
+func (u *procs) running() map[string]time.Time {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	var out []string
+	out := map[string]time.Time{}
 	for k, a := range u.keys {
 		if a.proc != nil {
-			out = append(out, k)
+			out[k] = a.since
 		}
 	}
 	return out
 }
 
-// grantOf returns the grant the process of key started with, if it runs.
-func (u *procs) grantOf(key string) (Grant, bool) {
+// stateOf returns the state the process of key started with, if it runs.
+func (u *procs) stateOf(key string) (any, bool) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	a := u.keys[key]
 	if a == nil || a.proc == nil {
-		return Grant{}, false
+		return nil, false
 	}
-	return a.grant, true
+	return a.state, true
 }
 
-// admit counts a turn in the process of key, which now gets want, until
-// release. A process that runs with another grant stops first if no turn
-// uses it. If one does, only an answer to a waiting task may use it; other
-// turns get ErrGrantChanged.
-func (u *procs) admit(key string, want Grant, answer bool) (release func(), err error) {
+// admit counts a turn in the process of key until release. A process that
+// stale reports stale stops first if no turn uses it. If one does, only an
+// answer to a waiting task may use it; other turns get ErrStale. A nil
+// stale finds no process stale.
+func (u *procs) admit(key string, stale func(state any) bool, answer bool) (release func(), err error) {
 	a := u.get(key)
 	u.mu.Lock()
 	if a.proc == nil {
@@ -284,10 +291,10 @@ func (u *procs) admit(key string, want Grant, answer bool) (release func(), err 
 		a.startMu.Unlock() //nolint:staticcheck // waits for a close in progress
 		u.mu.Lock()
 	}
-	for a.proc != nil && !a.grant.Equal(want) && !answer {
+	for a.proc != nil && stale != nil && stale(a.state) && !answer {
 		if a.turns > 0 {
 			u.mu.Unlock()
-			return nil, ErrGrantChanged
+			return nil, ErrStale
 		}
 		if !a.startMu.TryLock() {
 			// A closer or a start holds the process; look again once it
@@ -313,11 +320,11 @@ func (u *procs) admit(key string, want Grant, answer bool) (release func(), err 
 	return u.endTurnOnce(a), nil
 }
 
-// closeStale closes the process of key if it runs with another grant than
-// want, no turn uses it and it doesn't start or stop now. It holds the
-// process from starting until it closed, so that a new process doesn't
-// start under the same container name. It reports whether it closed one.
-func (u *procs) closeStale(key string, want Grant) (bool, error) {
+// closeStale closes the process of key if stale reports its state stale,
+// no turn uses it and it doesn't start or stop now. It holds the process
+// from starting until it closed, so that a new process doesn't start under
+// the same container name. It reports whether it closed one.
+func (u *procs) closeStale(key string, stale func(state any) bool) (bool, error) {
 	u.mu.Lock()
 	a := u.keys[key]
 	u.mu.Unlock()
@@ -326,7 +333,7 @@ func (u *procs) closeStale(key string, want Grant) (bool, error) {
 	}
 	defer a.startMu.Unlock()
 	u.mu.Lock()
-	if a.proc == nil || a.turns > 0 || a.grant.Equal(want) {
+	if a.proc == nil || a.turns > 0 || !stale(a.state) {
 		u.mu.Unlock()
 		return false, nil
 	}
@@ -336,16 +343,15 @@ func (u *procs) closeStale(key string, want Grant) (bool, error) {
 	return true, proc.Close()
 }
 
-// closeNarrowed closes the process of key if it runs with a grant that
-// want doesn't cover, whatever its turns, while holding it from starting.
-// It keeps the entry of key, which counts the turns. It reports whether it
-// closed one.
-func (u *procs) closeNarrowed(key string, want Grant) (bool, error) {
+// closeIf closes the process of key if cond reports true for its state,
+// whatever its turns, while holding it from starting. It keeps the entry
+// of key, which counts the turns. It reports whether it closed one.
+func (u *procs) closeIf(key string, cond func(state any) bool) (bool, error) {
 	a := u.get(key)
 	a.startMu.Lock()
 	defer a.startMu.Unlock()
 	u.mu.Lock()
-	if a.proc == nil || want.Covers(a.grant) {
+	if a.proc == nil || !cond(a.state) {
 		u.mu.Unlock()
 		return false, nil
 	}

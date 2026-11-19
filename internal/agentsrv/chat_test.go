@@ -25,8 +25,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -339,7 +339,7 @@ func TestRouterStopTellsTheChatThatTheServerStopped(t *testing.T) {
 
 	ts.stop()
 
-	ts.ch.WaitFor(t, "dm1", messengertest.HasText(runner.StoppedMessage))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText(agentrun.StoppedMessage))
 	_, got := ts.ch.WaitFor(t, "dm1", messengertest.HasText("The server restarted before your message reached the agent. Send it again."))
 	if got.ReplyTo.ID != waiting.MessageID {
 		t.Fatalf("Send() reply to = %q, want the waiting message %q", got.ReplyTo.ID, waiting.MessageID)

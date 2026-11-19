@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentrun
 
 import (
 	"fmt"
@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
-	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // policies writes the settings that the agent processes in containers
@@ -38,15 +37,12 @@ type policies struct {
 	mcp []string
 }
 
-// write writes the policy of the agent processes of spec, those with
-// locked homes with lockHome, adding mcpServers, and returns its folder. The
-// agent asks before every shell command while the rules deny some, since
-// it would run read-only ones, and those that a skill allows, itself.
-func (p *policies) write(spec Spec, lockHome bool, mcpServers []string) (string, error) {
-	profile, err := agentprofile.Lookup(spec.Agent, spec.Command)
-	if err != nil {
-		return "", err
-	}
+// write writes the policy of the agent processes of profile, those with
+// locked homes with lockHome, adding mcpServers, and returns its folder.
+// The agent asks before every shell command with askCommands, set while
+// the rules deny some, since it would run read-only ones, and those that a
+// skill allows, itself.
+func (p *policies) write(profile agentprofile.Profile, askCommands, lockHome bool, mcpServers []string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, name := range mcpServers {
@@ -58,9 +54,9 @@ func (p *policies) write(spec Spec, lockHome bool, mcpServers []string) (string,
 	if lockHome {
 		dir = filepath.Join(p.dir, "callers")
 	}
-	err = agentprofile.WritePolicy(profile, dir, agentprofile.Policy{
+	err := agentprofile.WritePolicy(profile, dir, agentprofile.Policy{
 		LockHome:    lockHome,
-		AskCommands: toolrules.DeniesCommands(spec.Tools.Deny),
+		AskCommands: askCommands,
 		MCPServers:  slices.Clone(p.mcp),
 	})
 	if err != nil {

@@ -36,10 +36,10 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -197,7 +197,7 @@ func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 					t.Fatalf("Chtimes() error = %v", err)
 				}
 				if tc.running {
-					release, ok, err := coder.srv.runner.HoldIdle(context.Background(), agentkey.CallerKey(id, caller))
+					release, ok, err := coder.srv.engine.HoldIdle(context.Background(), agentkey.CallerKey(id, caller))
 					if err != nil || !ok {
 						t.Fatalf("Runner.HoldIdle() = %v, %v, want the process held as if it ran", ok, err)
 					}
@@ -444,7 +444,7 @@ func TestStopDoesNotWaitForRemoteResult(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("SendMessage() of the approval error = %v", got.err)
 	}
-	if task, ok := got.res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateFailed || a2atext.Message(task.Status.Message) != runner.StoppedMessage {
+	if task, ok := got.res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateFailed || a2atext.Message(task.Status.Message) != agentrun.StoppedMessage {
 		t.Fatalf("SendMessage() of the approval = %#v, want a failed task that says the server stopped", got.res)
 	}
 }
@@ -735,7 +735,7 @@ func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Princip
 // harnessClient returns a client which reaches ts the way the owner's
 // agent process does.
 func harnessClient(ts *testServer) *http.Client {
-	return socketClient(ts.srv.runner.Bridge().Socket)
+	return socketClient(ts.srv.engine.Bridge().Socket)
 }
 
 // socketClient returns a client which sends every request through the Unix

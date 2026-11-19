@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentrun
 
 import (
 	"context"
@@ -171,17 +171,22 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 	}
 }
 
-// admit lets the turn of execCtx run in the process of key: the caller's
-// Admit hook first, then the runner's own check of the process's grant.
+// admit lets the turn of execCtx run in the process of key: Callers.Admit
+// first, then the runner counts the turn in the process, unless
+// Callers.Admit counted it with [Runner.AdmitTurn].
 func (e *splitExecutor) admit(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
 	release := func() {}
-	if admit := e.r.cfg.Hooks.Admit; admit != nil {
+	a := &admission{}
+	if callers := e.r.cfg.Callers; callers != nil {
 		var err error
-		if release, err = admit(ctx, key, execCtx); err != nil {
+		if release, err = callers.Admit(context.WithValue(ctx, admissionKey{}, a), key, execCtx); err != nil {
 			return nil, err
 		}
 	}
-	counted, err := e.r.admitTurn(ctx, key, execCtx)
+	if a.counted {
+		return release, nil
+	}
+	counted, err := e.r.admitTurn(ctx, key, nil, nil, AnswersWaiting(execCtx))
 	if err != nil {
 		release()
 		return nil, err
@@ -190,6 +195,12 @@ func (e *splitExecutor) admit(ctx context.Context, key string, execCtx *a2asrv.E
 		counted()
 		release()
 	}, nil
+}
+
+// AnswersWaiting reports whether execCtx answers a task that waits for
+// input, which continues in the process that asked.
+func AnswersWaiting(execCtx *a2asrv.ExecutorContext) bool {
+	return execCtx != nil && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired
 }
 
 // cancelRefused ends the turn of a waiting task in the agent once an answer
@@ -209,8 +220,16 @@ func failed(ev a2a.Event) bool {
 	return ok && up.Status.State == a2a.TaskStateFailed
 }
 
-// stopped reports whether the runner stopped, which ends the turns.
-func (e *splitExecutor) stopped() bool { return e.ctx != nil && e.ctx.Err() != nil }
+// stopped reports whether the runner stopped, which ends the turns: its
+// context ended, or Close stopped the turns.
+func (e *splitExecutor) stopped() bool {
+	if e.ctx != nil && e.ctx.Err() != nil {
+		return true
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.canceled
+}
 
 // StoppedMessage fails the turns that the stop ended.
 const StoppedMessage = "The server stopped before this task finished. Send the message again."
@@ -260,14 +279,14 @@ func (e *splitExecutor) pick(ctx context.Context, contextID string, remember boo
 	if key == "" || e.start == nil {
 		return e.main, key, nil
 	}
-	proc, err := e.r.cfg.Processes.Process(ctx, key)
+	env, err := e.r.environment(ctx, key)
 	if err != nil {
 		return nil, "", err
 	}
 	if remember {
 		e.r.keys.remember(contextID, key)
 	}
-	exec, err := e.pool(proc.Pool)
+	exec, err := e.pool(env.Pool)
 	return exec, key, err
 }
 
@@ -296,13 +315,14 @@ func (e *splitExecutor) pool(name string) (a2asrv.AgentExecutor, error) {
 	return exec, nil
 }
 
-// close waits for the turns in progress, which end when the runner stops,
-// and then stops the agent processes of the pools that started.
-func (e *splitExecutor) close(ctx context.Context) error {
+// close waits until wait ends for the turns in progress, which end when
+// the runner stops, and then stops the agent processes of the pools that
+// started.
+func (e *splitExecutor) close(ctx, wait context.Context) error {
 	e.mu.Lock()
 	e.closing = true
 	e.mu.Unlock()
-	e.running.Wait(context.Background())
+	e.running.Wait(wait)
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	e.mu.Lock()

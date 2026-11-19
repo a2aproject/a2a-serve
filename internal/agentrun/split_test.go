@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package agentrun
 
 import (
 	"context"
@@ -41,12 +41,12 @@ func (noSessions) Put(context.Context, string, a2aacp.Session) error { return ni
 // testSplitRunner returns a runner whose new conversations run under key,
 // in the pool users unless key is "".
 func testSplitRunner(key string) *Runner {
-	known := fakeProcesses{"": {}}
+	known := map[string]Environment{"": {}}
 	if key != "" {
-		known[key] = Process{Pool: "users"}
+		known[key] = Environment{Pool: "users"}
 	}
 	return &Runner{
-		cfg:   Config{Processes: known},
+		cfg:   Config{Callers: fakeCallers{envs: known}},
 		keys:  newKeys(noSessions{}, func(context.Context, string) (string, error) { return key, nil }),
 		pools: map[string]*procs{"users": {}},
 	}
@@ -72,7 +72,7 @@ func TestSplitExecutorClosePoolsInParallel(t *testing.T) {
 		"users":  {stop: stop},
 	}}
 
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 }
@@ -109,7 +109,7 @@ func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
 		started = true
 		return emptyExecutor{}, func(context.Context) error { return nil }, nil
 	})
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
 	<-inner.started
 
 	stopServer()
-	if err := e.close(context.Background()); err != nil {
+	if err := e.close(context.Background(), context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 
@@ -258,10 +258,11 @@ func TestRefusedTurnOfAWaitingTask(t *testing.T) {
 	refuse := func(context.Context, string, *a2asrv.ExecutorContext) (func(), error) { return nil, refused }
 	tests := []struct {
 		name         string
+		admit        func(context.Context, string, *a2asrv.ExecutorContext) (func(), error)
 		hooks        Hooks
 		wantCanceled int32
 	}{
-		{name: "admit refuses", hooks: Hooks{Admit: refuse}, wantCanceled: 1},
+		{name: "admit refuses", admit: refuse, wantCanceled: 1},
 		{name: "hold refuses", hooks: Hooks{Hold: refuse}},
 	}
 	for _, tc := range tests {
@@ -270,6 +271,7 @@ func TestRefusedTurnOfAWaitingTask(t *testing.T) {
 			inner := &cancelCounter{}
 			r := testSplitRunner("")
 			r.cfg.Hooks = tc.hooks
+			r.cfg.Callers = fakeCallers{envs: map[string]Environment{"": {}}, admit: tc.admit}
 			e := newSplitExecutor(context.Background(), r, inner, nil)
 			waiting := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}
 

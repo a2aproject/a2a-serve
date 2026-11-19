@@ -31,12 +31,12 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentcfg"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
@@ -56,7 +56,7 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 	cfg := s.rt.Config()
 	granted := cfg.Secrets
 	key := ""
-	if k, err := s.runner.KeyOf(ctx, execCtx.ContextID); err == nil {
+	if k, err := s.engine.KeyOf(ctx, execCtx.ContextID); err == nil {
 		key = k
 		if sb, err := s.sandboxes.of(ctx, k); err == nil {
 			granted = nil
@@ -65,7 +65,7 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 			}
 		}
 	}
-	if missing, ok := errors.AsType[*runner.MissingSecretError](err); ok && !missing.Main {
+	if missing, ok := errors.AsType[*agentcfg.MissingSecretError](err); ok && !missing.Main {
 		slog.Warn("an agent process of a caller can't start: "+agentcfg.MissingSecretHint(missing.Name), "key", key)
 	}
 	text := explainFailure(cfg, granted, agentcfg.Explain(err).Error())
@@ -168,7 +168,7 @@ type observedExecutor struct {
 	// store has the records of those questions.
 	store *store.Store
 	// notes are put in the results of tasks.
-	notes *runner.Notes
+	notes *agentrun.Notes
 	// moved continues conversations whose session is in another workspace.
 	moved *movedConversations
 	// call describes the tool call of a permission, for the rule that the
@@ -353,7 +353,7 @@ func (e *observedExecutor) agentTurn(ctx context.Context, execCtx *a2asrv.Execut
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
 	prompted, moved := e.moved.withEarlier(ctx, withLine)
-	events := runner.CoalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted))), runner.CoalesceWindow)
+	events := agentrun.CoalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted))), agentrun.CoalesceWindow)
 	if prompted == execCtx && !moved {
 		return events
 	}
@@ -463,7 +463,7 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 				}
 			}
 			if state, ok := eventState(ev); ok && err == nil && state.Terminal() {
-				ev = runner.WithNotes(execCtx, ev, e.notes.Take(execCtx.TaskID))
+				ev = agentrun.WithNotes(execCtx, ev, e.notes.Take(execCtx.TaskID))
 			}
 			if err == nil {
 				logTransition(execCtx.TaskID, ev, start)
@@ -531,7 +531,8 @@ type callerInterceptor struct {
 	tasks     *store.TaskStore
 	waiting   waitingTasks
 	budget    *guestBudget
-	runner    *runner.Runner
+	// engine returns the engine of the agent.
+	engine func() *agentrun.Runner
 	// dir holds the agent homes of members.
 	dir agentdir.Dir
 	// removeHome forgets what the server keeps about an agent home that
@@ -718,17 +719,17 @@ func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principa
 // that member's agent process can't run, so that the caller gets
 // an error to retry on and no failed task is stored.
 func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID string) error {
-	key, err := i.runner.KeyOf(ctx, contextID)
+	key, err := i.engine().KeyOf(ctx, contextID)
 	if err != nil {
 		return fmt.Errorf("looking up the session of conversation %s: %w", contextID, err)
 	}
 	if _, ok := agentkey.UserOf(key); ok {
-		room, err := i.runner.HasRoom(ctx, key)
+		room, err := i.engine().HasRoom(ctx, key)
 		if err != nil {
 			return fmt.Errorf("looking up the agent process of conversation %s: %w", contextID, err)
 		}
 		if !room {
-			return fmt.Errorf("%w: %w", a2a.ErrServerError, &runner.AgentsBusyError{Max: maxUserAgents})
+			return fmt.Errorf("%w: %w", a2a.ErrServerError, &agentrun.AgentsBusyError{Max: maxUserAgents})
 		}
 	}
 	return i.checkCallerHomes(key)

@@ -25,6 +25,18 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
+func init() {
+	sandboxrt.RegisterRuntime(func(v any) (sandboxrt.RuntimeInfo, bool) {
+		switch rt := v.(type) {
+		case local:
+			return sandboxrt.RuntimeInfo{Local: true}, true
+		case *docker:
+			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress, StateDir: rt.opts.StateDir}, true
+		}
+		return sandboxrt.RuntimeInfo{}, false
+	})
+}
+
 // Runtime creates sandboxes of one kind.
 type Runtime interface {
 	// Probe checks this machine without creating a sandbox.

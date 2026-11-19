@@ -22,8 +22,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
@@ -63,8 +63,8 @@ func TestStopSendsSubscribersFinalEvent(t *testing.T) {
 	if !ok || status.Status.State != a2a.TaskStateFailed || status.Status.Message == nil {
 		t.Fatalf("SubscribeToTask() last event = %#v, want a failed status", ev)
 	}
-	if got := a2atext.Message(status.Status.Message); got != runner.StoppedMessage {
-		t.Fatalf("SubscribeToTask() last message = %q, want %q", got, runner.StoppedMessage)
+	if got := a2atext.Message(status.Status.Message); got != agentrun.StoppedMessage {
+		t.Fatalf("SubscribeToTask() last message = %q, want %q", got, agentrun.StoppedMessage)
 	}
 }
 
@@ -130,7 +130,7 @@ func TestStopFailsQueuedTasksAsStopped(t *testing.T) {
 	if !ok || status.Status.State != a2a.TaskStateFailed || status.Status.Message == nil {
 		t.Fatalf("SubscribeToTask() last event = %#v, want a failed status", ev)
 	}
-	if got := a2atext.Message(status.Status.Message); got != runner.StoppedMessage {
-		t.Fatalf("SubscribeToTask() last message = %q, want %q", got, runner.StoppedMessage)
+	if got := a2atext.Message(status.Status.Message); got != agentrun.StoppedMessage {
+		t.Fatalf("SubscribeToTask() last message = %q, want %q", got, agentrun.StoppedMessage)
 	}
 }

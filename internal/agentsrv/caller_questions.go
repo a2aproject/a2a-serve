@@ -28,9 +28,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
@@ -268,7 +268,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		case <-ctx.Done():
 			return
 		case <-e.stopped():
-			runner.FailStopped(execCtx, true)(yield)
+			agentrun.FailStopped(execCtx, true)(yield)
 			return
 		case o = <-outcomes:
 		}

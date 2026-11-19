@@ -22,7 +22,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/question"
 )
@@ -38,14 +38,14 @@ func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.Execu
 			switch {
 			case p.ID == denyPrincipal.ID:
 				e.notes.Add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
-			case runner.IsRejection(opt.ID):
+			case agentrun.IsRejection(opt.ID):
 				e.notes.Add(execCtx.TaskID, "Tool call rejected: "+q.Title+".")
 				rejected = q.ToolCallID
 			}
 		}
 		for ev, err := range events {
 			if rejected != "" && err == nil {
-				ev = runner.RejectedCall(ev, rejected)
+				ev = agentrun.RejectedCall(ev, rejected)
 			}
 			if !yield(ev, err) {
 				return

@@ -197,8 +197,7 @@ var (
 )
 
 // admitCaller lets the caller in ctx write into the container of an agent
-// key. It implements the Admit hook of the runner, which then checks the
-// container itself. Only an owner, or someone in a group chat, may write
+// key, before the container itself is checked. Only an owner, or someone in a group chat, may write
 // into the container of another user, such as one of a role the caller had
 // before. They need a sandbox that covers what this container gets now and
 // got when it started, and only an owner may write into another user's
@@ -228,7 +227,7 @@ func (s *Server) admitCaller(ctx context.Context, key string, _ *a2asrv.Executor
 }
 
 // holdBudget counts a guest's turn against the budget of guests until
-// release. It implements the Hold hook of the runner.
+// release. It implements the Hold hook of the agent.
 func (s *Server) holdBudget(ctx context.Context, _ string, _ *a2asrv.ExecutorContext) (func(), error) {
 	if p, ok := auth.Caller(ctx); ok && p.Role == auth.RoleGuest {
 		return s.budget.run(budgetListener(p))
@@ -243,7 +242,7 @@ func (s *Server) admitOther(caller auth.Principal, key string, want access.Sandb
 	if !mine.Covers(want) {
 		return errSandboxCovers
 	}
-	if running, ok := s.runner.Started(key); ok && !mine.Covers(access.Sandbox(running)) {
+	if running, ok := s.startedWith(key); ok && !mine.Covers(running) {
 		return errSandboxCovers
 	}
 	if !caller.IsOwner() && (want.Storage == agentdir.StorageOwn || want.Storage == agentdir.StorageEmpty) {
@@ -267,7 +266,7 @@ func sameProcessUser(a, b string) bool {
 // sandboxNotes returns notes with one added when the owner's container
 // runs with another sandbox than the rule of self gives now.
 func (s *Server) sandboxNotes(notes []string) []string {
-	if started, ok := s.runner.Started(""); ok && !access.Sandbox(started).Equal(s.sandboxes.resolve(auth.Owner())) {
+	if started, ok := s.startedWith(""); ok && !started.Equal(s.sandboxes.resolve(auth.Owner())) {
 		notes = append(slices.Clone(notes), "your agent container applies the changed sandbox rule of self after `a2a-serve restart`")
 	}
 	return notes
@@ -329,7 +328,7 @@ const unusedWorkspaceTTL = 30 * 24 * time.Hour
 // their storage. `pair rm` deletes those of pairings. The sandbox of a
 // user's container depends on how they call, so it isn't checked here.
 func (s *Server) pruneWorkspaces(ctx context.Context) {
-	entries, err := s.runner.Copies().List()
+	entries, err := s.copies.List()
 	if err != nil {
 		slog.Warn("listing the private workspaces", "error", err)
 		return
@@ -347,12 +346,12 @@ func (s *Server) pruneWorkspaces(ctx context.Context) {
 func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 	switch e.Name {
 	case workspaceName(""):
-		if started, ok := s.runner.Started(""); ok {
+		if started, ok := s.startedWith(""); ok {
 			return s.removeStorageBut(e, started.Storage)
 		}
 		return nil
 	case workspaceName(agentkey.Guest):
-		release, ok, err := s.runner.HoldIdle(ctx, agentkey.Guest)
+		release, ok, err := s.engine.HoldIdle(ctx, agentkey.Guest)
 		if err != nil || !ok {
 			return err
 		}
@@ -367,16 +366,16 @@ func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 	if e.Principal == "" || workspaceName(key) != e.Name || pairing || time.Since(e.Used) < unusedWorkspaceTTL {
 		return nil
 	}
-	release, ok, err := s.runner.HoldIdle(ctx, key)
+	release, ok, err := s.engine.HoldIdle(ctx, key)
 	if err != nil || !ok {
 		return err
 	}
 	defer release()
 	// The user may have started a turn since the list was read.
-	if used, err := s.runner.Copies().Used(e.Name); err != nil || time.Since(used) < unusedWorkspaceTTL {
+	if used, err := s.copies.Used(e.Name); err != nil || time.Since(used) < unusedWorkspaceTTL {
 		return err
 	}
-	return s.runner.Copies().Remove(e.Name)
+	return s.copies.Remove(e.Name)
 }
 
 // removeStorageBut deletes the workspaces of e but the one of storage.
@@ -384,7 +383,7 @@ func (s *Server) removeStorageBut(e workspaces.Entry, storage string) error {
 	var errs []error
 	for _, st := range e.Storage {
 		if st != storage {
-			errs = append(errs, s.runner.Copies().RemoveStorage(e.Name, st))
+			errs = append(errs, s.copies.RemoveStorage(e.Name, st))
 		}
 	}
 	return errors.Join(errs...)

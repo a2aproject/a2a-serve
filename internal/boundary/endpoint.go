@@ -51,3 +51,19 @@ func EndpointOf(e any) (Endpoint, error) {
 	}
 	return Endpoint{}, errors.New("invalid egress endpoint: get one from egress.Boundary.Open")
 }
+
+var credentialOf func(Injection) any
+
+// RegisterCredential sets how CredentialOf makes a core/egress credential.
+// It is called once, from the init of core/egress.
+func RegisterCredential(f func(Injection) any) { credentialOf = f }
+
+// CredentialOf returns inj as a core/egress Credential, which an endpoint
+// adds as it is, with no placeholder in its Env. It returns nil before
+// core/egress is linked in.
+func CredentialOf(inj Injection) any {
+	if credentialOf == nil {
+		return nil
+	}
+	return credentialOf(inj)
+}

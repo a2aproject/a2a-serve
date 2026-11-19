@@ -17,12 +17,16 @@ package core_test
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 const module = "github.com/a2aproject/a2a-serve/"
@@ -32,6 +36,7 @@ const module = "github.com/a2aproject/a2a-serve/"
 var sharedLeaves = []string{
 	module + "internal/a2atext",
 	module + "internal/agentprofile",
+	module + "internal/agentrun",
 	module + "internal/boundary",
 	module + "internal/cryptoutil",
 	module + "internal/egressrules",
@@ -46,6 +51,19 @@ var sharedLeaves = []string{
 	module + "internal/toolrules",
 	module + "internal/turncount",
 	module + "internal/workspaces",
+}
+
+// publicImports are the public core packages that each public core
+// package may import: egress <- sandbox <- a2aserve, and no package imports
+// a2aserve.
+var publicImports = map[string][]string{
+	"egress":    nil,
+	"sandbox":   {"egress"},
+	"workspace": nil,
+	"tools":     nil,
+	"agent":     nil,
+	"approval":  nil,
+	"a2aserve":  {"agent", "egress", "sandbox", "tools", "workspace"},
 }
 
 // platforms are the systems whose files the test lists, since go list sees
@@ -95,5 +113,49 @@ func readSources(t *testing.T, dir string) {
 	})
 	if err != nil {
 		t.Fatalf("reading the sources in %s: %v", dir, err)
+	}
+}
+
+func TestPublicPackagesImportOnlyThePackagesBelowThem(t *testing.T) {
+	t.Parallel()
+	readSources(t, ".")
+	for _, pkg := range sharedLeaves {
+		readSources(t, filepath.Join("..", strings.TrimPrefix(pkg, module)))
+	}
+	cmd := exec.Command("go", "list", "-f", "{{.Name}}", "./...")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list ./... error = %v", err)
+	}
+	var listed []string
+	for name := range strings.FieldsSeq(string(out)) {
+		if name != "core_test" && name != "core" {
+			listed = append(listed, name)
+		}
+	}
+	slices.Sort(listed)
+	if diff := cmp.Diff(slices.Sorted(maps.Keys(publicImports)), listed); diff != "" {
+		t.Fatalf("go list ./... of the core lists other packages than publicImports (-want +got) diff = %s", diff)
+	}
+	for _, goos := range platforms {
+		for pkg, allowed := range publicImports {
+			cmd := exec.Command("go", "list", "-deps", "./"+pkg)
+			cmd.Env = append(os.Environ(), "GOOS="+goos)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("GOOS=%s go list -deps ./%s error = %v", goos, pkg, err)
+			}
+			var got []string
+			for dep := range strings.FieldsSeq(string(out)) {
+				name, ok := strings.CutPrefix(dep, module+"core/")
+				if ok && name != pkg {
+					got = append(got, name)
+				}
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(allowed, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Fatalf("GOOS=%s go list -deps ./%s lists wrong public packages (-want +got) diff = %s", goos, pkg, diff)
+			}
+		}
 	}
 }

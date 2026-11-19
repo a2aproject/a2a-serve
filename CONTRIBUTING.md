@@ -64,11 +64,21 @@ A few checks run on every pull request. Follow these tips to pass them:
 
 ### Code layout
 
-The code has two sides. The core in [`core/`](core/) runs an ACP agent as an A2A executor, with one agent process per key: the agent profiles, sandboxes, the egress boundary, tool rules, workspaces, questions, and the runner that starts and stops the processes. It knows nothing of people, roles, config files, chats, networks or the CLI. Keys are opaque strings to it.
+The code has two sides. The core in [`core/`](core/) holds the public packages, which other projects can import. Each is a working object that is useful on its own:
 
-The frontend in `internal/` decides who calls and what they get. `internal/agentcfg` turns `config.yaml` into the core's inputs and words the core's errors with the flags and commands that fix them, and `internal/agentsrv` serves the A2A handler and gives the runner its hooks.
+- `core/egress` decides the connections of a client by policy and adds credentials to its requests.
+- `core/sandbox` runs a command in isolation, with its network through an egress endpoint.
+- `core/workspace` gives each process the project directory it works in.
+- `core/tools` decides tool calls by rules, preferences and grants.
+- `core/agent` describes the coding agents that can be served.
+- `core/approval` is the A2A wire format of the agent's questions and their answers.
+- `core/a2aserve` composes the others: it serves a coding agent as an A2A agent, with one agent process per key. Its engine is `internal/agentrun`.
 
-Imports point from the frontend to the core. `go test ./core/` fails when the core imports a frontend package; the few leaves both sides share, such as `internal/fsutil`, are listed in that test.
+The core knows nothing of people, roles, config files, chats, networks or the CLI. Keys are opaque strings to it.
+
+The frontend in `internal/` decides who calls and what they get. `internal/agentcfg` maps `config.yaml` to the core's inputs and words the errors with the flags and commands that fix them, and `internal/agentsrv` builds the agent with `a2aserve.New`, gives it its callers and hooks, and serves its A2A handler.
+
+Imports point from the frontend to the core. Among the public packages, `egress` comes first, `sandbox` imports it, and `a2aserve` imports the others; `workspace`, `tools`, `agent` and `approval` import no other public package, and no package imports `a2aserve`. `go test ./core/` fails when the core breaks these rules or imports a frontend package; the few internal packages the core may use, such as `internal/fsutil`, are listed in that test.
 
 ### Testing the egress containers of Docker Desktop on Linux
 

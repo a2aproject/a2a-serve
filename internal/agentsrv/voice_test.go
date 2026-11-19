@@ -27,8 +27,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
@@ -305,7 +305,7 @@ func TestVoiceTurnFailsTaskWhenServerStops(t *testing.T) {
 		}
 		got = append(got, ev)
 	}
-	want := []string{"task:submitted", "status:failed:" + runner.StoppedMessage}
+	want := []string{"task:submitted", "status:failed:" + agentrun.StoppedMessage}
 	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
 		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
 	}

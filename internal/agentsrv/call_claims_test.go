@@ -27,8 +27,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
@@ -42,13 +42,15 @@ var (
 	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleMember}
 )
 
-func newTestCallClaims(t *testing.T, bridge runner.Bridge) *CallClaims {
+func newTestCallClaims(t *testing.T, bridge agentrun.Bridge) *CallClaims {
 	t.Helper()
 	st := openTestStore(t)
 	return newCallClaims(CallClaimsDeps{Store: st, Bridge: fixedBridge(bridge), Sessions: st.Sessions()})
 }
 
-func fixedBridge(b runner.Bridge) func() runner.Bridge { return func() runner.Bridge { return b } }
+func fixedBridge(b agentrun.Bridge) func() agentrun.Bridge {
+	return func() agentrun.Bridge { return b }
+}
 
 func inputRequiredTask(id a2a.TaskID, contextID string) *a2a.Task {
 	return &a2a.Task{ID: id, ContextID: contextID, Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}
@@ -57,7 +59,7 @@ func inputRequiredTask(id a2a.TaskID, contextID string) *a2a.Task {
 func TestCallClaimsHandle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 
 	h, err := cl.handle(ctx, "ctx1")
 	if err != nil {
@@ -92,7 +94,7 @@ func TestCallClaimsHandleSurvivesRestart(t *testing.T) {
 
 func TestCallClaimsHandleConcurrent(t *testing.T) {
 	t.Parallel()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	handles := make([]string, 8)
 	var wg sync.WaitGroup
 	for i := range handles {
@@ -114,7 +116,7 @@ func TestCallClaimsHandleConcurrent(t *testing.T) {
 
 func TestCallClaimsHandlesAreUnique(t *testing.T) {
 	t.Parallel()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	seen := map[string]string{}
 	for i := range 50 {
 		contextID := fmt.Sprintf("ctx%d", i)
@@ -132,7 +134,7 @@ func TestCallClaimsHandlesAreUnique(t *testing.T) {
 func TestCallClaimsClaimsOf(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	h, err := cl.handle(ctx, "ctx1")
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
@@ -201,7 +203,7 @@ func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
 func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	h1, err := cl.handle(ctx, "ctx1")
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
@@ -236,7 +238,7 @@ func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	h, err := cl.handle(ctx, "ctx1")
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
@@ -263,7 +265,7 @@ func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	h, err := cl.handle(ctx, "ctx1")
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
@@ -288,7 +290,7 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 func TestCallClaimsTurnRecordsAgentsLineWhenItBegins(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	if err := cl.sessions.Put(ctx, "ctx1", a2aacp.Session{ID: "s1"}); err != nil {
 		t.Fatalf("SessionStore.Put() error = %v", err)
 	}
@@ -395,14 +397,14 @@ func TestCallClaimsAgentsURL(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		bridge  runner.Bridge
+		bridge  agentrun.Bridge
 		wantURL func(handle string) string
 		wantErr bool
 	}{
-		{name: "socket", bridge: runner.Bridge{Socket: "/tmp/h.sock"}, wantURL: func(h string) string { return "http://a2a/" + h }},
-		{name: "socket wins over TCP", bridge: runner.Bridge{Socket: "/tmp/h.sock", URL: "http://127.0.0.1:9"}, wantURL: func(h string) string { return "http://a2a/" + h }},
-		{name: "TCP bridge", bridge: runner.Bridge{URL: "http://host.docker.internal:4000"}, wantURL: func(h string) string { return "http://host.docker.internal:4000/" + h }},
-		{name: "no listener", bridge: runner.Bridge{}, wantErr: true},
+		{name: "socket", bridge: agentrun.Bridge{Socket: "/tmp/h.sock"}, wantURL: func(h string) string { return "http://a2a/" + h }},
+		{name: "socket wins over TCP", bridge: agentrun.Bridge{Socket: "/tmp/h.sock", URL: "http://127.0.0.1:9"}, wantURL: func(h string) string { return "http://a2a/" + h }},
+		{name: "TCP bridge", bridge: agentrun.Bridge{URL: "http://host.docker.internal:4000"}, wantURL: func(h string) string { return "http://host.docker.internal:4000/" + h }},
+		{name: "no listener", bridge: agentrun.Bridge{}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -437,7 +439,7 @@ func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
 		t.Fatalf("store.PutContact() error = %v", err)
 	}
 	cl := newCallClaims(CallClaimsDeps{
-		Store: st, Bridge: fixedBridge(runner.Bridge{Socket: "/tmp/h.sock"}), Sessions: st.Sessions(),
+		Store: st, Bridge: fixedBridge(agentrun.Bridge{Socket: "/tmp/h.sock"}), Sessions: st.Sessions(),
 		Peers: func(context.Context) []AgentRef {
 			return []AgentRef{{Name: "Coder"}, {Name: "ben", Card: cardinfo.Summary{Description: "Reviews.", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
 		},
@@ -463,59 +465,59 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 	tests := []struct {
 		name     string
 		ctx      context.Context
-		bridge   runner.Bridge
+		bridge   agentrun.Bridge
 		execCtx  *a2asrv.ExecutorContext
 		wantLine bool
 	}{
 		{
 			name:     "owner",
 			ctx:      auth.WithPrincipal(context.Background(), auth.Owner()),
-			bridge:   runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:   agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx:  &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 			wantLine: true,
 		},
 		{
 			name:     "member",
 			ctx:      auth.WithPrincipal(context.Background(), bob),
-			bridge:   runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:   agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx:  &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 			wantLine: true,
 		},
 		{
 			name:     "follow-up to a task that doesn't wait",
 			ctx:      auth.WithPrincipal(context.Background(), auth.Owner()),
-			bridge:   runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:   agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx:  &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt(), StoredTask: &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
 			wantLine: true,
 		},
 		{
 			name:    "answer to an input-required task",
 			ctx:     auth.WithPrincipal(context.Background(), auth.Owner()),
-			bridge:  runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:  agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt(), StoredTask: inputRequiredTask("t1", "ctx1")},
 		},
 		{
 			name:    "guest",
 			ctx:     auth.WithPrincipal(context.Background(), auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}),
-			bridge:  runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:  agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 		},
 		{
 			name:    "caller without a role",
 			ctx:     auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:gone"}),
-			bridge:  runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:  agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 		},
 		{
 			name:    "no caller",
 			ctx:     context.Background(),
-			bridge:  runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:  agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 		},
 		{
 			name:    "no message",
 			ctx:     auth.WithPrincipal(context.Background(), auth.Owner()),
-			bridge:  runner.Bridge{Socket: "/tmp/h.sock"},
+			bridge:  agentrun.Bridge{Socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"},
 		},
 		{
@@ -568,7 +570,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 func TestCallClaimsForgetPrunedDropsConversationsWithoutHandle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cl := newTestCallClaims(t, runner.Bridge{})
+	cl := newTestCallClaims(t, agentrun.Bridge{})
 	for _, id := range []string{"kept", "pruned"} {
 		if err := cl.sessions.Put(ctx, id, a2aacp.Session{ID: "s-" + id}); err != nil {
 			t.Fatalf("SessionStore.Put() error = %v", err)

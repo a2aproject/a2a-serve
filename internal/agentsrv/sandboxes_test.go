@@ -26,19 +26,25 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/runner"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 func sandboxServer(t *testing.T, rules ...agentdir.SandboxRule) *testServer {
@@ -189,7 +195,7 @@ func TestRefusedAnswerEndsTheWaitingTurnOfTheAgent(t *testing.T) {
 func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
 	t.Parallel()
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, openStore(t))}
-	s.runner = newTestRunner(t, s)
+	s.engine = newTestRunner(t, s)
 	member := func(name string) auth.Principal {
 		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
 	}
@@ -409,7 +415,7 @@ func TestAdmitOther(t *testing.T) {
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config {
 		return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
 	}, openStore(t))}
-	s.runner = newTestRunner(t, s)
+	s.engine = newTestRunner(t, s)
 	user := func(name string) auth.Principal {
 		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
 	}
@@ -449,7 +455,8 @@ func TestPruneWorkspaces(t *testing.T) {
 			return &agentdir.Config{Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"guests"}, Storage: agentdir.StorageEmpty}}}}
 		}, openStore(t)),
 	}
-	s.runner = newTestRunner(t, s)
+	s.engine = newTestRunner(t, s)
+	s.copies = workspaces.NewCopies(filepath.Join(t.TempDir(), "w"))
 	old := time.Now().Add(-2 * unusedWorkspaceTTL)
 	for _, w := range []struct {
 		key, storage string
@@ -465,17 +472,17 @@ func TestPruneWorkspaces(t *testing.T) {
 	} {
 		id, _ := agentkey.UserOf(w.key)
 		name := workspaceName(w.key)
-		if _, err := s.runner.Copies().Prepare(ctx, name, id, w.storage, src); err != nil {
+		if _, err := s.copies.Prepare(ctx, name, id, w.storage, src); err != nil {
 			t.Fatalf("Prepare() error = %v", err)
 		}
-		if err := os.Chtimes(filepath.Join(s.runner.Copies().Root, name, "used"), w.used, w.used); err != nil {
+		if err := os.Chtimes(filepath.Join(s.copies.Root, name, "used"), w.used, w.used); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	s.pruneWorkspaces(ctx)
 
-	entries, err := s.runner.Copies().List()
+	entries, err := s.copies.List()
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -630,27 +637,157 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 	}
 }
 
-// newTestRunner returns a runner of the processes of s that starts none.
-func newTestRunner(t *testing.T, s *Server) *runner.Runner {
+// newTestRunner returns an engine of the processes of s that starts none.
+func newTestRunner(t *testing.T, s *Server) *agentrun.Runner {
 	t.Helper()
 	sockets := t.TempDir()
 	if err := os.Chmod(sockets, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	r, err := runner.New(runner.Config{
-		Dirs:      runner.Dirs{Sockets: filepath.Join(sockets, "s"), Workspaces: filepath.Join(t.TempDir(), "w")},
-		Spec:      func() (runner.Spec, error) { return runner.Spec{}, nil },
-		Secrets:   func() map[string]string { return nil },
-		Processes: processes{s},
-		Pools:     []runner.Pool{{Name: guestPool}, {Name: usersPool, MaxAgents: maxUserAgents}},
+	r, err := agentrun.New(agentrun.Config{
+		Profile:  agentprofile.Custom("fake", []string{"fake-acp"}),
+		Runtime:  sandbox.Local(),
+		Callers:  testCallers{s},
+		Pools:    map[string]agentrun.Pool{guestPool: {}, usersPool: {MaxProcesses: maxUserAgents}},
+		StateDir: t.TempDir(),
+		Options:  agentrun.Options{SocketDir: filepath.Join(sockets, "s")},
 	})
 	if err != nil {
-		t.Fatalf("runner.New() error = %v", err)
+		t.Fatalf("agentrun.New() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := r.Release(context.Background()); err != nil {
-			t.Errorf("Runner.Release() error = %v", err)
+		if err := r.Close(context.Background()); err != nil {
+			t.Errorf("Runner.Close() error = %v", err)
 		}
 	})
 	return r
+}
+
+// testCallers gives the engine of a test the pools of the agent keys of s.
+type testCallers struct{ s *Server }
+
+func (c testCallers) Key(ctx context.Context, contextID string) (string, error) {
+	return callers(c).Key(ctx, contextID)
+}
+
+func (c testCallers) Environment(ctx context.Context, key string) (agentrun.Environment, error) {
+	if _, _, err := c.s.sandboxes.grant(ctx, key); err != nil {
+		return agentrun.Environment{}, err
+	}
+	_, isUser := agentkey.UserOf(key)
+	switch {
+	case key == "":
+		return agentrun.Environment{}, nil
+	case key == agentkey.Guest:
+		return agentrun.Environment{Pool: guestPool}, nil
+	case isUser:
+		return agentrun.Environment{Pool: usersPool, Process: &agentrun.ProcessOptions{Parent: parentOf(key)}}, nil
+	}
+	return agentrun.Environment{}, errors.New("unknown agent key " + key)
+}
+
+func (c testCallers) Admit(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
+	return callers(c).Admit(ctx, key, execCtx)
+}
+
+func TestGrantMounts(t *testing.T) {
+	t.Parallel()
+	mounts := []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
+	tests := []struct {
+		storage workspaces.Storage
+		want    []agentprofile.Mount
+	}{
+		{storage: workspaces.StorageShared, want: mounts},
+		{storage: workspaces.StorageReadOnly, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageOwn, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: workspaces.StorageEmpty, want: []agentprofile.Mount{{Src: "/src/app", Dst: "/src/app"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.storage, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tt.want, grantMounts(tt.storage, mounts)); diff != "" {
+				t.Fatalf("grantMounts() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+// startedCallers runs every conversation of key in a fakeacp process
+// that started with the sandbox started.
+type startedCallers struct {
+	key     string
+	env     agentrun.Environment
+	started access.Sandbox
+}
+
+func (c startedCallers) Key(context.Context, string) (string, error) { return c.key, nil }
+
+func (c startedCallers) Environment(_ context.Context, key string) (agentrun.Environment, error) {
+	if key != c.key {
+		return agentrun.Environment{}, errors.New("unknown agent key " + key)
+	}
+	env := c.env
+	env.Pool, env.Process = usersPool, &agentrun.ProcessOptions{State: c.started}
+	return env, nil
+}
+
+func (c startedCallers) Admit(context.Context, string, *a2asrv.ExecutorContext) (func(), error) {
+	return func() {}, nil
+}
+
+func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	key := agentkey.User(auth.PairPrincipal("ann"))
+	st := openStore(t)
+	s := &Server{
+		sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{Secrets: []string{"KEY"}} }, st),
+		tasks:     st.Tasks("", nil),
+	}
+	env := agentrun.Environment{Workspace: workspace.Dir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home")}
+	engine, err := agentrun.New(agentrun.Config{
+		Profile:  agentprofile.Custom("fake", []string{fakeACP}),
+		Runtime:  sandbox.Local(),
+		Main:     env,
+		Callers:  startedCallers{key: key, env: env, started: access.Sandbox{Storage: workspaces.StorageShared}},
+		Pools:    map[string]agentrun.Pool{usersPool: {MaxProcesses: maxUserAgents}},
+		StateDir: testutil.ShortTempDir(t),
+	})
+	if err != nil {
+		t.Fatalf("agentrun.New() error = %v", err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatalf("Runner.Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if err := engine.Close(context.Background()); err != nil {
+			t.Errorf("Runner.Close() error = %v", err)
+		}
+	})
+	s.engine = engine
+	for _, err := range engine.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello"))}) {
+		if err != nil {
+			t.Fatalf("Runner.Execute() error = %v", err)
+		}
+	}
+	if _, ok := engine.StartedWith(key); !ok {
+		t.Fatalf("Runner.StartedWith() after a turn = false, want the process running")
+	}
+	turn, err := engine.AdmitTurn(ctx, key, "", nil, true)
+	if err != nil {
+		t.Fatalf("Runner.AdmitTurn() error = %v", err)
+	}
+	time.AfterFunc(50*time.Millisecond, turn)
+
+	release, err := s.admitTurn(ctx, key, nil)
+
+	if err != nil {
+		t.Fatalf("Server.admitTurn() while the turn of an ended task finishes error = %v, want nil", err)
+	}
+	release()
+	if _, ok := engine.StartedWith(key); ok {
+		t.Fatalf("Server.admitTurn() kept the process that started with the old sandbox, want it stopped")
+	}
 }
