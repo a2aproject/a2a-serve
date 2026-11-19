@@ -56,6 +56,8 @@ type Ready struct {
 	A2A       string `json:"a2a,omitempty"`
 	Sandbox   string `json:"sandbox,omitempty"`
 	Workspace string `json:"workspace,omitempty"`
+	// WorkspaceSync is turn or live.
+	WorkspaceSync string `json:"workspace_sync,omitempty"`
 	// Egress is how the Docker sandbox's connections are decided: by the
 	// egress policy or by the egress proxy.
 	Egress string `json:"egress,omitempty"`
@@ -122,8 +124,14 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		return nil, err
 	}
 	runID := cryptoutil.RandomString(8, cryptoutil.Unambiguous)
+	tree := s.workspace.tree()
+	changes := newChangesets(tree, defaultChangesLimits, srv.log)
+	workspace, mainWorkspace, err := s.workspace.build(tree, stateDir, changes.synced)
+	if err != nil {
+		return nil, err
+	}
 	base := a2aserve.Environment{
-		Workspace:   a2aserve.SharedDir(s.workspace.path),
+		Workspace:   workspace,
 		Home:        home,
 		Env:         s.env,
 		Credentials: s.credentials,
@@ -137,6 +145,8 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if srv.tools != nil {
 		base.MCPServers = []a2aserve.MCPServer{srv.tools.server(s.sandbox)}
 	}
+	mainEnv := base
+	mainEnv.Workspace = mainWorkspace
 	mem := newMemory(defaultMemoryLimits, time.Now)
 	srv.agent, err = a2aserve.New(ctx, a2aserve.Config{
 		Profile:  s.profile,
@@ -144,12 +154,12 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Runtime:  rt,
 		Egress:   srv.boundary,
 		Tools:    srv.tools.deciders(),
-		Main:     base,
+		Main:     mainEnv,
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
-		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone()},
-		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}},
+		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone(), Explain: explain},
+		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}, Middleware: changes.middleware},
 		StateDir: stateDir,
 		Log:      srv.log,
 		Stderr:   stderr,
@@ -167,7 +177,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		}
 		srv.served <- err
 	}()
-	srv.ready = Ready{Ready: true, A2A: url(srv.ln), Sandbox: summary, Workspace: s.workspace.kind}
+	srv.ready = Ready{Ready: true, A2A: url(srv.ln), Sandbox: summary, Workspace: s.workspace.kind, WorkspaceSync: s.workspace.sync}
 	switch {
 	case s.egressProxy != "":
 		srv.ready.Egress = EgressProxy

@@ -15,7 +15,7 @@ Start opencode in Docker on a project directory, with the OpenRouter key from yo
 $ a2a-run --agent opencode --workspace dir:$PWD \
     --inject-model-key openrouter=OPENROUTER_API_KEY \
     --listen unix:///tmp/a2a-run.sock
-{"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"policy"}
+{"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"dir","workspace_sync":"turn","egress":"policy"}
 ```
 
 Send it a message with the `a2a` CLI:
@@ -24,7 +24,7 @@ Send it a message with the `a2a` CLI:
 $ a2a send --unix-socket /tmp/a2a-run.sock -a http://a2a/ "List the files of the workspace"
 ```
 
-The agent sees a placeholder in `OPENROUTER_API_KEY`, and `a2a-run` adds the real key to the agent's requests to OpenRouter. Stop `a2a-run` with SIGINT or SIGTERM.
+The agent sees a placeholder in `OPENROUTER_API_KEY`, and `a2a-run` adds the real key to the agent's requests to OpenRouter. The task that the agent completes carries the files it changed, and the agent's changes reach `$PWD` when its turn ends. Stop `a2a-run` with SIGINT or SIGTERM.
 
 ## Ready line
 
@@ -35,7 +35,8 @@ Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stder
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
 | `sandbox` | `docker`, `docker (rootless)` or `local` |
-| `workspace` | `dir` |
+| `workspace` | `dir` or `memory` |
+| `workspace_sync` | `turn` or `live` |
 | `egress` | What decides the agent's connections, with `--sandbox docker`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
 | `error` | Why it failed to start, with `ready` false |
 
@@ -78,6 +79,52 @@ The agent sees the host's tools as those of the MCP server `host`. When the host
 
 On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent processes, and removes the Unix socket and its temporary directories.
 
+## Workspace
+
+`--workspace` gives the agent its files:
+
+- `dir:<path>` is a directory on this machine.
+- `memory` starts empty and is held by `a2a-run`. It is lost at exit, so take the files from the tasks.
+
+`--workspace-sync` decides how the agent changes them:
+
+- `turn`, the default, gives each A2A context a private copy of the workspace. Before each turn, the copy gets the changes of the workspace. After the turn, the agent's changes go back to the workspace, and the task gets them as an artifact. Other contexts see the changes from their next turn.
+- `live` lets every context edit a `dir:` workspace in place. A `memory` workspace with `live` sync is planned.
+
+With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets.
+
+### Changes artifact
+
+After a turn with `turn` sync that changed files, the task gets an artifact named `a2a-run/changes` before its final status. It lists the changes of that turn only:
+
+- The first part is a data part:
+
+  ```json
+  {
+    "removed": ["old.py"],
+    "symlinks": [{"path": "run", "target": "bin/run.sh"}],
+    "omitted": [{"path": "data.bin", "size": 5242880, "reason": "file-too-large"}],
+    "unlisted": 12
+  }
+  ```
+
+  `removed` lists the paths the agent removed, and is always there. The other fields appear only when they have entries. `omitted` lists the changed files whose content the artifact leaves out, with the reason: `file-too-large`, `total-too-large`, or `unreadable` when the file was gone or unreadable after the sync. `unlisted` counts the changes past the number of paths the artifact lists.
+- Each further part is a file part with the content of a file that the agent created or changed. Its `filename` is the path in the workspace, and its metadata `mode` has the permission bits, such as `0755`.
+
+Paths are relative to the workspace root and use `/`. New empty directories aren't listed. A turn that changed nothing gets no artifact. See [limits](limits.md#a2a-run) for the sizes.
+
+### Conflicts
+
+When the workspace changed a file during a turn that the agent also changed, the workspace keeps its own version. The agent's version is dropped, and the agent's copy gets the workspace's version. The agent's other changes go back as usual.
+
+The task then fails, even when the agent completed it. Its status message says which files conflicted, and the message's metadata key `a2a-serve/conflicts` lists their paths. The status of such a task:
+
+```json
+{"state": "TASK_STATE_FAILED", "message": {"metadata": {"a2a-serve/conflicts": ["main.go"]}, "parts": [{"text": "The workspace changed these files while the agent worked on them, ..."}]}}
+```
+
+The key is the same for every embedder of the core, so a host reads one key whether it runs `a2a-run` or embeds the core in Go. A canceled or failed task keeps its state, and has the key when its final status comes after the sync.
+
 ## Flags
 
 <!-- generated:a2a-run-flags -->
@@ -94,7 +141,8 @@ On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent pro
 | `--env NAME=value` |  | Variable for the agent: NAME=value, such as DEBUG=1 |
 | `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
 | `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
-| `--workspace dir:path` |  | Workspace that the agent processes share: dir:path, a directory |
+| `--workspace dir:path` |  | Files of the agent: dir:path for a directory, or memory for files that a2a-run keeps in memory and drops at exit |
+| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent edit a dir: workspace in place |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises |
 | `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
 | `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts |

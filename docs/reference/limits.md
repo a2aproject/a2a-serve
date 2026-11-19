@@ -179,6 +179,9 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Output of a tool call in `hooks/afterTool` | 64 KiB |
 | An answer of the tools endpoint to `a2a-run` | 1 MiB |
 | Requests of `a2a-run` to the tools endpoint at once | 16 |
+| Workspace with `turn` sync | 1 GiB of files and 200000 entries. Past that, the turn fails. |
+| Files in the changes artifact | 1 MiB each and 4 MiB in total. Past that, the artifact lists the file without its content. |
+| Paths that the changes artifact lists | 1000. Past that, it counts the rest. |
 
 ## Logs
 

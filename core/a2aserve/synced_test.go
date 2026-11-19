@@ -355,6 +355,72 @@ func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
 	}
 }
 
+// syncedChange is what a test compares of a change that Synced reports.
+type syncedChange struct {
+	Path    string
+	Mode    fs.FileMode
+	Removed bool
+}
+
+func TestTurnSyncedReportsWhatTheTurnWrote(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	put(t, tree, "keep.txt", "keep", 0o644)
+	put(t, tree, "old.txt", "old", 0o644)
+	put(t, tree, "conflict.txt", "base", 0o644)
+	type report struct {
+		key     string
+		value   any
+		changes []syncedChange
+	}
+	var reports []report
+	type ctxKey struct{}
+	opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(ctx context.Context, key string, changes []fsys.Info) {
+		r := report{key: key, value: ctx.Value(ctxKey{})}
+		for _, c := range changes {
+			r.changes = append(r.changes, syncedChange{Path: c.Path, Mode: c.Mode, Removed: c.Removed})
+		}
+		reports = append(reports, r)
+	}}
+	att, err := a2aserve.TurnSynced(tree, opts).Attach(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	local := fsys.Dir(att.Dir)
+	ctx := context.WithValue(context.Background(), ctxKey{}, "turn 1")
+
+	if err := att.BeforeTurn(ctx); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	put(t, local, "new/run.sh", "#!/bin/sh", 0o755)
+	remove(t, local, "old.txt")
+	put(t, local, "conflict.txt", "mine", 0o644)
+	put(t, local, "opencode.json", "{}", 0o644)
+	put(t, tree, "conflict.txt", "theirs", 0o644)
+	if _, ok := errors.AsType[*a2aserve.SyncConflictError](att.AfterTurn(ctx)); !ok {
+		t.Fatalf("AfterTurn() error, want a SyncConflictError")
+	}
+	quiet := context.WithValue(context.Background(), ctxKey{}, "turn 2")
+	if err := att.BeforeTurn(quiet); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	if err := att.AfterTurn(quiet); err != nil {
+		t.Fatalf("AfterTurn() error = %v", err)
+	}
+
+	want := []report{{key: "a", value: "turn 1", changes: []syncedChange{
+		{Path: "new", Mode: fs.ModeDir | 0o755},
+		{Path: "new/run.sh", Mode: 0o755},
+		{Path: "old.txt", Removed: true},
+	}}}
+	if diff := cmp.Diff(want, reports, cmp.AllowUnexported(report{})); diff != "" {
+		t.Fatalf("Synced() reports wrong result (-want +got) diff = %s", diff)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
 func TestTurnSyncedReleaseWritesBackAndRemovesTheDirectory(t *testing.T) {
 	t.Parallel()
 	tree, root := fsys.Memory(), t.TempDir()

@@ -76,6 +76,13 @@ type TurnSyncOptions struct {
 	// takes the default: 1 GiB and 200000 entries.
 	MaxBytes   int64
 	MaxEntries int
+	// Synced, if set, gets what the sync after a turn of key wrote to the
+	// tree, when it wrote anything: each entry it created or replaced, as
+	// the tree describes it after the write, and each path it removed,
+	// with Removed set. It runs before the end of the turn, also one
+	// whose sync failed or had conflicts, and ctx is the context of the
+	// turn.
+	Synced func(ctx context.Context, key string, changes []fsys.Info)
 }
 
 const (
@@ -145,6 +152,8 @@ func (s *syncedWorkspace) attachIn(ctx context.Context, key, stateDir string) (A
 		return Attachment{}, fmt.Errorf("a2aserve: waiting for the release of the synced directory of key %q: %w", key, err)
 	}
 	st := &syncState{
+		key:       key,
+		synced:    s.opts.Synced,
 		tree:      s.tree,
 		dir:       filepath.Join(root, name),
 		stateFile: filepath.Join(root, name+".json"),
@@ -201,6 +210,8 @@ type syncLimits struct {
 
 // syncState keeps the directory of one process in step with the tree.
 type syncState struct {
+	key            string
+	synced         func(ctx context.Context, key string, changes []fsys.Info)
 	tree, local    fsys.FS
 	dir, stateFile string
 	limits         syncLimits
@@ -212,6 +223,8 @@ type syncState struct {
 	// counts those past maxConflicts.
 	conflicts []string
 	omitted   int
+	// written is what the last sync out wrote to the tree.
+	written []fsys.Info
 }
 
 // syncBase is what both sides had at the last sync, stored in the state
@@ -278,14 +291,19 @@ func (st *syncState) beforeTurn(ctx context.Context) error {
 
 func (st *syncState) afterTurn(ctx context.Context) error {
 	st.mu.Lock()
-	defer st.mu.Unlock()
 	var err error
+	var written []fsys.Info
 	if !st.released {
 		err = st.syncOut(ctx)
+		written, st.written = st.written, nil
 	}
 	if len(st.conflicts) > 0 {
 		err = errors.Join(err, &SyncConflictError{Paths: st.conflicts, Omitted: st.omitted})
 		st.conflicts, st.omitted = nil, 0
+	}
+	st.mu.Unlock()
+	if st.synced != nil && len(written) > 0 {
+		st.synced(ctx, st.key, written)
 	}
 	return err
 }
@@ -544,6 +562,7 @@ func (st *syncState) treeChangedUnder(ctx context.Context, p string) (bool, erro
 
 // syncOut writes the directory's changes to the tree.
 func (st *syncState) syncOut(ctx context.Context) error {
+	st.written = nil
 	local, err := walk(ctx, st.local, st.limits)
 	if err != nil {
 		return err
@@ -652,6 +671,7 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 		}
 		if err == nil {
 			st.base.Entries[p] = syncEntry{Tree: version(info), Local: version(l)}
+			st.written = append(st.written, info)
 			return true, nil
 		}
 	case l.Mode&fs.ModeSymlink != 0:
@@ -666,6 +686,7 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 		return false, err
 	}
 	st.base.Entries[p] = syncEntry{Tree: version(cur), Local: version(l)}
+	st.written = append(st.written, cur)
 	return true, nil
 }
 
@@ -696,6 +717,7 @@ func (st *syncState) pushRemoved(ctx context.Context, p string) error {
 		return err
 	}
 	st.forget(p)
+	st.written = append(st.written, fsys.Info{Path: p, Removed: true})
 	return nil
 }
 

@@ -19,7 +19,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -32,7 +31,6 @@ import (
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
-	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
 // Sandboxes.
@@ -40,10 +38,6 @@ const (
 	SandboxDocker = "docker"
 	SandboxLocal  = "local"
 )
-
-// WorkspaceDir is the workspace kind of --workspace dir:<path>, as the
-// ready line names it.
-const WorkspaceDir = "dir"
 
 const (
 	// DefaultListen is the address of the A2A endpoint without --listen.
@@ -79,8 +73,10 @@ type Config struct {
 	// ModelKeys are provider=NAME pairs: the boundary adds the key in the
 	// variable NAME of this process to the requests to the provider.
 	ModelKeys []string
-	// Workspace is dir:<path>.
+	// Workspace is dir:<path> or memory.
 	Workspace string
+	// WorkspaceSync is turn or live; "" is turn.
+	WorkspaceSync string
 	// Tools is the URL of the host's tools endpoint, or "".
 	Tools string
 	// Listen is unix:///path or host:port; "" is DefaultListen.
@@ -130,12 +126,6 @@ type settings struct {
 	stateDir     string
 }
 
-// workspace is what --workspace names.
-type workspace struct {
-	kind string
-	path string
-}
-
 // address is where the A2A endpoint listens.
 type address struct {
 	network string
@@ -170,7 +160,7 @@ func (cfg Config) resolve() (settings, error) {
 	if s.credentials, err = resolveModelKeys(cfg); err != nil {
 		return settings{}, err
 	}
-	if s.workspace, err = parseWorkspace(cfg.Workspace, s.sandbox); err != nil {
+	if s.workspace, err = parseWorkspace(cfg.Workspace, cfg.WorkspaceSync, s.sandbox); err != nil {
 		return settings{}, err
 	}
 	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
@@ -313,39 +303,6 @@ func (cfg Config) getenv(name string) string {
 		return ""
 	}
 	return cfg.Getenv(name)
-}
-
-// parseWorkspace parses dir:<path>, a directory that the agent processes
-// share.
-func parseWorkspace(v, sandbox string) (workspace, error) {
-	if v == "" {
-		return workspace{}, usagef("no workspace: pass --workspace dir:<path>")
-	}
-	kind, path, ok := strings.Cut(v, ":")
-	if !ok || kind != WorkspaceDir || path == "" {
-		return workspace{}, usagef("invalid --workspace %q: want dir:<path>", v)
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return workspace{}, usagef("invalid --workspace %q: %w", v, err)
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return workspace{}, usagef("invalid --workspace %q: %w", v, err)
-	}
-	if !info.IsDir() {
-		return workspace{}, usagef("invalid --workspace %q: %s isn't a directory", v, abs)
-	}
-	if sandbox == SandboxDocker {
-		broad, err := projectfiles.BroadMount(abs)
-		if err != nil {
-			return workspace{}, &UsageError{Err: err}
-		}
-		if broad {
-			return workspace{}, usagef("invalid --workspace %q: %s holds your home directory, so the agent could read your credentials; pass a project directory", v, abs)
-		}
-	}
-	return workspace{kind: WorkspaceDir, path: abs}, nil
 }
 
 // parseListen parses unix:///path, or host:port with a loopback host:
