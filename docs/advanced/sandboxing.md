@@ -81,7 +81,23 @@ A live workspace needs the launcher, so it runs only behind the egress boundary.
 | Docker rootless on Linux | Yes, verified |
 | Docker rootful on Linux | Docker's default AppArmor profile denies the mount, and the container doesn't start where Docker applies AppArmor. Embedders can name another profile with `DockerOptions.ServedAppArmor`, such as `unconfined`, which runs the container without AppArmor. Not verified yet. |
 | Docker Desktop | No: the egress container doesn't carry the fs socket yet |
+| bubblewrap on Linux | Yes, verified. It needs `/dev/fuse` and unprivileged user namespaces. |
 | Local | No: the agent runs on the host, with no mount namespace |
+
+## Bubblewrap
+
+`a2a-run --sandbox bwrap`, and the `sandbox.Bubblewrap` runtime in Go, run the agent of this machine with bubblewrap, in new user, PID, IPC, UTS, cgroup, mount and network namespaces. No daemon and no image are involved, and no privileges beyond unprivileged user namespaces.
+
+The agent sees:
+
+- `/usr` and the other system directories, read-only.
+- Of `/etc`, only the users and groups, name resolution, the dynamic linker's files, the alternatives, the CA certificates and the time zone. The host's credentials and keys in `/etc` stay out.
+- Private `/tmp`, `/var/tmp` and `/run`, `/proc`, and a minimal `/dev`.
+- The workspace and mounts, its home at `/home/agent`, and the directories of its command and the `a2a` CLI, read-only. Hidden paths appear empty, as in a container.
+
+With the egress boundary, the launcher starts first, as root of the sandbox's user namespace, which is the user who started the sandbox. It gets `/dev/net/tun`, the `NET_ADMIN` and `SETPCAP` capabilities, and, with a live workspace, `/dev/fuse` and `SYS_ADMIN`. It sets up the network as in a container, mounts the live workspace, drops every capability, and installs the seccomp filter of live workspaces, which refuses new namespaces and mounts. Then it starts the agent. The network namespace has only loopback and the TUN device, so every connection goes through the boundary. Where the launcher can't set this up, the sandbox doesn't start. It never falls back to the host's network.
+
+Without an egress endpoint, or with an unrestricted policy, the sandbox shares the host's network, its loopback included, and doesn't start the launcher. Bubblewrap applies no memory, CPU or process limits.
 
 ## Calling the Network
 

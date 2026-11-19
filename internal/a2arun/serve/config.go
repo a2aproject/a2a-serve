@@ -39,6 +39,7 @@ import (
 // Sandboxes.
 const (
 	SandboxDocker = "docker"
+	SandboxBwrap  = "bwrap"
 	SandboxLocal  = "local"
 )
 
@@ -60,13 +61,13 @@ type Config struct {
 	Command string
 	Image   string
 	Model   string
-	// Sandbox is docker or local; "" is docker.
+	// Sandbox is docker, bwrap or local; "" is docker.
 	Sandbox string
 	// Egress is the egress mode; "" when unset, which is internet.
 	Egress      string
 	EgressAllow []string
 	// EgressProxy is the URL of the proxy that decides every connection
-	// of the Docker sandbox, in place of Egress, EgressAllow and ModelKeys.
+	// of the sandbox, in place of Egress, EgressAllow and ModelKeys.
 	EgressProxy string
 	// Env are NAME=value pairs the agent gets.
 	Env []string
@@ -200,20 +201,26 @@ func resolveSandbox(cfg Config) (string, error) {
 	switch cfg.Sandbox {
 	case "", SandboxDocker:
 		return SandboxDocker, nil
-	case SandboxLocal:
-		var docker []string
-		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--egress-proxy": cfg.EgressProxy != "", "--image": cfg.Image != ""} {
+	case SandboxBwrap, SandboxLocal:
+		if cfg.Image != "" {
+			return "", usagef("--image needs --sandbox docker: --sandbox %s runs the agent that this machine has", cfg.Sandbox)
+		}
+		if cfg.Sandbox == SandboxBwrap {
+			return SandboxBwrap, nil
+		}
+		var sandboxed []string
+		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--egress-proxy": cfg.EgressProxy != ""} {
 			if set {
-				docker = append(docker, flag)
+				sandboxed = append(sandboxed, flag)
 			}
 		}
-		if len(docker) > 0 {
-			slices.Sort(docker)
-			return "", usagef("%s need --sandbox docker: --sandbox local runs the agent on this machine, with its network and without an image", strings.Join(docker, ", "))
+		if len(sandboxed) > 0 {
+			slices.Sort(sandboxed)
+			return "", usagef("%s need --sandbox docker or bwrap: --sandbox local runs the agent on this machine, with its network", strings.Join(sandboxed, ", "))
 		}
 		return SandboxLocal, nil
 	}
-	return "", usagef("invalid --sandbox %q: want %s or %s", cfg.Sandbox, SandboxDocker, SandboxLocal)
+	return "", usagef("invalid --sandbox %q: want %s, %s or %s", cfg.Sandbox, SandboxDocker, SandboxBwrap, SandboxLocal)
 }
 
 func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
@@ -230,7 +237,7 @@ func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
 			return a2aserve.Profile{}, usagef("no agent: pass --agent %s, or --command with the command line of an ACP agent", strings.Join(a2aserve.ProfileNames(), " or --agent "))
 		}
 		if sandbox == SandboxDocker && cfg.Image == "" {
-			return a2aserve.Profile{}, usagef("--command without --agent needs --image with --sandbox docker, or --sandbox local")
+			return a2aserve.Profile{}, usagef("--command without --agent needs --image with --sandbox docker, or --sandbox bwrap or local")
 		}
 		return a2aserve.Command(argv...), nil
 	}
@@ -245,7 +252,7 @@ func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
 }
 
 func resolvePolicy(cfg Config, sandbox string) (egress.Policy, error) {
-	if sandbox != SandboxDocker {
+	if sandbox == SandboxLocal {
 		return egress.Policy{}, nil
 	}
 	p := egress.Policy{Mode: egress.ModeInternet}

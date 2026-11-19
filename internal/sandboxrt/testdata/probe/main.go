@@ -22,7 +22,9 @@
 // the permission bits, and "exec:<path>" whether the file runs.
 // "unshare:user" prints the errno of unshare(CLONE_NEWUSER), and
 // "userns:<path>" runs path in new user and network namespaces and prints
-// whether it runs or EPERM.
+// whether it runs or EPERM. "caps:" prints the capability sets of the
+// process, "env:<name>" the variable, and "unix:<path>" whether a
+// connection to the Unix socket opens.
 package main
 
 import (
@@ -111,6 +113,29 @@ func probe(kind, target string) string {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET}
 		if err := cmd.Run(); err != nil {
 			return errnoName(err)
+		}
+		return "ok"
+	case "caps":
+		status, err := os.ReadFile("/proc/self/status")
+		if err != nil {
+			return "error"
+		}
+		var sets []string
+		for line := range strings.Lines(string(status)) {
+			if name, v, ok := strings.Cut(line, ":"); ok && strings.HasPrefix(name, "Cap") {
+				sets = append(sets, name+"="+strings.TrimSpace(v))
+			}
+		}
+		return strings.Join(sets, " ")
+	case "env":
+		return os.Getenv(target)
+	case "unix":
+		c, err := net.DialTimeout("unix", target, 10*time.Second)
+		if err != nil {
+			return "refused"
+		}
+		if err := c.Close(); err != nil {
+			return "refused"
 		}
 		return "ok"
 	case "dial":

@@ -34,6 +34,11 @@ type LaunchConfig struct {
 	// launcher drops its capabilities.
 	Mounts []Mount
 	Mount  MountFunc
+	// Confine installs the seccomp filter that a live workspace gets, which
+	// refuses new namespaces and mounts, also without one: for runtimes
+	// that confine the agent with no filter of their own, such as
+	// bubblewrap.
+	Confine bool
 	// Check sets up the network and the mounts and drops the capabilities
 	// as for the agent, then returns without running a command.
 	Check bool

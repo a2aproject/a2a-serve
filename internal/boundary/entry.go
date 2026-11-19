@@ -28,14 +28,19 @@ import (
 const EnvRelayKey = "A2A_SERVE_RELAY_KEY"
 
 // RunInit runs the launcher with the arguments of sandbox-init:
-// [--check] [--fs <dst>=<socket>[,ro]]... <socket> <uid> <gid> [<command>
-// [args...]]. Each --fs is a live workspace that mount mounts. It returns
+// [--check] [--confine] [--fs <dst>=<socket>[,ro]]... <socket> <uid> <gid>
+// [<command> [args...]]. Each --fs is a live workspace that mount mounts,
+// and --confine installs the seccomp filter without one. It returns
 // the exit code of the command. A failed setup writes its reason to stderr
 // and returns [SetupFailedExit], a failed mount [MountFailedExit], and a
 // tree that a mount can't read [TreeFailedExit].
 func RunInit(args, env []string, failSetup bool, mount MountFunc, stderr io.Writer) (int, error) {
 	check := len(args) > 0 && args[0] == "--check"
 	if check {
+		args = args[1:]
+	}
+	confine := len(args) > 0 && args[0] == "--confine"
+	if confine {
 		args = args[1:]
 	}
 	var mounts []Mount
@@ -58,7 +63,7 @@ func RunInit(args, env []string, failSetup bool, mount MountFunc, stderr io.Writ
 	if err != nil {
 		return 0, fmt.Errorf("invalid gid %q", args[2])
 	}
-	code, err := Launch(LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: env, Mounts: mounts, Mount: mount, Check: check, FailSetup: failSetup})
+	code, err := Launch(LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: env, Mounts: mounts, Mount: mount, Check: check, Confine: confine, FailSetup: failSetup})
 	if mountErr, ok := errors.AsType[*MountError](err); ok {
 		if _, err := fmt.Fprintf(stderr, "%s%v\n", MountErrorPrefix, mountErr); err != nil {
 			return 0, err

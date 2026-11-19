@@ -15,6 +15,8 @@ The image comes from `ghcr.io/a2aproject`. `--image` uses another one.
 
 `--sandbox local` runs the agent on the host, as you, with no isolation. Use it only when you trust the agent and everyone who can call it.
 
+A bubblewrap sandbox, which runs the agent installed on this machine without Docker, is planned for a2a-serve. [a2a-run](../reference/a2a-run.md#sandbox) has it as `--sandbox bwrap`.
+
 ## What each caller's container gets
 
 You and your owner pairings share one container. Each [member](identities.md#roles) gets a container of their own, and [guests](identities.md#guests) share one more. By default:

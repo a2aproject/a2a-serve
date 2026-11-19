@@ -52,12 +52,12 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "unknown sandbox", edit: func(c *serve.Config) { c.Sandbox = "podman" }, want: `invalid --sandbox "podman"`},
 		{name: "egress with local", edit: func(c *serve.Config) { c.Egress = "allowlist" }, want: "--egress need --sandbox docker"},
 		{
-			name: "egress rules, model keys and image with local",
-			edit: func(c *serve.Config) {
-				c.EgressAllow, c.ModelKeys, c.Image = []string{"nas.lan"}, []string{"anthropic=KEY"}, "img"
-			},
-			want: "--egress-allow, --image, --inject-model-key need --sandbox docker",
+			name: "egress rules and model keys with local",
+			edit: func(c *serve.Config) { c.EgressAllow, c.ModelKeys = []string{"nas.lan"}, []string{"anthropic=KEY"} },
+			want: "--egress-allow, --inject-model-key need --sandbox docker or bwrap",
 		},
+		{name: "image with local", edit: func(c *serve.Config) { c.Image = "img" }, want: "--image needs --sandbox docker"},
+		{name: "image with bwrap", edit: func(c *serve.Config) { c.Sandbox, c.Image = "bwrap", "img" }, want: "--image needs --sandbox docker"},
 		{name: "unknown egress mode", edit: func(c *serve.Config) { c.Sandbox, c.Egress = "", "unrestricted" }, want: `invalid --egress "unrestricted"`},
 		{name: "invalid egress rule", edit: func(c *serve.Config) { c.Sandbox, c.EgressAllow = "", []string{"nas lan"} }, want: `invalid egress rule "nas lan"`},
 		{name: "env without a value", edit: func(c *serve.Config) { c.Env = []string{"DEBUG"} }, want: `invalid --env "DEBUG": want NAME=value`},
@@ -73,7 +73,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "workspace URL on a relative socket", edit: func(c *serve.Config) { c.Workspace = "unix://fs.sock" }, want: "invalid --workspace: want the file server socket as unix:///path/to/socket"},
 		{name: "workspace URL with a query", edit: func(c *serve.Config) { c.Workspace = "http://127.0.0.1:1/?token=secret-value" }, want: "invalid --workspace: the file server URL can't have user info, a query or a fragment"},
 		{name: "unknown workspace sync", edit: func(c *serve.Config) { c.WorkspaceSync = "eager" }, want: `invalid --workspace-sync "eager": want turn or live`},
-		{name: "live memory workspace with local", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "memory", "live" }, want: "--workspace-sync live with --workspace memory needs --sandbox docker, which mounts the workspace in the sandbox; use --workspace-sync turn"},
+		{name: "live memory workspace with local", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "memory", "live" }, want: "--workspace-sync live with --workspace memory needs --sandbox docker or bwrap, which mount the workspace in the sandbox; use --workspace-sync turn"},
 		{name: "live URL workspace with local", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "http://127.0.0.1:1/secret-value", "live" }, want: "--workspace-sync live with --workspace http://127.0.0.1:1 needs --sandbox docker"},
 		{name: "missing workspace", edit: func(c *serve.Config) { c.Workspace = "dir:" + filepath.Join(dir, "missing") }, want: "no such file or directory"},
 		{name: "workspace that is a file", edit: func(c *serve.Config) { c.Workspace = "dir:" + file }, want: "isn't a directory"},

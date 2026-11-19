@@ -127,7 +127,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if srv.contacts, err = startContacts(ctx, s.contacts, cfg.ContactTransport, turns, srv.log); err != nil {
 		return nil, err
 	}
-	if s.sandbox == SandboxDocker {
+	if s.sandbox != SandboxLocal {
 		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
 			return nil, err
 		}
@@ -199,9 +199,9 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	switch {
 	case s.egressProxy != "":
 		srv.ready.Egress = EgressProxy
-	case s.sandbox == SandboxDocker && boundary:
+	case s.sandbox != SandboxLocal && boundary:
 		srv.ready.Egress = EgressPolicy
-	case s.sandbox == SandboxDocker:
+	case s.sandbox != SandboxLocal:
 		srv.ready.Egress = EgressNone
 	}
 	return srv, nil
@@ -273,8 +273,11 @@ func (s *Server) dir(dir, pattern string) (string, error) {
 // boundary decides the sandbox's connections. It checks that Docker
 // answers before anything starts.
 func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_ sandbox.Runtime, summary string, _ sandbox.Capabilities, _ error) {
-	if set.sandbox == SandboxLocal {
+	switch set.sandbox {
+	case SandboxLocal:
 		return sandbox.Local(), SandboxLocal, sandbox.Capabilities{Mounts: []sandbox.MountKind{sandbox.MountHostDir}}, nil
+	case SandboxBwrap:
+		return bwrapRuntime(ctx, set)
 	}
 	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
 	caps, err := rt.Probe(ctx)
@@ -301,4 +304,27 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 		return rt, SandboxDocker + " (rootless)", caps, nil
 	}
 	return rt, SandboxDocker, caps, nil
+}
+
+// bwrapRuntime returns the bubblewrap runtime of set, which runs the agent
+// that this machine has, and its a2a CLI when the agent has contacts. The
+// sandbox makes every connection through a2a-run, so it fails where the
+// boundary can't work.
+func bwrapRuntime(ctx context.Context, set settings) (_ sandbox.Runtime, summary string, _ sandbox.Capabilities, _ error) {
+	var programs []string
+	if len(set.contacts) > 0 {
+		programs = []string{"a2a"}
+	}
+	rt := sandbox.Bubblewrap(sandbox.BubblewrapOptions{Programs: programs})
+	caps, err := rt.Probe(ctx)
+	if err != nil {
+		return nil, "", sandbox.Capabilities{}, err
+	}
+	if !caps.Boundary {
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--sandbox bwrap routes every connection of the agent through a2a-run, which can't work here: %s", caps.Problem)
+	}
+	if set.workspace.served() && !slices.Contains(caps.Mounts, sandbox.MountServed) {
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which bubblewrap here can't: %s; %s", set.workspace.shown, caps.MountProblems[sandbox.MountServed], liveHint)
+	}
+	return rt, SandboxBwrap, caps, nil
 }

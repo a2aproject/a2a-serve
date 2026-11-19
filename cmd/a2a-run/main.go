@@ -32,7 +32,7 @@ import (
 var version = "dev"
 
 func main() {
-	// Docker sandboxes run this binary as the PID 1 of their containers.
+	// Sandboxes run this binary as their launcher.
 	if code, ok := sandbox.Main(os.Args[1:]); ok {
 		os.Exit(code)
 	}
