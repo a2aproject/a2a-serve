@@ -66,10 +66,10 @@ A few checks run on every pull request. Follow these tips to pass them:
 
 The code has two sides. The core in [`core/`](core/) holds the public packages, which other projects can import. Each is a working object that is useful on its own:
 
-- `core/a2aserve` serves a coding agent as an A2A agent, with one agent process per key. It describes the agents it can serve, the workspace each process gets and the tool rules, and runs the processes in Docker unless it gets another sandbox runtime. A workspace can be a host directory, a private copy, or a private directory kept in step with an `fsys` tree at turn boundaries. Its engine is `internal/agentrun`.
+- `core/a2aserve` serves a coding agent as an A2A agent, with one agent process per key. It describes the agents it can serve, the workspace each process gets and the tool rules, and runs the processes in Docker unless it gets another sandbox runtime. A workspace can be a host directory, a private copy, a private directory kept in step with an `fsys` tree at turn boundaries, or an `fsys` tree shown live. Its engine is `internal/agentrun`.
 - `core/egress` decides the connections of a client by policy, or by a router of the embedder, and adds credentials to its requests.
-- `core/sandbox` runs a command in isolation, with its network through an egress endpoint, and shows it host directories and directories in memory.
-- `core/fsys` is a file tree that a workspace can come from, in memory or in a host directory, with versions for conflict checks and a feed of changes.
+- `core/sandbox` runs a command in isolation, with its network through an egress endpoint, and shows it host directories, directories in memory, and `fsys` trees live, which the launcher of a Docker container mounts with FUSE.
+- `core/fsys` is a file tree that a workspace can come from, in memory, in a host directory or served by another program over HTTP, with versions for conflict checks and a feed of changes.
 - `core/approval` is the A2A wire format of the agent's questions and their answers, for the clients of an agent.
 - `core/contact` lets the agent call other A2A agents, its contacts, through the server: it serves them on the agent API with the server's credentials, passes the hop count on, cancels the calls of a canceled turn, and hands approvals that contacts ask to the embedder. `contact.Static` is a fixed list of contacts whose cards it fetches on a period.
 
@@ -79,7 +79,7 @@ The frontend in `internal/` decides who calls and what they get. `internal/agent
 
 `internal/a2arun` is the command line of `a2a-run`, a second command plugin that serves an agent to a host process. It is built from the core alone, and `go test ./internal/a2arun/` fails when it imports a package that the core doesn't. `internal/a2arun/refhost` is a reference host that the tests use, and `internal/a2arun/conformance` checks a host's endpoints, the reference host's by default.
 
-Imports point from the frontend to the core. Among the public packages, `egress` comes first, `sandbox` imports it, and `a2aserve` imports both and `fsys`; `fsys` and `approval` import no other public package, `contact` imports `approval`, and no package imports `a2aserve`. `go test ./core/` fails when the core breaks these rules or imports a frontend package; the few internal packages the core may use, such as `internal/fsutil`, are listed in that test.
+Imports point from the frontend to the core. Among the public packages, `egress` and `fsys` come first, `sandbox` imports both, and `a2aserve` imports all three; `fsys` and `approval` import no other public package, `contact` imports `approval`, and no package imports `a2aserve`. `go test ./core/` fails when the core breaks these rules or imports a frontend package; the few internal packages the core may use, such as `internal/fsutil`, are listed in that test.
 
 ### Testing the egress containers of Docker Desktop on Linux
 

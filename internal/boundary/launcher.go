@@ -30,12 +30,28 @@ type LaunchConfig struct {
 	// reads.
 	Argv []string
 	Env  []string
-	// Check sets up the network and drops the capabilities as for the
-	// agent, then returns without running a command.
+	// Mounts are the live workspaces that Mount mounts before the
+	// launcher drops its capabilities.
+	Mounts []Mount
+	Mount  MountFunc
+	// Check sets up the network and the mounts and drops the capabilities
+	// as for the agent, then returns without running a command.
 	Check bool
 	// FailSetup makes the setup fail, for tests of the fallback.
 	FailSetup bool
 }
+
+// Mount is a live workspace: a FUSE mount at Dst whose file operations go
+// to the file server on Socket.
+type Mount struct {
+	Dst, Socket string
+	ReadOnly    bool
+}
+
+// MountFunc mounts m, with its entries owned by uid and gid, and serves it
+// for the life of the process. It runs with the capabilities of the
+// launcher, before the launcher drops them.
+type MountFunc func(m Mount, uid, gid int) error
 
 // EnvFailSetup makes the launcher's setup fail, for tests of the fallback.
 // The server passes it to the containers: all to the check at its start
@@ -46,6 +62,41 @@ const EnvFailSetup = "A2A_SERVE_TEST_EGRESS_FAIL"
 // the container's network or drop its capabilities, which the server
 // answers by starting the container with Docker's own network.
 const SetupFailedExit = 121
+
+// MountFailedExit is the exit code of the launcher when it can't mount a
+// live workspace.
+const MountFailedExit = 122
+
+// MountError is an error of mounting a live workspace.
+type MountError struct {
+	Dst string
+	Err error
+}
+
+func (e *MountError) Error() string { return "mounting " + e.Dst + ": " + e.Err.Error() }
+func (e *MountError) Unwrap() error { return e.Err }
+
+// MountErrorPrefix starts the line in which the launcher reports a
+// [MountError].
+const MountErrorPrefix = "a2a-init: mounting the live workspace: "
+
+// TreeFailedExit is the exit code of the launcher's check when it mounted
+// a live workspace, and reading its tree failed.
+const TreeFailedExit = 123
+
+// TreeError is an error of reading the tree of a live workspace that the
+// launcher mounted, such as of a file server that doesn't answer.
+type TreeError struct {
+	Dst string
+	Err error
+}
+
+func (e *TreeError) Error() string { return "reading " + e.Dst + ": " + e.Err.Error() }
+func (e *TreeError) Unwrap() error { return e.Err }
+
+// TreeErrorPrefix starts the line in which the launcher reports a
+// [TreeError].
+const TreeErrorPrefix = "a2a-init: reading the live workspace: "
 
 // SetupError is an error of setting up the container's network or
 // dropping its capabilities.
@@ -63,4 +114,7 @@ const (
 	ContainerSocketDir = "/run/a2a-egress"
 	// SocketName is the file name of the boundary socket.
 	SocketName = "egress.sock"
+	// FSSocketPrefix starts the file names of the sockets of the file
+	// servers of live workspaces, next to the boundary socket.
+	FSSocketPrefix = "fs-"
 )

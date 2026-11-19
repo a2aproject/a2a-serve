@@ -65,6 +65,11 @@ type DockerRunner struct {
 	// Egress is set when the container's only network path is the egress
 	// socket. The launcher starts the command after the image's entrypoint.
 	Egress *DockerEgress
+	// Served are the live workspaces that the launcher mounts, with the
+	// container paths of their sockets, and ServedAppArmor the AppArmor
+	// profile of the container, which Docker's default otherwise.
+	Served         []boundary.Mount
+	ServedAppArmor string
 
 	envFiles []string
 }
@@ -236,6 +241,31 @@ func setupFailed(code int, out string) bool {
 	return slices.ContainsFunc(setupRefusals, func(s string) bool { return strings.Contains(out, s) })
 }
 
+// servedFailed reports whether a check that exited with code and printed
+// out found that the container can't mount its live workspaces: the
+// launcher says so, or the runtime refuses what the mounts take.
+func servedFailed(code int, out string) bool {
+	if code == boundary.MountFailedExit {
+		return true
+	}
+	return slices.Contains(runtimeFailedExits, code) && slices.ContainsFunc(servedRefusals, func(s string) bool { return strings.Contains(out, s) })
+}
+
+// mountReasonOf returns the launcher's mount error in the output of a
+// check, or its first line.
+func mountReasonOf(out string) string { return launcherReason(out, boundary.MountErrorPrefix) }
+
+// launcherReason returns the error that the launcher reported after prefix
+// in the output of a check, or its first line.
+func launcherReason(out, prefix string) string {
+	for line := range strings.Lines(out) {
+		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return reason
+		}
+	}
+	return cmp.Or(firstLine(strings.TrimSpace(out)), "it failed without output")
+}
+
 // reasonOf returns the launcher's setup error in the output of a check, or
 // its first line.
 func reasonOf(out string) string {
@@ -302,7 +332,14 @@ func (r *DockerRunner) probe(ctx context.Context, envFile string) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("the check didn't finish: %w", ctx.Err())
 	}
-	if ee, ok := errors.AsType[*exec.ExitError](err); ok && setupFailed(ee.ExitCode(), string(out)) {
+	ee, exited := errors.AsType[*exec.ExitError](err)
+	if exited && len(r.Served) > 0 && ee.ExitCode() == boundary.TreeFailedExit {
+		return &ServedTreeError{Dst: r.Served[0].Dst, Reason: launcherReason(string(out), boundary.TreeErrorPrefix)}
+	}
+	if exited && len(r.Served) > 0 && servedFailed(ee.ExitCode(), string(out)) {
+		return &ServedMountError{Dst: r.Served[0].Dst, Reason: mountReasonOf(string(out))}
+	}
+	if exited && setupFailed(ee.ExitCode(), string(out)) {
 		return &EgressSetupError{Reason: reasonOf(string(out))}
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
@@ -413,6 +450,13 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 			"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
 			"--network", "none", "--device", "/dev/net/tun",
 		)
+		if len(r.Served) > 0 {
+			// The launcher mounts the live workspaces with FUSE.
+			args = append(args, "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse")
+			if r.ServedAppArmor != "" {
+				args = append(args, "--security-opt", "apparmor="+r.ServedAppArmor)
+			}
+		}
 		if r.Egress.Relay != "" {
 			args = append(args, "--entrypoint", boundary.RelayLauncher, "--volumes-from", r.Egress.Relay+":ro")
 		} else {
@@ -465,11 +509,18 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 		args = append(args, "-w", c.Dir)
 	}
 	args = append(args, r.Image)
-	if r.Egress != nil && check {
-		return append(args, "sandbox-init", "--check", boundary.ContainerSocketDir+"/"+boundary.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
-	}
 	if r.Egress != nil {
-		args = append(args, "sandbox-init", boundary.ContainerSocketDir+"/"+boundary.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+		args = append(args, "sandbox-init")
+		if check {
+			args = append(args, "--check")
+		}
+		for _, m := range r.Served {
+			args = append(args, "--fs", boundary.MountArg(m))
+		}
+		args = append(args, boundary.ContainerSocketDir+"/"+boundary.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+		if check {
+			return args
+		}
 		args = append(args, r.Egress.Entrypoint...)
 	}
 	args = append(args, c.Path)

@@ -26,6 +26,7 @@ import (
 	"syscall"
 
 	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/fusefs"
 )
 
 // Main runs the commands that Docker sandboxes start this binary with. A
@@ -49,7 +50,7 @@ func runInit(args []string, stderr io.Writer) int {
 	if len(args) < 3 {
 		return report(stderr, fmt.Errorf("requires at least 3 arg(s), only received %d", len(args)), 2)
 	}
-	code, err := boundary.RunInit(args, os.Environ(), os.Getenv(boundary.EnvFailSetup) != "", stderr)
+	code, err := boundary.RunInit(args, os.Environ(), os.Getenv(boundary.EnvFailSetup) != "", fusefs.LaunchMount, stderr)
 	if err != nil {
 		return report(stderr, err, 1)
 	}

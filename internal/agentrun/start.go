@@ -339,6 +339,11 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 			return nil, err
 		}
 	}
+	if att.Served != nil {
+		if err := r.servedWorkspace(&spec, &pm, att); err != nil {
+			return nil, err
+		}
+	}
 	if key == "" {
 		state := proc.State
 		r.mainState.Store(&state)
@@ -377,6 +382,9 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 		p, err = r.rt.prepareCustom(ctx, spec, pm.custom, custom)
 	} else {
 		p, err = agentprofile.Prepare(ctx, spec)
+	}
+	if sme, ok := errors.AsType[*sandboxrt.ServedMountError](err); ok {
+		err = &sandbox.UnsupportedMountError{Backend: r.rt.kind, Dst: sme.Dst, Kind: sandbox.MountServed, Reason: sme.Reason}
 	}
 	if err != nil {
 		return nil, err
@@ -453,6 +461,23 @@ func workspaceMounts(att Attachment, extra []sandbox.Mount) processMounts {
 		pm.workspaceSrc = att.Dir
 	}
 	return pm
+}
+
+// servedWorkspace shows the tree of att in the sandbox of spec, or in the
+// custom mounts of pm, at the workspace's path, with the masks of the
+// agent's profile. The local sandbox can't.
+func (r *Runner) servedWorkspace(spec *agentprofile.Spec, pm *processMounts, att Attachment) error {
+	seen := cmp.Or(att.Path, att.Dir)
+	if r.rt.kind == agentprofile.SandboxLocal {
+		return &sandbox.UnsupportedMountError{Backend: "local", Dst: seen, Kind: sandbox.MountServed, Reason: "the command runs on the host, with no mount namespace"}
+	}
+	tree := agentprofile.MaskServed(r.cfg.Profile, att.Served)
+	if r.rt.custom != nil {
+		pm.custom[0] = sandbox.Mount{Dst: seen, Src: sandbox.Served(tree), ReadOnly: att.ReadOnly}
+		return nil
+	}
+	spec.Served = []sandboxrt.ServedMount{{Dst: seen, Tree: tree, ReadOnly: att.ReadOnly}}
+	return nil
 }
 
 // tmpfsMounts gives the sandbox of spec the mounts in memory: a writable

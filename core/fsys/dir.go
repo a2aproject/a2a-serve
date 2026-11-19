@@ -49,9 +49,15 @@ const (
 // directory holds more entries than it compares.
 var ErrTooManyEntries = errors.New("the directory has too many entries to follow its changes")
 
-// Dir returns the tree of the host directory at root. No method reaches
-// outside it, also through symlinks, which it creates and describes as
-// they are. The changes made outside its methods appear in its feed once
+// Dir returns the tree of the host directory at root. No method follows a
+// symlink, which it creates and describes as it is: as in Memory, a path
+// through one doesn't exist, and nothing can be created under it. On Linux
+// 5.6 and later, every operation resolves its path with openat2, which
+// refuses symlinks, so a symlink that replaces a directory while an
+// operation runs doesn't take it elsewhere either, which a live workspace
+// relies on. Elsewhere, such as on darwin and windows, where served mounts
+// don't run, Dir checks the parents of a path before it acts, and a
+// symlink swapped in between is followed. The changes made outside its methods appear in its feed once
 // Changes compares the directory with what it saw last: on every call, and
 // every second while it waits. It compares up to 200000 entries.
 func Dir(root string) FS { return newDir(root, defaultMaxChanges, defaultMaxEntries, defaultPoll) }
@@ -73,21 +79,76 @@ type dir struct {
 	seen map[string]Info
 }
 
-// in runs f with the root of the directory and the host form of p.
-func (d *dir) in(op, p string, f func(r *os.Root, name string) error) (err error) {
+// in runs f with the root of the directory and the host form of p, once
+// no parent of p is a symlink. A path through one doesn't exist for the
+// methods that read or remove, and fails with ENOTDIR for those that
+// create, as in Memory.
+func (d *dir) in(op, p string, f func(r hostRoot, name string) error) (err error) {
 	if err := checkPath(op, p); err != nil {
 		return err
 	}
-	r, err := os.OpenRoot(d.path)
+	r, err := openHostRoot(d.path)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, r.Close()) }()
-	return f(r, filepath.FromSlash(p))
+	name := filepath.FromSlash(p)
+	if err := checkParents(r, name); err != nil {
+		switch op {
+		case "stat", "readdir", "open", "remove", "rename":
+			return &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+		}
+		return err
+	}
+	return f(r, name)
+}
+
+// hostRoot is a host directory that the methods of a tree work in, with
+// the methods of os.Root, which is the one where openat2 isn't available.
+type hostRoot interface {
+	Lstat(name string) (fs.FileInfo, error)
+	Readlink(name string) (string, error)
+	Open(name string) (*os.File, error)
+	OpenFile(name string, flag int, perm fs.FileMode) (*os.File, error)
+	Chmod(name string, mode fs.FileMode) error
+	Mkdir(name string, perm fs.FileMode) error
+	Rename(oldname, newname string) error
+	Symlink(oldname, newname string) error
+	Remove(name string) error
+	RemoveAll(name string) error
+	Close() error
+}
+
+// checkParents fails with ENOTDIR when a parent of name, from the root
+// down, is a symlink or isn't a directory, so that a path through a
+// symlink fails as in Memory. Where the root resolves paths with openat2,
+// this only words the error; with os.Root, whose methods follow symlinks,
+// it is the check, and a symlink that replaces a parent between the check
+// and the operation is followed.
+func checkParents(r hostRoot, name string) error {
+	dir := filepath.Dir(name)
+	if dir == "." {
+		return nil
+	}
+	cur := ""
+	for part := range strings.SplitSeq(dir, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := r.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return &fs.PathError{Op: "lstat", Path: filepath.ToSlash(cur), Err: errNotDir}
+		}
+	}
+	return nil
 }
 
 // infoOf describes the entry at p, which fi describes.
-func infoOf(r *os.Root, p string, fi fs.FileInfo) (Info, error) {
+func infoOf(r hostRoot, p string, fi fs.FileInfo) (Info, error) {
 	mode := fi.Mode() & (fs.ModeType | fs.ModePerm)
 	info := Info{Path: p, Mode: mode, Size: fi.Size(), ModTime: fi.ModTime()}
 	switch {
@@ -108,7 +169,7 @@ func infoOf(r *os.Root, p string, fi fs.FileInfo) (Info, error) {
 
 // lstat describes the entry at p. A path under a file doesn't exist, as
 // in Memory.
-func lstat(r *os.Root, p string) (Info, error) {
+func lstat(r hostRoot, p string) (Info, error) {
 	fi, err := r.Lstat(filepath.FromSlash(p))
 	if errors.Is(err, syscall.ENOTDIR) {
 		return Info{}, &fs.PathError{Op: "stat", Path: p, Err: fs.ErrNotExist}
@@ -120,7 +181,7 @@ func lstat(r *os.Root, p string) (Info, error) {
 }
 
 func (d *dir) Stat(ctx context.Context, p string) (info Info, err error) {
-	err = d.in("stat", p, func(r *os.Root, _ string) error {
+	err = d.in("stat", p, func(r hostRoot, _ string) error {
 		info, err = lstat(r, p)
 		return err
 	})
@@ -128,7 +189,7 @@ func (d *dir) Stat(ctx context.Context, p string) (info Info, err error) {
 }
 
 func (d *dir) ReadDir(ctx context.Context, p string) (out []Info, err error) {
-	err = d.in("readdir", p, func(r *os.Root, name string) error {
+	err = d.in("readdir", p, func(r hostRoot, name string) error {
 		out, err = readDir(r, p)
 		return err
 	})
@@ -137,7 +198,7 @@ func (d *dir) ReadDir(ctx context.Context, p string) (out []Info, err error) {
 
 // readDir describes the entries of the directory p, sorted by name,
 // leaving out the files that Write fills.
-func readDir(r *os.Root, p string) ([]Info, error) {
+func readDir(r hostRoot, p string) ([]Info, error) {
 	fi, err := r.Lstat(filepath.FromSlash(p))
 	if err != nil {
 		return nil, err
@@ -173,7 +234,7 @@ func readDir(r *os.Root, p string) ([]Info, error) {
 }
 
 func (d *dir) Open(ctx context.Context, p string) (rc io.ReadCloser, err error) {
-	err = d.in("open", p, func(r *os.Root, name string) error {
+	err = d.in("open", p, func(r hostRoot, name string) error {
 		fi, err := r.Lstat(name)
 		if err != nil {
 			return err
@@ -194,7 +255,7 @@ func (d *dir) Write(ctx context.Context, p string, src io.Reader, mode fs.FileMo
 	if err := ctx.Err(); err != nil {
 		return Info{}, err
 	}
-	err = d.in("write", p, func(r *os.Root, name string) error {
+	err = d.in("write", p, func(r hostRoot, name string) error {
 		if err := mkdirs(r, filepath.Dir(name)); err != nil {
 			return err
 		}
@@ -218,7 +279,7 @@ func (d *dir) Write(ctx context.Context, p string, src io.Reader, mode fs.FileMo
 
 // mkdirs creates the missing directories of name, each with mode 0o755
 // whatever the umask, as Memory does.
-func mkdirs(r *os.Root, name string) error {
+func mkdirs(r hostRoot, name string) error {
 	if name == "." {
 		return nil
 	}
@@ -242,7 +303,7 @@ func mkdirs(r *os.Root, name string) error {
 
 // fillTemp writes the contents of src with the permission bits of mode to
 // a new file in the directory parent, and returns its name.
-func fillTemp(r *os.Root, parent string, src io.Reader, mode fs.FileMode) (name string, err error) {
+func fillTemp(r hostRoot, parent string, src io.Reader, mode fs.FileMode) (name string, err error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -263,7 +324,7 @@ func fillTemp(r *os.Root, parent string, src io.Reader, mode fs.FileMode) (name 
 }
 
 // replace renames tmp to p if the entry at p matches ifVersion.
-func (d *dir) replace(r *os.Root, p, tmp, ifVersion string) (Info, error) {
+func (d *dir) replace(r hostRoot, p, tmp, ifVersion string) (Info, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	cur, err := lstat(r, p)
@@ -284,7 +345,7 @@ func (d *dir) replace(r *os.Root, p, tmp, ifVersion string) (Info, error) {
 }
 
 func (d *dir) Mkdir(ctx context.Context, p string, mode fs.FileMode) error {
-	err := d.in("mkdir", p, func(r *os.Root, name string) error {
+	err := d.in("mkdir", p, func(r hostRoot, name string) error {
 		fi, err := r.Lstat(name)
 		switch {
 		case err == nil && fi.IsDir():
@@ -315,7 +376,7 @@ func (d *dir) Symlink(ctx context.Context, target, p string) error {
 	if target == "" || strings.ContainsRune(target, 0) {
 		return &fs.PathError{Op: "symlink", Path: p, Err: fmt.Errorf("%w: invalid target %q", fs.ErrInvalid, target)}
 	}
-	err := d.in("symlink", p, func(r *os.Root, name string) error {
+	err := d.in("symlink", p, func(r hostRoot, name string) error {
 		if _, err := r.Lstat(name); err == nil {
 			return &fs.PathError{Op: "symlink", Path: p, Err: fs.ErrExist}
 		}
@@ -337,8 +398,11 @@ func (d *dir) Rename(ctx context.Context, from, to string) error {
 	if err := checkEntry("rename", to); err != nil {
 		return err
 	}
-	err := d.in("rename", from, func(r *os.Root, name string) error {
+	err := d.in("rename", from, func(r hostRoot, name string) error {
 		if _, err := r.Lstat(name); err != nil {
+			return err
+		}
+		if err := checkParents(r, filepath.FromSlash(to)); err != nil {
 			return err
 		}
 		if err := mkdirs(r, filepath.Dir(filepath.FromSlash(to))); err != nil {
@@ -356,7 +420,7 @@ func (d *dir) Remove(ctx context.Context, p string) error {
 	if err := checkEntry("remove", p); err != nil {
 		return err
 	}
-	err := d.in("remove", p, func(r *os.Root, name string) error {
+	err := d.in("remove", p, func(r hostRoot, name string) error {
 		if _, err := r.Lstat(name); err != nil {
 			return err
 		}
@@ -375,7 +439,7 @@ func (d *dir) Changes(ctx context.Context, cursor string) ([]Info, string, error
 // compare adds the differences between the directory and what it was the
 // last time to the feed. The first time, it only looks.
 func (d *dir) compare() error {
-	return d.in("changes", ".", func(r *os.Root, _ string) error {
+	return d.in("changes", ".", func(r hostRoot, _ string) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		now := map[string]Info{}
@@ -404,7 +468,7 @@ func (d *dir) compare() error {
 }
 
 // walk adds the entries under the directory p to into.
-func (d *dir) walk(r *os.Root, p string, into map[string]Info) error {
+func (d *dir) walk(r hostRoot, p string, into map[string]Info) error {
 	entries, err := readDir(r, p)
 	if err != nil {
 		return err

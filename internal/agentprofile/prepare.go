@@ -73,6 +73,10 @@ type Spec struct {
 	// mounts the workspace. A sandbox still hides the paths of Hidden and
 	// masks .mcp.json at the workspace's path.
 	WorkspaceSrc string
+	// Served are the trees that a container shows live, over its mounts,
+	// such as the workspace of [MaskServed]. They need the egress
+	// boundary, whose launcher mounts them.
+	Served []sandboxrt.ServedMount
 	// Home is the host directory holding the harness home.
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
@@ -222,7 +226,7 @@ func nestedAgents(spec Spec) ([]string, error) {
 		hidden[i] = fsutil.ResolvePath(h)
 	}
 	var out []string
-	for _, m := range spec.Mounts {
+	for _, m := range hostMounts(spec) {
 		broad, err := projectfiles.BroadMount(m.Src)
 		if err != nil {
 			return nil, err
@@ -284,7 +288,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		sb.Mounts[0].Src = spec.WorkspaceSrc
 	}
 	if spec.MCPMask != "" {
-		masks, err := maskMCP(spec.MCPMask, spec.Mounts)
+		masks, err := maskMCP(spec.MCPMask, hostMounts(spec))
 		if err != nil {
 			return nil, err
 		}
@@ -327,8 +331,15 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	}
 
 	eg := spec.egress()
-	strict := eg.Strict()
 	boundary := spec.OpenEgress != nil && spec.EgressMode != egressrules.ModeUnrestricted
+	sb.Served = spec.Served
+	served := len(spec.Served) > 0
+	if served && !boundary {
+		return nil, &sandboxrt.ServedMountError{Dst: spec.Served[0].Dst, Reason: "a live workspace needs the egress boundary, whose launcher mounts it, and the egress mode is " + egressrules.ModeUnrestricted}
+	}
+	// A container with a live workspace has no fallback without the
+	// boundary, which it needs.
+	strict := eg.Strict() || served
 	warnings := slices.Clone(cm.warnings)
 	// The agent's container gets Docker's own network when the boundary
 	// can't work on this host, unless the config needs the boundary. Such a
@@ -355,6 +366,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	p, err := spec.Backend.Prepare(ctx, sb)
 	if errors.Is(err, sandboxrt.ErrNoBoundary) {
 		reason := noBoundaryReason(err)
+		if served {
+			return nil, &sandboxrt.ServedMountError{Dst: spec.Served[0].Dst, Reason: "a live workspace needs the egress boundary, whose launcher mounts it: " + reason}
+		}
 		if strict {
 			return nil, &EgressError{Egress: eg, Reason: reason}
 		}
@@ -427,6 +441,17 @@ func hiddenMasks(spec Spec) []sandboxrt.Mask {
 		out = append(out, sandboxrt.Mask{Dst: dst})
 	}
 	return out
+}
+
+// hostMounts returns the mounts of spec with the workspace at its host
+// directory, which is WorkspaceSrc when it is set.
+func hostMounts(spec Spec) []Mount {
+	if spec.WorkspaceSrc == "" {
+		return spec.Mounts
+	}
+	mounts := slices.Clone(spec.Mounts)
+	mounts[0].Src = spec.WorkspaceSrc
+	return mounts
 }
 
 // sandboxMounts converts the mounts of an agent to those of a sandbox.

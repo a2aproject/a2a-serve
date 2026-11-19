@@ -44,13 +44,28 @@ const (
 	resolvConfPath = "/etc/resolv.conf"
 )
 
-// Launch sets up the container's only route, a TUN device whose flows
-// leave as CONNECT tunnels on the boundary socket, drops every capability,
-// and runs the agent as cfg.UID and cfg.GID. It does the duties of PID 1
-// and returns the agent's exit code.
+// Launch mounts the live workspaces, sets up the container's only route, a
+// TUN device whose flows leave as CONNECT tunnels on the boundary socket,
+// drops every capability, and runs the agent as cfg.UID and cfg.GID. It
+// does the duties of PID 1, serves the mounts, and returns the agent's
+// exit code.
 func Launch(cfg LaunchConfig) (int, error) {
 	if len(cfg.Argv) == 0 && !cfg.Check {
 		return 0, errors.New("no command to run")
+	}
+	// Docker enters the working directory before the launcher mounts over
+	// it, so the agent enters it again by its path.
+	wd, err := os.Getwd()
+	if err != nil {
+		return 0, fmt.Errorf("finding the working directory: %w", err)
+	}
+	for _, m := range cfg.Mounts {
+		if cfg.Mount == nil {
+			return 0, &MountError{Dst: m.Dst, Err: errors.New("this launcher can't mount live workspaces")}
+		}
+		if err := cfg.Mount(m, cfg.UID, cfg.GID); err != nil {
+			return 0, &MountError{Dst: m.Dst, Err: err}
+		}
 	}
 	env := cfg.Env
 	if !cfg.Check {
@@ -65,10 +80,23 @@ func Launch(cfg LaunchConfig) (int, error) {
 		return 0, &SetupError{Err: err}
 	}
 	defer eng.Close()
+	if len(cfg.Mounts) > 0 {
+		// The FUSE mount took CAP_SYS_ADMIN, for which Docker relaxes its
+		// seccomp profile.
+		if err := confine(); err != nil {
+			return 0, &MountError{Dst: cfg.Mounts[0].Dst, Err: err}
+		}
+	}
 	if cfg.Check {
-		return 0, nil
+		return 0, checkMounts(cfg.Mounts)
+	}
+	// The agent inherits only its standard streams, and not, say, the
+	// device of a FUSE mount, which would let it answer the mount's calls.
+	if err := closeOnExec(); err != nil {
+		return 0, fmt.Errorf("closing the launcher's files to the agent: %w", err)
 	}
 	cmd := exec.Command(cfg.Argv[0], cfg.Argv[1:]...)
+	cmd.Dir = wd
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -317,6 +345,44 @@ func lastCap() (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(strings.TrimSpace(string(b)))
+}
+
+// checkMounts lists the root of each mount, as the agent would, once the
+// launcher dropped its privileges. Its error is one of the tree that the
+// mount shows, which this machine can mount.
+func checkMounts(mounts []Mount) error {
+	for _, m := range mounts {
+		if _, err := os.ReadDir(m.Dst); err != nil {
+			return &TreeError{Dst: m.Dst, Err: err}
+		}
+	}
+	return nil
+}
+
+// closeOnExec marks every file descriptor past the standard streams to
+// close when the launcher starts a process.
+func closeOnExec() error {
+	err := unix.CloseRange(3, ^uint(0), unix.CLOSE_RANGE_CLOEXEC)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EINVAL) {
+		return err
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil || fd < 3 {
+			continue
+		}
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, unix.FD_CLOEXEC); err != nil && !errors.Is(err, unix.EBADF) {
+			return err
+		}
+	}
+	return nil
 }
 
 // supervise reaps every child that ends, forwards the signals that end the

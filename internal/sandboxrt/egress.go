@@ -153,6 +153,9 @@ type Capabilities struct {
 	// RelayImage is the problem of the egress container's image, or nil. A
 	// [*MissingRelayImage] is one the next start pulls or builds.
 	RelayImage error
+	// Served is nil when containers can show live workspaces, and
+	// otherwise says why not.
+	Served error
 }
 
 // Probe runs the quick checks of this machine in env, without starting a

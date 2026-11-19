@@ -470,6 +470,9 @@ func attach(w Workspace) agentrun.Workspace {
 			return agentrun.Attachment{}, err
 		}
 		out := agentrun.Attachment{Dir: a.Dir, Path: a.Path, ReadOnly: a.ReadOnly, Release: a.Release, BeforeTurn: a.BeforeTurn}
+		if sw, ok := w.(servedWorkspace); ok {
+			out.Served = sw.served()
+		}
 		if after := a.AfterTurn; after != nil {
 			out.AfterTurn = func(ctx context.Context) error { return turnError(after(ctx)) }
 		}

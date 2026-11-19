@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 )
 
@@ -453,6 +454,72 @@ func TestDockerRunnerCommandWithEgress(t *testing.T) {
 				t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestDockerRunnerCommandWithServedMounts(t *testing.T) {
+	t.Parallel()
+	r := &DockerRunner{
+		Name:           "a2a-coder-123",
+		Image:          "img:1",
+		Rootless:       true,
+		Egress:         &DockerEgress{Socket: "/state/abc/egress.sock", Launcher: "/usr/bin/a2a-serve"},
+		Served:         []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}, {Dst: "/ref", Socket: "/run/a2a-egress/fs-1.sock", ReadOnly: true}},
+		ServedAppArmor: "a2a-fuse",
+	}
+	for _, check := range []bool{false, true} {
+		args := r.runArgs(Command{Path: "agent"}, "", check)
+		for _, want := range [][]string{
+			{"--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=a2a-fuse"},
+			{"--fs", "/workspace=/run/a2a-egress/fs-0.sock", "--fs", "/ref=/run/a2a-egress/fs-1.sock,ro", "/run/a2a-egress/egress.sock", "0", "0"},
+		} {
+			if !containsRun(args, want) {
+				t.Fatalf("DockerRunner.runArgs(check %v) = %q, want it to contain %q", check, args, want)
+			}
+		}
+	}
+}
+
+// containsRun reports whether args has want as a contiguous run.
+func containsRun(args, want []string) bool {
+	for i := range args {
+		if i+len(want) <= len(args) && slices.Equal(args[i:i+len(want)], want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDockerRunnerProbeReportsMountFailures(t *testing.T) {
+	tests := []struct {
+		name, run, want string
+	}{
+		{name: "launcher can't mount", run: `echo "` + boundary.MountErrorPrefix + `mounting /workspace: permission denied" >&2; exit 122`, want: "mounting /workspace: permission denied"},
+		{name: "runtime refuses the FUSE device", run: `echo 'docker: Error response from daemon: error gathering device information while adding custom device "/dev/fuse": no such file or directory' >&2; exit 125`, want: `docker: Error response from daemon: error gathering device information while adding custom device "/dev/fuse": no such file or directory`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+tc.run)
+			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}}
+			err := r.Probe(context.Background())
+			got, ok := errors.AsType[*ServedMountError](err)
+			if !ok || got.Reason != tc.want || got.Dst != "/workspace" {
+				t.Fatalf("DockerRunner.Probe() error = %v, want a ServedMountError of /workspace with %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDockerRunnerProbeReportsTreeFailures(t *testing.T) {
+	sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+`echo "`+boundary.TreeErrorPrefix+`reading /workspace: input/output error" >&2; exit 123`)
+	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}}
+	err := r.Probe(context.Background())
+	got, ok := errors.AsType[*ServedTreeError](err)
+	if !ok || got.Reason != "reading /workspace: input/output error" {
+		t.Fatalf("DockerRunner.Probe() error = %v, want a ServedTreeError with the launcher's reason", err)
+	}
+	if _, ok := errors.AsType[*ServedMountError](err); ok {
+		t.Fatalf("DockerRunner.Probe() error = %v, want no ServedMountError, which disables live workspaces", err)
 	}
 }
 

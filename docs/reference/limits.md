@@ -190,6 +190,28 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Wait for a contact's task after an answer to its approval | 1 hour |
 | A `--contact-auth` value read from stdin with `-` | 64 KiB |
 
+## Workspace protocol
+
+These apply to the [workspace protocol](workspace-protocol.md) in `fsys.Handler` and `fsys.Client`.
+
+| Limit | Value |
+| --- | --- |
+| A written file | 1 GiB |
+| Entries of a listing, and changes in one answer | 200,000 |
+| Wait of a request for changes | 1 minute |
+| A path or a symlink target | 4096 bytes |
+| JSON body of a request | 64 KiB |
+| Requests a server answers at once | 256. Past that, a request fails with 503. |
+
+## Live workspace
+
+| Limit | Value |
+| --- | --- |
+| A file the agent has open for writing | 1 GiB. Past that, its writes fail with "file too large". |
+| Files the agent has open for writing in one container, together | 2 GiB. Past that, their writes fail with "no space left on device". |
+| Changes of the tree that the agent sees late | Up to 1 second, for an entry the agent looked at just before |
+| Entries a removal of a directory checks for hidden ones | 200,000 |
+
 ## Logs
 
 | Limit | Value |

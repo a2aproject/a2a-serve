@@ -61,7 +61,7 @@ func (rt *sandboxRuntime) init(r *Runner) {
 	if rt.info.Launcher != "" {
 		launcher = func() string { return rt.info.Launcher }
 	}
-	rt.backend = sandboxrt.NewDocker(r.envFilesDir(), launcher)
+	rt.backend = sandboxrt.NewDocker(r.envFilesDir(), launcher, rt.info.ServedAppArmor)
 }
 
 // imageProgress returns where the main process reports fetching its image.

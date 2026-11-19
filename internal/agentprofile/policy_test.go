@@ -133,7 +133,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 				Base:      sandboxrt.Spec{Name: "a2a-test", Image: "img:1"},
 				Mounts:    []Mount{{Src: ws, Dst: ws}},
 				Home:      t.TempDir(),
-				Backend:   sandboxrt.NewDocker(t.TempDir(), nil),
+				Backend:   sandboxrt.NewDocker(t.TempDir(), nil, ""),
 				PolicyDir: policy,
 			})
 			if err != nil {
@@ -162,7 +162,7 @@ func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
 		Base:      sandboxrt.Spec{Name: "a2a-test"},
 		Mounts:    []Mount{{Src: ws, Dst: ws}},
 		Home:      t.TempDir(),
-		Backend:   sandboxrt.NewDocker(t.TempDir(), nil),
+		Backend:   sandboxrt.NewDocker(t.TempDir(), nil, ""),
 		PolicyDir: policy,
 	})
 

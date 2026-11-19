@@ -38,8 +38,10 @@ import (
 func TestDockerProbeOnce(t *testing.T) {
 	t.Parallel()
 	setupErr := &EgressSetupError{Reason: "no tun"}
+	mountErr := &ServedMountError{Dst: "/workspace", Reason: "permission denied"}
 	tests := []struct {
 		name      string
+		served    bool
 		first     error
 		wantCalls int
 		wantErr   error
@@ -47,11 +49,13 @@ func TestDockerProbeOnce(t *testing.T) {
 		{name: "check passes", wantCalls: 1},
 		{name: "setup fails", first: setupErr, wantCalls: 1, wantErr: setupErr},
 		{name: "docker fails", first: errors.New("docker: Error response from daemon: EOF"), wantCalls: 2},
+		{name: "mount fails", served: true, first: mountErr, wantCalls: 1, wantErr: mountErr},
+		{name: "tree fails", served: true, first: &ServedTreeError{Dst: "/workspace", Reason: "connection refused"}, wantCalls: 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := NewDocker(t.TempDir(), nil)
+			d := NewDocker(t.TempDir(), nil, "")
 			calls := 0
 			probe := func() error {
 				calls++
@@ -60,10 +64,10 @@ func TestDockerProbeOnce(t *testing.T) {
 				}
 				return nil
 			}
-			if err := d.probeOnce(probe); !errors.Is(err, tc.first) {
+			if err := d.probeOnce(tc.served, probe); !errors.Is(err, tc.first) {
 				t.Fatalf("Docker.probeOnce() error = %v, want %v", err, tc.first)
 			}
-			if err := d.probeOnce(probe); !errors.Is(err, tc.wantErr) {
+			if err := d.probeOnce(tc.served, probe); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("second Docker.probeOnce() error = %v, want %v", err, tc.wantErr)
 			}
 			if calls != tc.wantCalls {
@@ -93,7 +97,7 @@ esac
 `)
 	t.Setenv(EnvForceRelay, "")
 	opened := false
-	d := NewDocker(t.TempDir(), func() string { return filepath.Join(t.TempDir(), "missing") })
+	d := NewDocker(t.TempDir(), func() string { return filepath.Join(t.TempDir(), "missing") }, "")
 	_, err := d.Prepare(context.Background(), Spec{
 		Name:    "a2a-test",
 		Image:   "img:1",
@@ -148,7 +152,7 @@ func TestDockerPrepareChecksBoundaryOnce(t *testing.T) {
 	calls := filepath.Join(t.TempDir(), "calls")
 	sandboxtest.FakeDocker(t, relayDocker(calls, filepath.Join(t.TempDir(), "env")))
 	spec := relaySpec(t)
-	d := NewDocker(t.TempDir(), nil)
+	d := NewDocker(t.TempDir(), nil, "")
 	for i := range 2 {
 		sb, err := d.Prepare(context.Background(), spec)
 		if err != nil {
@@ -173,7 +177,7 @@ func TestDockerPrepareTrustsOnlyItsCA(t *testing.T) {
 	spec := relaySpec(t)
 	spec.Command.Env = []string{"A=1", boundary.EgressCAEnv([]byte("from the caller"))}
 	spec.Network.CA = []byte("from the boundary")
-	sb, err := NewDocker(t.TempDir(), nil).Prepare(context.Background(), spec)
+	sb, err := NewDocker(t.TempDir(), nil, "").Prepare(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Docker.Prepare() error = %v", err)
 	}
@@ -238,7 +242,7 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	}
 	name := "a2a-sandbox-test-" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
 	var stderr bytes.Buffer
-	sb, err := NewDocker(t.TempDir(), func() string { return launcher }).Prepare(ctx, Spec{
+	sb, err := NewDocker(t.TempDir(), func() string { return launcher }, "").Prepare(ctx, Spec{
 		Name:  name,
 		Image: image,
 		Command: Command{Path: "/probe", Args: []string{
