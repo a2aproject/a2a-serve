@@ -547,16 +547,17 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
+		s.schedules = schedules.New(ctx, schedules.Deps{
+			Store:      s.store,
+			Turns:      s.chatTurns,
+			Supervisor: s.supervisor,
+			Chain:      s.chain,
+			Now:        opts.Now,
+			MinWait:    s.timings.ScheduleMinWait,
+		})
+		s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 		s.callers = &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, engine: func() *agentrun.Runner { return s.engine }, dir: s.dir, removeHome: s.forgetHome}
 		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(s.agent.Handler())), a2alimit.Default())
-	})
-	s.schedules = schedules.New(ctx, schedules.Deps{
-		Store:      s.store,
-		Turns:      s.chatTurns,
-		Supervisor: s.supervisor,
-		Chain:      s.chain,
-		Now:        opts.Now,
-		MinWait:    s.timings.ScheduleMinWait,
 	})
 	s.ops = agentops.New(agentops.Deps{
 		Store:     s.store,
@@ -572,7 +573,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			RunSchedule:      s.schedules.RunNow,
 		},
 	})
-	s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.agentRoutes = s.proxy.Routes(processOf)
 	close(s.agentRoutesReady)
 	s.inspector = inspector.New(inspector.Deps{
@@ -621,7 +621,7 @@ func (s *Server) interceptors() []a2asrv.CallInterceptor {
 // observe wraps the executor of the agent with what the server does around
 // each execution.
 func (s *Server) observe(ctx context.Context, inner a2asrv.AgentExecutor) a2asrv.AgentExecutor {
-	return &observedExecutor{inner: inner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, call: s.call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued}
+	return &observedExecutor{inner: inner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, proxy: s.proxy, store: s.store, notes: s.notes, call: s.call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued}
 }
 
 // boundCallers checks the requests of callers with the interceptor that

@@ -34,15 +34,19 @@ const module = "github.com/a2aproject/a2a-serve/"
 // sharedLeaves are the packages outside core that both sides use. They
 // import nothing of the frontend.
 var sharedLeaves = []string{
+	module + "internal/a2aproxy",
 	module + "internal/a2atext",
 	module + "internal/agentprofile",
 	module + "internal/agentrun",
 	module + "internal/boundary",
+	module + "internal/cardinfo",
 	module + "internal/cryptoutil",
 	module + "internal/egressrules",
 	module + "internal/fsutil",
+	module + "internal/hops",
 	module + "internal/httpserver",
 	module + "internal/jsonhttp",
+	module + "internal/names",
 	module + "internal/projectfiles",
 	module + "internal/question",
 	module + "internal/sandboxrt",
@@ -54,13 +58,14 @@ var sharedLeaves = []string{
 }
 
 // publicImports are the public core packages that each public core
-// package may import: egress <- sandbox <- a2aserve, fsys <- a2aserve, and
-// no package imports a2aserve.
+// package may import: egress <- sandbox <- a2aserve, fsys <- a2aserve,
+// approval <- contact, and no package imports a2aserve.
 var publicImports = map[string][]string{
 	"egress":   nil,
 	"sandbox":  {"egress"},
 	"fsys":     nil,
 	"approval": nil,
+	"contact":  {"approval"},
 	"a2aserve": {"egress", "fsys", "sandbox"},
 }
 

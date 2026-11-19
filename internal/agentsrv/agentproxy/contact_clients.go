@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/a2aproject/a2a-serve/core/contact"
 	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -465,24 +466,31 @@ func (cc *ContactClients) contact(ctx context.Context, name string) (store.Conta
 	return store.Contact{}, err
 }
 
-// agentHandler returns the A2A handler of a node or a contact. A node is
-// served in-process, as principal.
-func (cc *ContactClients) agentHandler(ctx context.Context, c Claims, name string) (a2asrv.RequestHandler, *auth.Principal, error) {
+// agentTarget returns the node or the contact name, called for c. A node is
+// served in-process, as the principal of its hosting agent.
+func (cc *ContactClients) agentTarget(ctx context.Context, c Claims, name string) (contact.Target, error) {
 	node, err := cc.isNode(ctx, name)
 	if err != nil {
-		return nil, nil, err
+		return contact.Target{}, err
 	}
 	if node {
 		pr := cc.nodeCaller(c.User, c.User.Hops)
-		return cc.nodes.Handler(name), &pr, nil
+		return contact.Local(&a2aproxy.ContextHandler{Handler: cc.nodes.Handler(name), Context: func(ctx context.Context) context.Context {
+			return auth.WithPrincipal(ctx, pr)
+		}}), nil
 	}
 	client, err := cc.contactClient(ctx, name)
 	if err != nil {
-		return nil, nil, err
+		return contact.Target{}, err
 	}
-	return &a2aproxy.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
-		return viaAgent(ctx, c.User.Hops, cc.callerID(name, c.User))
-	}}, nil, nil
+	caller := cc.callerID(name, c.User)
+	h := &a2aproxy.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
+		if caller == "" {
+			return ctx
+		}
+		return a2aclient.AttachServiceParams(ctx, a2aclient.ServiceParams{auth.HeaderCaller: {caller}})
+	}}
+	return contact.Remote(networkNamed{RequestHandler: h, agent: name}), nil
 }
 
 // contactClient returns the client of a contact, or of an agent on the
