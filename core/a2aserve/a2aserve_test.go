@@ -149,6 +149,27 @@ func waitStored(t *testing.T, store taskstore.Store, id a2a.TaskID, state a2a.Ta
 	}
 }
 
+// waitWorkingOutput waits for the task id in store to be working with
+// output of the agent. A task is working before its prompt reaches the
+// agent, which ignores a cancel that comes first.
+func waitWorkingOutput(t *testing.T, store taskstore.Store, id a2a.TaskID) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		stored, err := store.Get(context.Background(), id)
+		if err != nil {
+			t.Fatalf("Store.Get() error = %v", err)
+		}
+		if stored.Task.Status.State == a2a.TaskStateWorking && len(stored.Task.Artifacts) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Store.Get() = %v with %d artifacts, want working with output", stored.Task.Status.State, len(stored.Task.Artifacts))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // send sends text in the conversation contextID and returns the text of
 // the task's result.
 func send(t *testing.T, c *a2aclient.Client, contextID, text string) string {

@@ -742,7 +742,7 @@ func TestTurnSyncedAgentWritesBackOnEveryTurnEnd(t *testing.T) {
 					t.Fatalf("Client.SendMessage(slow) error = %v", err)
 				}
 				task := res.(*a2a.Task)
-				waitStored(t, store, task.ID, a2a.TaskStateWorking)
+				waitWorkingOutput(t, store, task.ID)
 				writeFile(t, filepath.Join(dir, "mid-turn.txt"), "kept")
 				canceled, err := c.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID})
 				if err != nil {
@@ -925,7 +925,7 @@ func TestCanceledWaitingTurnLetsTheNextTurnRun(t *testing.T) {
 	})
 	c := client(t, a)
 	first := sendAsync(t, c, "c1", "slow")
-	waitStored(t, store, first.ID, a2a.TaskStateWorking)
+	waitWorkingOutput(t, store, first.ID)
 	waiting := sendAsync(t, c, "c2", "hello")
 
 	cancelTask(t, c, waiting.ID)
