@@ -350,7 +350,7 @@ func (s *Server) workspaceOf(env *a2aserve.Environment, proc *agentrun.ProcessOp
 	}
 	env.Workspace = w
 	for _, m := range grantMounts(storage, mounts)[1:] {
-		env.Mounts = append(env.Mounts, sandbox.Mount{Host: m.Src, Path: m.Dst, ReadOnly: m.ReadOnly})
+		env.Mounts = append(env.Mounts, sandbox.Mount{Dst: m.Dst, Src: sandbox.HostDir(m.Src), ReadOnly: m.ReadOnly})
 	}
 	switch storage {
 	case workspaces.StorageEmpty:

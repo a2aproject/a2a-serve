@@ -86,16 +86,35 @@ type Config struct {
 }
 
 // Workspace returns the directory of the process of key, which it keeps
-// until the Release of the attachment.
-type Workspace func(ctx context.Context, key string) (Attachment, error)
+// until the Release of the attachment. stateDir is the state directory of
+// the runner.
+type Workspace func(ctx context.Context, key, stateDir string) (Attachment, error)
 
 // Attachment is the directory of a process: Dir on the host, seen at Path,
-// or at Dir if Path is empty.
+// or at Dir if Path is empty. BeforeTurn, if set, runs before the agent
+// gets the prompt of a turn, and its error fails the turn. AfterTurn, if
+// set, runs once the agent stopped working on a message, on every exit
+// path, and its error fails the turn; a [*TurnError] adds its metadata to
+// the final status message. With either set, the turns of the process run
+// one at a time, from BeforeTurn to AfterTurn.
 type Attachment struct {
-	Dir, Path string
-	ReadOnly  bool
-	Release   func() error
+	Dir, Path  string
+	ReadOnly   bool
+	Release    func() error
+	BeforeTurn func(ctx context.Context) error
+	AfterTurn  func(ctx context.Context) error
 }
+
+// TurnError is an error of AfterTurn with the metadata of the final status
+// message of the turn.
+type TurnError struct {
+	Err      error
+	Metadata map[string]any
+}
+
+func (e *TurnError) Error() string { return e.Err.Error() }
+
+func (e *TurnError) Unwrap() error { return e.Err }
 
 // Environment is what one agent process gets.
 type Environment struct {
@@ -316,8 +335,10 @@ type Runner struct {
 	decider    *toolDecider
 	split      *splitExecutor
 	pools      map[string]*procs
-	// workspaces are where the running processes see their workspace.
+	// workspaces are where the running processes see their workspace, and
+	// turns the turn hooks of their attachments.
 	workspaces sync.Map
+	turns      *workspaceTurns
 	// mainState is the state of the Environment the main process started
 	// with, and mainSince when it started.
 	mainState atomic.Pointer[any]
@@ -366,6 +387,7 @@ func New(cfg Config) (*Runner, error) {
 	r.keys = newKeys(all, r.newKey)
 	r.policies = &policies{dir: filepath.Join(r.stateDir, "policy")}
 	r.stalls = newStallGuard(cfg.Options.TurnStall, cfg.Options.ToolStall, cfg.Hooks.Stalled)
+	r.turns = newWorkspaceTurns(r.keys.of, cfg.Hooks.Explain, r.log)
 	for name, p := range cfg.Pools {
 		r.pools[name] = &procs{max: p.MaxProcesses}
 	}

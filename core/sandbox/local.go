@@ -16,14 +16,22 @@ package sandbox
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
 // Local returns the runtime that runs commands on the host, with no
-// isolation and no boundary. It uses only the Command, Sockets and Stderr
-// of a Spec. The processes a command starts are killed once it exits.
+// isolation and no boundary. It uses only the Command, Mounts, Sockets and
+// Stderr of a Spec. The processes a command starts are killed once it
+// exits.
+//
+// The command sees the host's files in place, so Local takes a [HostDir]
+// mount whose Dst is its own host path, and does nothing for it. It
+// confines nothing, so it ignores ReadOnly and Hide. Create refuses other
+// mounts with an [UnsupportedMountError]: a host directory at another path
+// and a [Tmpfs], which need a mount namespace.
 func Local() Runtime { return local{} }
 
 type local struct{}
@@ -33,10 +41,17 @@ func (local) Probe(ctx context.Context) (Capabilities, error) {
 	if err != nil {
 		return Capabilities{}, err
 	}
-	return capabilities(c), nil
+	caps := capabilities(c)
+	caps.Mounts = []MountKind{MountHostDir}
+	return caps, nil
 }
 
 func (local) Create(ctx context.Context, spec Spec) (Sandbox, error) {
+	for _, m := range spec.Mounts {
+		if err := checkLocalMount(m); err != nil {
+			return nil, err
+		}
+	}
 	sb := sandboxrt.Spec{Name: spec.Name, Command: command(spec.Command), Stderr: spec.Stderr}
 	sb.Command.Env = slices.Clone(sb.Command.Env)
 	for _, s := range spec.Sockets {
@@ -50,4 +65,18 @@ func (local) Create(ctx context.Context, spec Spec) (Sandbox, error) {
 		}
 	}
 	return sandboxrt.Local{}.Prepare(ctx, sb)
+}
+
+// checkLocalMount refuses a mount that the host can't show as asked.
+func checkLocalMount(m Mount) error {
+	if err := checkSource(m); err != nil {
+		return err
+	}
+	switch {
+	case m.Src.kind == MountTmpfs:
+		return &UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.kind, Reason: "the command runs on the host, with no mount namespace"}
+	case filepath.Clean(m.Dst) != filepath.Clean(m.Src.path):
+		return &UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.kind, Reason: "the command runs on the host, where " + m.Src.path + " stays at its own path"}
+	}
+	return nil
 }

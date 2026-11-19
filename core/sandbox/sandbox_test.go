@@ -129,6 +129,88 @@ func TestLocalRefusesEgress(t *testing.T) {
 	}
 }
 
+func TestLocalMounts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		mount   sandbox.Mount
+		wantErr error
+	}{
+		{name: "host dir in place", mount: sandbox.Mount{Dst: dir, Src: sandbox.HostDir(dir)}},
+		{name: "read-only host dir in place", mount: sandbox.Mount{Dst: dir + "/", Src: sandbox.HostDir(dir), ReadOnly: true}},
+		{
+			name:    "host dir elsewhere",
+			mount:   sandbox.Mount{Dst: "/work", Src: sandbox.HostDir(dir)},
+			wantErr: &sandbox.UnsupportedMountError{Backend: "local", Dst: "/work", Kind: sandbox.MountHostDir, Reason: "the command runs on the host, where " + dir + " stays at its own path"},
+		},
+		{
+			name:    "tmpfs",
+			mount:   sandbox.Mount{Dst: "/scratch", Src: sandbox.Tmpfs()},
+			wantErr: &sandbox.UnsupportedMountError{Backend: "local", Dst: "/scratch", Kind: sandbox.MountTmpfs, Reason: "the command runs on the host, with no mount namespace"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sb, err := sandbox.Local().Create(context.Background(), sandbox.Spec{Command: sandbox.Command{Path: "true"}, Mounts: []sandbox.Mount{tc.mount}})
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Local().Create() error = %v, want nil", err)
+				}
+				if err := sb.Close(context.Background()); err != nil {
+					t.Fatalf("Sandbox.Close() error = %v", err)
+				}
+				return
+			}
+			got, ok := errors.AsType[*sandbox.UnsupportedMountError](err)
+			if !ok {
+				t.Fatalf("Local().Create() error = %v, want an UnsupportedMountError", err)
+			}
+			if diff := cmp.Diff(tc.wantErr, got); diff != "" {
+				t.Fatalf("Local().Create() wrong error (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestCreateRefusesMountWithoutSource(t *testing.T) {
+	t.Parallel()
+	tests := map[string]sandbox.Runtime{
+		"local":  sandbox.Local(),
+		"docker": sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()}),
+	}
+	for name, rt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := rt.Create(context.Background(), sandbox.Spec{Command: sandbox.Command{Path: "true"}, Mounts: []sandbox.Mount{{Dst: "/data"}}})
+			if err == nil || !strings.Contains(err.Error(), "has no source") {
+				t.Fatalf("Runtime.Create() with a mount without a source error = %v, want one that says so", err)
+			}
+		})
+	}
+}
+
+func TestDockerRefusesRelativeMountDestination(t *testing.T) {
+	t.Parallel()
+	rt := sandbox.Docker(sandbox.DockerOptions{StateDir: t.TempDir()})
+	_, err := rt.Create(context.Background(), sandbox.Spec{Command: sandbox.Command{Path: "true"}, Mounts: []sandbox.Mount{{Dst: "data", Src: sandbox.Tmpfs()}}})
+	if err == nil || !strings.Contains(err.Error(), "isn't an absolute path") {
+		t.Fatalf("Docker().Create() with a relative destination error = %v, want one that says so", err)
+	}
+}
+
+func TestProbeReportsMountKinds(t *testing.T) {
+	t.Parallel()
+	caps, err := sandbox.Local().Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Local().Probe() error = %v", err)
+	}
+	if diff := cmp.Diff([]sandbox.MountKind{sandbox.MountHostDir}, caps.Mounts); diff != "" {
+		t.Fatalf("Local().Probe() wrong mounts (-want +got) diff = %s", diff)
+	}
+}
+
 func TestMainIgnoresOtherArgs(t *testing.T) {
 	t.Parallel()
 	tests := [][]string{nil, {}, {"serve"}, {"sandbox"}, {"--sandbox-init"}}
@@ -176,7 +258,8 @@ func TestMainRunsEntryPoints(t *testing.T) {
 }
 
 // TestDockerRunsCommandBehindEgress runs a command in a container with a
-// read-only mount, a hidden directory and an allowlist endpoint.
+// read-only mount, a hidden directory, writable and read-only tmpfs mounts
+// and an allowlist endpoint.
 func TestDockerRunsCommandBehindEgress(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -210,10 +293,10 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 		Name:  "a2a-sandbox-test-" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz"),
 		Image: image,
 		Command: sandbox.Command{Path: "/probe", Args: []string{
-			"read:/data/hello.txt", "write:/data/new.txt", "ls:/data/private",
+			"read:/data/hello.txt", "write:/data/new.txt", "ls:/data/private", "write:/scratch/new.txt", "read:/scratch/new.txt", "write:/empty/new.txt",
 			"dial:" + net.JoinHostPort("host.docker.internal", allowed), "dial:" + net.JoinHostPort("host.docker.internal", other),
 		}},
-		Mounts: []sandbox.Mount{{Host: data, Path: "/data", ReadOnly: true}},
+		Mounts: []sandbox.Mount{{Dst: "/data", Src: sandbox.HostDir(data), ReadOnly: true}, {Dst: "/scratch", Src: sandbox.Tmpfs()}, {Dst: "/empty", Src: sandbox.Tmpfs(), ReadOnly: true}},
 		Hide:   []string{filepath.Join(data, "private")},
 		Labels: map[string]string{"a2a.test": "sandbox"},
 		Egress: ep,
@@ -224,6 +307,9 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 		"read:/data/hello.txt hello",
 		"write:/data/new.txt error",
 		"ls:/data/private 0 entries",
+		"write:/scratch/new.txt ok",
+		"read:/scratch/new.txt written",
+		"write:/empty/new.txt error",
 		"dial:" + net.JoinHostPort("host.docker.internal", allowed) + " ok",
 		"dial:" + net.JoinHostPort("host.docker.internal", other) + " refused",
 	}

@@ -75,7 +75,7 @@ func (r *Runner) startMain(ctx context.Context) (exec a2asrv.AgentExecutor, clos
 	r.logf("✓ %s is running (ACP)", r.cfg.Profile.Name())
 	since := time.Now()
 	r.mainSince.Store(&since)
-	return r.stalls.guard(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
+	return r.turns.guard(r.stalls.guard(acp)), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 func (r *Runner) logf(format string, args ...any) {
@@ -154,7 +154,7 @@ func (r *Runner) startPool(ctx context.Context, name string) (a2asrv.AgentExecut
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing %s: %w", cmp.Or(r.cfg.Options.PoolLabels[name], "the agent processes of the pool "+name), err)
 	}
-	return r.stalls.guard(acp), func(context.Context) error { return acp.Close() }, nil
+	return r.turns.guard(r.stalls.guard(acp)), func(context.Context) error { return acp.Close() }, nil
 }
 
 // countedTurn counts each turn in the agent process of its conversation
@@ -309,7 +309,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	if env.Workspace == nil {
 		return nil, errors.New("no workspace to mount")
 	}
-	att, err := env.Workspace(ctx, key)
+	att, err := env.Workspace(ctx, key, r.stateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -332,8 +332,13 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 			err = errors.Join(err, cerr)
 		}
 	}()
-	var mounts []sandbox.Mount
-	spec.Mounts, spec.WorkspaceSrc, mounts = workspaceMounts(att, env.Mounts)
+	pm := workspaceMounts(att, env.Mounts)
+	spec.Mounts, spec.WorkspaceSrc = pm.dirs, pm.workspaceSrc
+	if r.rt.custom == nil {
+		if err := r.tmpfsMounts(&spec, pm.tmpfs); err != nil {
+			return nil, err
+		}
+	}
 	if key == "" {
 		state := proc.State
 		r.mainState.Store(&state)
@@ -369,7 +374,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	cleanups = append(cleanups, closeEgress)
 	var p *agentprofile.Prepared
 	if r.rt.custom != nil {
-		p, err = r.rt.prepareCustom(ctx, spec, mounts, custom)
+		p, err = r.rt.prepareCustom(ctx, spec, pm.custom, custom)
 	} else {
 		p, err = agentprofile.Prepare(ctx, spec)
 	}
@@ -385,10 +390,16 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	}
 	seen := spec.Mounts[0].Src
 	r.workspaces.Store(key, seen)
+	detach := r.turns.attach(key, att)
 	stop := func(ctx context.Context) error {
 		forget()
+		detach()
 		r.workspaces.CompareAndDelete(key, seen)
-		return errors.Join(p.Close(ctx), cleanup())
+		cerr := cleanup()
+		if cerr != nil {
+			r.log().Warn("releasing the workspace of a stopped agent process", "key", key, "error", cerr)
+		}
+		return errors.Join(p.Close(ctx), cerr)
 	}
 	return &prepared{prepared: p, stop: stop, maxMessage: r.cfg.Options.MaxAgentMessage}, nil
 }
@@ -400,30 +411,66 @@ func (r *Runner) homeMounts(env Environment) []agentprofile.Mount {
 	if r.cfg.Options.Mounts != nil {
 		return r.cfg.Options.Mounts
 	}
-	out := make([]agentprofile.Mount, len(env.Mounts))
-	for i, m := range env.Mounts {
-		out[i] = agentprofile.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly}
+	var out []agentprofile.Mount
+	for _, m := range env.Mounts {
+		if m.Src.Kind() == sandbox.MountHostDir {
+			out = append(out, agentprofile.Mount{Src: m.Src.HostPath(), Dst: m.Dst, ReadOnly: m.ReadOnly})
+		}
 	}
 	return out
 }
 
-// workspaceMounts returns the mounts of a process whose workspace is att,
-// the workspace first at the path the process sees it, the directory a
-// container mounts there in its place, if another, and the mounts for a
-// custom runtime.
-func workspaceMounts(att Attachment, extra []sandbox.Mount) ([]agentprofile.Mount, string, []sandbox.Mount) {
+// processMounts are the mounts of a process.
+type processMounts struct {
+	// dirs are the host directories, the workspace first at the path the
+	// process sees it, and workspaceSrc the directory a container mounts
+	// there in its place, if another.
+	dirs         []agentprofile.Mount
+	workspaceSrc string
+	// tmpfs are the mounts in memory.
+	tmpfs []sandbox.Mount
+	// custom are the mounts for a custom runtime.
+	custom []sandbox.Mount
+}
+
+// workspaceMounts returns the mounts of a process whose workspace is att.
+func workspaceMounts(att Attachment, extra []sandbox.Mount) processMounts {
 	seen := cmp.Or(att.Path, att.Dir)
-	out := []agentprofile.Mount{{Src: seen, Dst: seen, ReadOnly: att.ReadOnly}}
-	custom := []sandbox.Mount{{Host: att.Dir, Path: seen, ReadOnly: att.ReadOnly}}
+	pm := processMounts{
+		dirs:   []agentprofile.Mount{{Src: seen, Dst: seen, ReadOnly: att.ReadOnly}},
+		custom: []sandbox.Mount{{Dst: seen, Src: sandbox.HostDir(att.Dir), ReadOnly: att.ReadOnly}},
+	}
 	for _, m := range extra {
-		out = append(out, agentprofile.Mount{Src: m.Host, Dst: m.Path, ReadOnly: m.ReadOnly})
-		custom = append(custom, m)
+		pm.custom = append(pm.custom, m)
+		switch m.Src.Kind() {
+		case sandbox.MountHostDir:
+			pm.dirs = append(pm.dirs, agentprofile.Mount{Src: m.Src.HostPath(), Dst: m.Dst, ReadOnly: m.ReadOnly})
+		case sandbox.MountTmpfs:
+			pm.tmpfs = append(pm.tmpfs, m)
+		}
 	}
-	src := ""
 	if att.Dir != seen {
-		src = att.Dir
+		pm.workspaceSrc = att.Dir
 	}
-	return out, src, custom
+	return pm
+}
+
+// tmpfsMounts gives the sandbox of spec the mounts in memory: a writable
+// one as scratch, and a read-only one as an empty mask. The local sandbox
+// has none, and leaves the host directories where they are, as the
+// command sees them.
+func (r *Runner) tmpfsMounts(spec *agentprofile.Spec, mounts []sandbox.Mount) error {
+	for _, m := range mounts {
+		if r.rt.kind == agentprofile.SandboxLocal {
+			return &sandbox.UnsupportedMountError{Backend: "local", Dst: m.Dst, Kind: m.Src.Kind(), Reason: "the command runs on the host, with no mount namespace"}
+		}
+		if m.ReadOnly {
+			spec.Base.Masks = append(spec.Base.Masks, sandboxrt.Mask{Dst: m.Dst})
+		} else {
+			spec.Base.Scratch = append(spec.Base.Scratch, m.Dst)
+		}
+	}
+	return nil
 }
 
 // egressSandbox gives spec the egress settings and an endpoint of the
@@ -498,14 +545,12 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 		SessionStore: r.cfg.Sessions,
 		Session:      r.sessionParams,
 		Settings:     r.sessionSettings,
-		Turn:         r.countAgentTurn(r.stalls.turn(turn)),
+		Turn:         r.countAgentTurn(r.stalls.turn(r.turns.turn(turn))),
 		Converter:    r.stalls,
 		Abandoned:    r.abandoned,
 		Failure:      r.cfg.Hooks.Explain,
 	}
-	if r.cfg.Hooks.Prompt != nil {
-		cfg.Prompt = r.cfg.Hooks.Prompt
-	}
+	cfg.Prompt = r.turns.prompt(r.cfg.Hooks.Prompt)
 	return cfg
 }
 
