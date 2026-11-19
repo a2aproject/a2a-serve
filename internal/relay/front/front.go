@@ -30,6 +30,7 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -117,6 +118,11 @@ const (
 // agents can't sign in. It answers 503 on proxied routes until
 // [Front.Open].
 func New(info any, routes Routes, ctl, signIn http.Handler) *Front {
+	return newFront(info, routes, ctl, signIn, time.Now)
+}
+
+// newFront is [New] with the clock of its rate limits.
+func newFront(info any, routes Routes, ctl, signIn http.Handler, now func() time.Time) *Front {
 	// The control API and the identity provider serve callers before they
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
@@ -126,11 +132,11 @@ func New(info any, routes Routes, ctl, signIn http.Handler) *Front {
 		control:     unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
 		proxied:     httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
 		onboarding:  httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
-		enrollments: httpserver.NewKeyedRate(enrollmentRate, enrollmentBurst, maxRateClients, client),
+		enrollments: httpserver.NewKeyedRateAt(enrollmentRate, enrollmentBurst, maxRateClients, client, now),
 		transport:   upstreamTransport(),
 	}
-	f.ingress = httpserver.NewKeyedRate(ingressRate, ingressBurst, maxRateClients, f.clientOfAgent)
-	f.ingressClient = httpserver.NewKeyedRate(ingressClientRate, ingressClientBurst, maxRateClients, client)
+	f.ingress = httpserver.NewKeyedRateAt(ingressRate, ingressBurst, maxRateClients, f.clientOfAgent, now)
+	f.ingressClient = httpserver.NewKeyedRateAt(ingressClientRate, ingressClientBurst, maxRateClients, client, now)
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
 	}

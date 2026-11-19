@@ -42,7 +42,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 func newRateHandler(burst, maxKeys int, clock *fakeClock) http.Handler {
-	l := newKeyedRate(1, burst, maxKeys, func(r *http.Request) string { return r.Header.Get("X-Key") }, clock.Now)
+	l := NewKeyedRateAt(1, burst, maxKeys, func(r *http.Request) string { return r.Header.Get("X-Key") }, clock.Now)
 	return l.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
