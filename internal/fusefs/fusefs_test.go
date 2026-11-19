@@ -32,26 +32,12 @@ import (
 	"github.com/a2aproject/a2a-serve/core/fsys"
 )
 
-// mountTree mounts tree with fusermount, as the tests run without root,
-// and skips the test where this host can't.
-func mountTree(t *testing.T, tree fsys.FS, opts Options) string {
-	t.Helper()
-	if _, err := os.Stat("/dev/fuse"); err != nil {
-		t.Skipf("no /dev/fuse: %v", err)
+// closeQuietly closes f at the end of a test that may have failed with it
+// open, which would keep its mount busy.
+func closeQuietly(t *testing.T, f *os.File) {
+	if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		t.Errorf("closing %s error = %v", f.Name(), err)
 	}
-	dir := t.TempDir()
-	opts.UID, opts.GID = uint32(os.Getuid()), uint32(os.Getgid())
-	opts.TempDir = t.TempDir()
-	server, err := mount(dir, tree, opts, false)
-	if err != nil {
-		t.Skipf("can't mount FUSE here: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := server.Unmount(); err != nil {
-			t.Errorf("unmounting %s error = %v", dir, err)
-		}
-	})
-	return dir
 }
 
 func put(t *testing.T, tree fsys.FS, p, data string, mode fs.FileMode) {
@@ -79,9 +65,8 @@ func get(t *testing.T, tree fsys.FS, p string) string {
 
 func TestMountReadsAndWrites(t *testing.T) {
 	t.Parallel()
-	tree := fsys.Memory()
+	dir, tree := mountTree(t, Options{})
 	put(t, tree, "src/main.go", "package main", 0o644)
-	dir := mountTree(t, tree, Options{})
 
 	got, err := os.ReadFile(filepath.Join(dir, "src/main.go"))
 	if err != nil || string(got) != "package main" {
@@ -110,16 +95,18 @@ func TestMountReadsAndWrites(t *testing.T) {
 	}
 }
 
+// TestMountWritesWholeFilesOnClose runs alone: a fork in this process,
+// such as by another test, closes the child's copy of the open file when
+// it execs, which flushes the file to the tree, as every close does.
 func TestMountWritesWholeFilesOnClose(t *testing.T) {
-	t.Parallel()
-	tree := fsys.Memory()
+	dir, tree := mountTree(t, Options{})
 	put(t, tree, "log", "one\n", 0o644)
-	dir := mountTree(t, tree, Options{})
 
 	f, err := os.OpenFile(filepath.Join(dir, "log"), os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatalf("os.OpenFile(log) error = %v", err)
 	}
+	t.Cleanup(func() { closeQuietly(t, f) })
 	if _, err := f.WriteString("two\n"); err != nil {
 		t.Fatalf("writing log error = %v", err)
 	}
@@ -145,8 +132,7 @@ func TestMountWritesWholeFilesOnClose(t *testing.T) {
 
 func TestMountKeepsModesLinksAndRenames(t *testing.T) {
 	t.Parallel()
-	tree := fsys.Memory()
-	dir := mountTree(t, tree, Options{})
+	dir, tree := mountTree(t, Options{})
 	ctx := context.Background()
 
 	script := filepath.Join(dir, "run.sh")
@@ -193,12 +179,12 @@ func TestMountKeepsModesLinksAndRenames(t *testing.T) {
 
 func TestMountDropsWritesOfRemovedFiles(t *testing.T) {
 	t.Parallel()
-	tree := fsys.Memory()
-	dir := mountTree(t, tree, Options{})
+	dir, tree := mountTree(t, Options{})
 	f, err := os.Create(filepath.Join(dir, "tmp"))
 	if err != nil {
 		t.Fatalf("os.Create(tmp) error = %v", err)
 	}
+	t.Cleanup(func() { closeQuietly(t, f) })
 	if _, err := f.WriteString("scratch"); err != nil {
 		t.Fatalf("writing tmp error = %v", err)
 	}
@@ -219,8 +205,7 @@ func TestMountDropsWritesOfRemovedFiles(t *testing.T) {
 
 func TestMountBoundsBuffers(t *testing.T) {
 	t.Parallel()
-	tree := fsys.Memory()
-	dir := mountTree(t, tree, Options{MaxFileBytes: 1 << 10, MaxOpenBytes: 1 << 20})
+	dir, _ := mountTree(t, Options{MaxFileBytes: 1 << 10, MaxOpenBytes: 1 << 20})
 	err := os.WriteFile(filepath.Join(dir, "big"), make([]byte, 2<<10), 0o644)
 	if !errors.Is(err, syscall.EFBIG) {
 		t.Fatalf("os.WriteFile() past the limit error = %v, want %v", err, syscall.EFBIG)
@@ -229,9 +214,8 @@ func TestMountBoundsBuffers(t *testing.T) {
 
 func TestMountReadOnly(t *testing.T) {
 	t.Parallel()
-	tree := fsys.Memory()
+	dir, tree := mountTree(t, Options{ReadOnly: true})
 	put(t, tree, "f", "x", 0o644)
-	dir := mountTree(t, tree, Options{ReadOnly: true})
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("y"), 0o644); !errors.Is(err, syscall.EROFS) {
 		t.Fatalf("os.WriteFile() on a read-only mount error = %v, want %v", err, syscall.EROFS)
 	}

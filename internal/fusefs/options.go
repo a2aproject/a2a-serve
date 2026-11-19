@@ -17,7 +17,9 @@
 //
 // Files are written whole, with close-to-open semantics: the writes to an
 // open file go to a buffer, which replaces the file in the tree when the
-// file is flushed, synced or closed. The last write wins. Reads of a file
+// file is flushed, synced or closed. Every close of a descriptor of the
+// file flushes it, also of a copy that a child process closes when it
+// execs. The last write wins. Reads of a file
 // that isn't being written go to the tree, so a file opened after the
 // tree changed it shows the change. The kernel's interrupts don't cancel
 // the operations, which programs that their runtime signals, such as Go
