@@ -93,6 +93,9 @@ var (
 	// ErrConflict is wrapped by the error of a Write whose ifVersion
 	// doesn't match the entry.
 	ErrConflict = errors.New("the file changed since the version the write expected")
+	// ErrFull is wrapped by the error of a change that would take a tree
+	// past its limits.
+	ErrFull = errors.New("the tree is full")
 	// ErrResync is wrapped by the error of Changes when the feed no
 	// longer reaches its cursor.
 	ErrResync = errors.New("the change feed no longer reaches the cursor; read the tree again")

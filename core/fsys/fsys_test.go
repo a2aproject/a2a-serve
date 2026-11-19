@@ -605,3 +605,72 @@ func TestDirBoundsEntries(t *testing.T) {
 		t.Fatalf("FS.Changes() of a directory over the limit error = %v, want %v", err, fsys.ErrTooManyEntries)
 	}
 }
+
+func TestMemoryWithLimitsRefusesGrowthPastThem(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tests := []struct {
+		name   string
+		limits fsys.MemoryLimits
+		grow   func(f fsys.FS) error
+	}{
+		{
+			name:   "write past the bytes",
+			limits: fsys.MemoryLimits{MaxBytes: 5, MaxEntries: 10},
+			grow: func(f fsys.FS) error {
+				_, err := f.Write(ctx, "b", strings.NewReader("123"), 0o644, "")
+				return err
+			},
+		},
+		{
+			name:   "write past the entries",
+			limits: fsys.MemoryLimits{MaxBytes: 100, MaxEntries: 3},
+			grow: func(f fsys.FS) error {
+				_, err := f.Write(ctx, "d/e/b", strings.NewReader("1"), 0o644, "")
+				return err
+			},
+		},
+		{
+			name:   "mkdir past the entries",
+			limits: fsys.MemoryLimits{MaxBytes: 100, MaxEntries: 2},
+			grow:   func(f fsys.FS) error { return f.Mkdir(ctx, "d/e", 0o755) },
+		},
+		{
+			name:   "symlink past the entries",
+			limits: fsys.MemoryLimits{MaxBytes: 100, MaxEntries: 2},
+			grow:   func(f fsys.FS) error { return f.Symlink(ctx, "a", "x/l") },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := fsys.MemoryWithLimits(tc.limits)
+			write(t, f, "a", "123", 0o644)
+
+			err := tc.grow(f)
+
+			if !errors.Is(err, fsys.ErrFull) {
+				t.Fatalf("growing the tree past its limits error = %v, want %v", err, fsys.ErrFull)
+			}
+			got, err := f.ReadDir(ctx, ".")
+			if err != nil {
+				t.Fatalf("FS.ReadDir() error = %v", err)
+			}
+			want := []entry{{Path: "a", Mode: 0o644, Size: 3}}
+			if diff := cmp.Diff(want, entries(got)); diff != "" {
+				t.Fatalf("FS.ReadDir() after the refused change wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestMemoryWithLimitsFreesWhatItRemoves(t *testing.T) {
+	t.Parallel()
+	f := fsys.MemoryWithLimits(fsys.MemoryLimits{MaxBytes: 4, MaxEntries: 3})
+	write(t, f, "d/a", "1234", 0o644)
+	write(t, f, "d/a", "4321", 0o644)
+	if err := f.Remove(context.Background(), "d"); err != nil {
+		t.Fatalf("FS.Remove() error = %v", err)
+	}
+	write(t, f, "x/y/b", "5678", 0o644)
+}

@@ -15,12 +15,14 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
 	"iter"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -72,6 +74,15 @@ func TestChangesArtifactStaysWithinItsLimits(t *testing.T) {
 			wantSummary: map[string]any{"removed": []any{}, "omitted": []any{map[string]any{"path": "b", "size": int64(3), "reason": omittedTotalTooLarge}}},
 		},
 		{
+			name: "a file that another writer changed since the sync",
+			changes: func(t *testing.T, tree fsys.FS) []fsys.Info {
+				synced := write(t, tree, "a", "ab", 0o644)
+				write(t, tree, "a", "cd", 0o644)
+				return []fsys.Info{synced}
+			},
+			wantSummary: map[string]any{"removed": []any{}, "omitted": []any{map[string]any{"path": "a", "size": int64(2), "reason": omittedChanged}}},
+		},
+		{
 			name: "a file that is gone",
 			changes: func(t *testing.T, tree fsys.FS) []fsys.Info {
 				return []fsys.Info{{Path: "gone", Mode: 0o644, Size: 1}}
@@ -94,7 +105,7 @@ func TestChangesArtifactStaysWithinItsLimits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tree := fsys.Memory()
-			c := newChangesets(tree, limits, slog.New(slog.DiscardHandler))
+			c := newChangesets(tree, limits, newMemory(defaultMemoryLimits, time.Now), slog.New(slog.DiscardHandler))
 
 			art := c.artifact(context.Background(), tc.changes(t, tree))
 
@@ -118,7 +129,8 @@ func TestChangesArtifactStaysWithinItsLimits(t *testing.T) {
 func TestChangesGoOutBeforeTheFinalEventOfTheirTask(t *testing.T) {
 	t.Parallel()
 	tree := fsys.Memory()
-	c := newChangesets(tree, defaultChangesLimits, slog.New(slog.DiscardHandler))
+	store := newMemory(defaultMemoryLimits, time.Now)
+	c := newChangesets(tree, defaultChangesLimits, store, slog.New(slog.DiscardHandler))
 	task := &a2asrv.ExecutorContext{TaskID: "task-1", ContextID: "ctx"}
 	inner := fakeExecutor(func(ctx context.Context, yield func(a2a.Event, error) bool) {
 		if !yield(a2a.NewStatusUpdateEvent(task, a2a.TaskStateWorking, nil), nil) {
@@ -145,8 +157,21 @@ func TestChangesGoOutBeforeTheFinalEventOfTheirTask(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Execute() events wrong result (-want +got) diff = %s", diff)
 	}
-	if art := c.take(task.TaskID); art != nil {
-		t.Fatalf("take() after the final event = %v, want nil", art)
+	if art := store.takeArtifact(task.TaskID); art != nil {
+		t.Fatalf("memory.takeArtifact() after the final event = %v, want nil", art)
+	}
+}
+
+func TestChangesWithoutATurnAreLogged(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	var logs bytes.Buffer
+	c := newChangesets(tree, defaultChangesLimits, newMemory(defaultMemoryLimits, time.Now), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	c.synced(context.Background(), "ctx-1", []fsys.Info{write(t, tree, "late.txt", "a", 0o644), {Path: "gone.txt", Removed: true}})
+
+	if got := logs.String(); !strings.Contains(got, "context=ctx-1") || !strings.Contains(got, "late.txt") || !strings.Contains(got, "gone.txt") {
+		t.Fatalf("log of changes without a turn = %q, want the context and the paths", got)
 	}
 }
 

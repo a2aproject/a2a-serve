@@ -41,11 +41,15 @@ type memoryLimits struct {
 	Contexts        int
 	TasksPerContext int
 	Bytes           int
+	// WaitingArtifacts and WaitingArtifactBytes bound the artifacts that
+	// wait for their task to end, by count and in JSON.
+	WaitingArtifacts     int
+	WaitingArtifactBytes int
 }
 
 // defaultMemoryLimits are the limits of a2a-run, which
 // docs/reference/limits.md lists.
-var defaultMemoryLimits = memoryLimits{Idle: time.Hour, Contexts: 1000, TasksPerContext: 100, Bytes: 256 << 20}
+var defaultMemoryLimits = memoryLimits{Idle: time.Hour, Contexts: 1000, TasksPerContext: 100, Bytes: 256 << 20, WaitingArtifacts: 1024, WaitingArtifactBytes: 64 << 20}
 
 // sweepInterval is how often a write looks for idle conversations.
 const sweepInterval = time.Minute
@@ -63,6 +67,11 @@ type memory struct {
 	contexts map[string]*conversation
 	bytes    int
 	swept    time.Time
+	// waiting are the artifacts that wait for their task to end, oldest
+	// first in waitingOrder.
+	waiting      map[a2a.TaskID]waitingArtifact
+	waitingOrder []a2a.TaskID
+	waitingBytes int
 }
 
 type storedTask struct {
@@ -84,19 +93,19 @@ type conversation struct {
 var _ taskstore.Store = (*memory)(nil)
 
 func newMemory(limits memoryLimits, now func() time.Time) *memory {
-	return &memory{limits: limits, now: now, tasks: map[a2a.TaskID]*storedTask{}, contexts: map[string]*conversation{}, swept: now()}
+	return &memory{limits: limits, now: now, tasks: map[a2a.TaskID]*storedTask{}, contexts: map[string]*conversation{}, swept: now(), waiting: map[a2a.TaskID]waitingArtifact{}}
 }
 
 // Create implements [taskstore.Store].
 func (m *memory) Create(_ context.Context, task *a2a.Task) (taskstore.TaskVersion, error) {
-	data, err := json.Marshal(task)
-	if err != nil {
-		return taskstore.TaskVersionMissing, err
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.tasks[task.ID]; ok {
 		return taskstore.TaskVersionMissing, taskstore.ErrTaskAlreadyExists
+	}
+	data, err := json.Marshal(m.withWaitingLocked(task))
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
 	}
 	now := m.now()
 	m.tasks[task.ID] = &storedTask{data: data, state: task.Status.State, contextID: task.ContextID, version: 1, updated: now}
@@ -109,10 +118,6 @@ func (m *memory) Create(_ context.Context, task *a2a.Task) (taskstore.TaskVersio
 
 // Update implements [taskstore.Store].
 func (m *memory) Update(_ context.Context, req *taskstore.UpdateRequest) (taskstore.TaskVersion, error) {
-	data, err := json.Marshal(req.Task)
-	if err != nil {
-		return taskstore.TaskVersionMissing, err
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.tasks[req.Task.ID]
@@ -121,6 +126,10 @@ func (m *memory) Update(_ context.Context, req *taskstore.UpdateRequest) (taskst
 	}
 	if req.PrevVersion != taskstore.TaskVersionMissing && st.version != req.PrevVersion {
 		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
+	}
+	data, err := json.Marshal(m.withWaitingLocked(req.Task))
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
 	}
 	now := m.now()
 	m.bytes += len(data) - len(st.data)
@@ -335,4 +344,5 @@ func (m *memory) dropConversation(contextID string) {
 func (m *memory) dropTask(id a2a.TaskID) {
 	m.bytes -= len(m.tasks[id].data)
 	delete(m.tasks, id)
+	m.dropWaitingLocked(id)
 }

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
@@ -226,5 +227,39 @@ func TestTurnSyncConflictFailsTheTask(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dir, "hello.txt"))
 	if err != nil || string(got) != "the host's\n" {
 		t.Fatalf("os.ReadFile(hello.txt) after the conflict = %q, %v, want the host's file", got, err)
+	}
+}
+
+func TestCanceledTaskGetsTheChangesOfItsTurn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, c := startWorkspace(t, "--workspace", "memory")
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+
+	if _, err := c.CancelTask(ctx, &a2a.CancelTaskRequest{ID: waiting.ID}); err != nil {
+		t.Fatalf("Client.CancelTask() error = %v", err)
+	}
+
+	want := &changeset{Files: map[string]string{"hello.txt": "written by fakeacp\n"}}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		task, err := c.GetTask(ctx, &a2a.GetTaskRequest{ID: waiting.ID})
+		if err != nil {
+			t.Fatalf("Client.GetTask() error = %v", err)
+		}
+		if task.Status.State != a2a.TaskStateCanceled {
+			t.Fatalf("Client.GetTask() state = %v, want %v", task.Status.State, a2a.TaskStateCanceled)
+		}
+		got := changesOf(t, task)
+		if got != nil {
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("changes of the canceled task wrong result (-want +got) diff = %s", diff)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("canceled task %s has no %s artifact after 10s", task.ID, serve.ChangesArtifact)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

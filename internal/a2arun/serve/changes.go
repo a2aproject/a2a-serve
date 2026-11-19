@@ -16,6 +16,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -24,8 +25,6 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"slices"
-	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -42,6 +41,9 @@ const (
 	omittedFileTooLarge  = "file-too-large"
 	omittedTotalTooLarge = "total-too-large"
 	omittedUnreadable    = "unreadable"
+	// omittedChanged is a file that another writer changed after the
+	// sync, so the artifact can't tell the agent's content.
+	omittedChanged = "changed-since-sync"
 )
 
 // changesLimits bound a changes artifact, which docs/reference/limits.md
@@ -56,62 +58,43 @@ type changesLimits struct {
 
 var defaultChangesLimits = changesLimits{FileBytes: 1 << 20, TotalBytes: 4 << 20, Listed: 1000}
 
-// maxPendingChanges bounds the artifacts that wait for the end of their
-// task, which a task canceled before its turn ended never takes.
-const maxPendingChanges = 1024
+// maxLoggedPaths bounds the paths of a log record of changes that no turn
+// made.
+const maxLoggedPaths = 20
 
 // taskKey is the context key of the ID of the task whose execution the
 // context belongs to.
 type taskKey struct{}
 
 // changesets turn what the sync after a turn wrote to the workspace into
-// an artifact of the turn's task, which goes out before the task's final
-// event.
+// an artifact of the turn's task. The artifact goes out before the task's
+// final event; the store adds it to a task whose final event went out
+// first, such as a canceled one.
 type changesets struct {
 	tree   fsys.FS
 	limits changesLimits
+	store  *memory
 	log    *slog.Logger
-
-	mu      sync.Mutex
-	pending map[a2a.TaskID]*a2a.Artifact
-	// order are the tasks of pending, oldest first.
-	order []a2a.TaskID
 }
 
-func newChangesets(tree fsys.FS, limits changesLimits, log *slog.Logger) *changesets {
-	return &changesets{tree: tree, limits: limits, log: log, pending: map[a2a.TaskID]*a2a.Artifact{}}
+func newChangesets(tree fsys.FS, limits changesLimits, store *memory, log *slog.Logger) *changesets {
+	return &changesets{tree: tree, limits: limits, store: store, log: log}
 }
 
-// synced keeps the artifact of changes for the task of ctx.
-func (c *changesets) synced(ctx context.Context, _ string, changes []fsys.Info) {
+// synced adds the artifact of changes to the task of ctx. Changes without
+// a task, which a process left running wrote after its last turn and its
+// release wrote back, are only logged.
+func (c *changesets) synced(ctx context.Context, key string, changes []fsys.Info) {
 	id, ok := ctx.Value(taskKey{}).(a2a.TaskID)
 	if !ok {
+		paths := make([]string, 0, min(len(changes), maxLoggedPaths))
+		for _, ch := range changes[:min(len(changes), maxLoggedPaths)] {
+			paths = append(paths, ch.Path)
+		}
+		c.log.Info("wrote back changes that the agent made after its last turn", "context", key, "changes", len(changes), "paths", paths)
 		return
 	}
-	art := c.artifact(ctx, changes)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.pending[id]; !ok {
-		c.order = append(c.order, id)
-	}
-	c.pending[id] = art
-	for len(c.order) > maxPendingChanges {
-		delete(c.pending, c.order[0])
-		c.order = c.order[1:]
-	}
-}
-
-// take returns and forgets the artifact of the task id, or nil.
-func (c *changesets) take(id a2a.TaskID) *a2a.Artifact {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	art, ok := c.pending[id]
-	if !ok {
-		return nil
-	}
-	delete(c.pending, id)
-	c.order = slices.DeleteFunc(c.order, func(o a2a.TaskID) bool { return o == id })
-	return art
+	c.store.attachArtifact(id, c.artifact(ctx, changes))
 }
 
 // artifact returns the artifact of changes: a data part that lists what
@@ -141,8 +124,10 @@ func (c *changesets) artifact(ctx context.Context, changes []fsys.Info) *a2a.Art
 		case total+ch.Size > c.limits.TotalBytes:
 			omitted = append(omitted, omission(ch, omittedTotalTooLarge))
 		default:
-			data, err := c.read(ctx, ch.Path)
+			data, err := c.read(ctx, ch)
 			switch {
+			case errors.Is(err, errChanged):
+				omitted = append(omitted, omission(ch, omittedChanged))
 			case err != nil:
 				c.log.Warn("reading a changed file for the changes artifact", "path", ch.Path, "error", err)
 				omitted = append(omitted, omission(ch, omittedUnreadable))
@@ -174,18 +159,29 @@ func (c *changesets) artifact(ctx context.Context, changes []fsys.Info) *a2a.Art
 	}
 }
 
-// read reads the file p of the tree, up to one byte past the file limit.
-func (c *changesets) read(ctx context.Context, p string) (_ []byte, err error) {
-	rc, err := c.tree.Open(ctx, p)
+// errChanged is the error of a read of a file that changed since the sync.
+var errChanged = errors.New("the file changed since the sync")
+
+// read reads the file ch of the tree, up to one byte past the file limit.
+// It fails with errChanged if the file no longer has the version of ch.
+func (c *changesets) read(ctx context.Context, ch fsys.Info) ([]byte, error) {
+	rc, err := c.tree.Open(ctx, ch.Path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if cerr := rc.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-	return io.ReadAll(io.LimitReader(rc, c.limits.FileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(rc, c.limits.FileBytes+1))
+	if err = errors.Join(err, rc.Close()); err != nil {
+		return nil, err
+	}
+	// The version after the read covers a write during it.
+	cur, err := c.tree.Stat(ctx, ch.Path)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Version != ch.Version {
+		return nil, errChanged
+	}
+	return data, nil
 }
 
 func omission(ch fsys.Info, reason string) map[string]any {
@@ -223,7 +219,7 @@ func (e *changesExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorC
 	return func(yield func(a2a.Event, error) bool) {
 		for ev, err := range e.next.Execute(ctx, execCtx) {
 			if err == nil && final(ev) {
-				if art := e.c.take(execCtx.TaskID); art != nil {
+				if art := e.c.store.takeArtifact(execCtx.TaskID); art != nil {
 					up := &a2a.TaskArtifactUpdateEvent{TaskID: execCtx.TaskID, ContextID: execCtx.ContextID, Artifact: art, LastChunk: true}
 					if !yield(up, nil) {
 						return

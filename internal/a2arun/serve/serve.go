@@ -125,7 +125,8 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	}
 	runID := cryptoutil.RandomString(8, cryptoutil.Unambiguous)
 	tree := s.workspace.tree()
-	changes := newChangesets(tree, defaultChangesLimits, srv.log)
+	mem := newMemory(defaultMemoryLimits, time.Now)
+	changes := newChangesets(tree, defaultChangesLimits, mem, srv.log)
 	workspace, mainWorkspace, err := s.workspace.build(tree, stateDir, changes.synced)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,6 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	}
 	mainEnv := base
 	mainEnv.Workspace = mainWorkspace
-	mem := newMemory(defaultMemoryLimits, time.Now)
 	srv.agent, err = a2aserve.New(ctx, a2aserve.Config{
 		Profile:  s.profile,
 		Model:    s.model,
@@ -158,7 +158,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
-		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone(), Explain: explain},
+		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone(), Explain: s.workspace.explain},
 		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}, Middleware: changes.middleware},
 		StateDir: stateDir,
 		Log:      srv.log,
