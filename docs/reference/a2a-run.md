@@ -26,6 +26,8 @@ $ a2a send --unix-socket /tmp/a2a-run.sock -a http://a2a/ "List the files of the
 
 The agent sees a placeholder in `OPENROUTER_API_KEY`, and `a2a-run` adds the real key to the agent's requests to OpenRouter. The task that the agent completes carries the files it changed, and the agent's changes reach `$PWD` when its turn ends. Stop `a2a-run` with SIGINT or SIGTERM.
 
+[Run a Sandboxed Agent for Your Program](../../examples/08-a2a-run-host/README.md) walks through a host with tools, hooks and a contact.
+
 ## Ready line
 
 Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stderr.
