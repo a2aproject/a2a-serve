@@ -922,6 +922,39 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 	}
 }
 
+func TestAgentSwitchHintCommands(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Command: []string{"fakeacp"}, Model: "provider/model", Image: "old-image"})
+	before, err := d.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = before.CheckHarness("claude")
+	if err == nil {
+		t.Fatal("CheckHarness(claude) error = nil, want switch hint")
+	}
+	hint := err.Error()
+	for _, setting := range []string{"command", "model", "image"} {
+		command := "a2a-serve config unset " + setting
+		if !strings.Contains(hint, "`"+command+"`") {
+			t.Fatalf("CheckHarness() hint = %q, want %q", hint, command)
+		}
+		if _, err := runCMD(t, "config", "unset", setting, "--dir", d.Root); err != nil {
+			t.Fatalf("%s error = %v", command, err)
+		}
+	}
+	if _, err := runCMD(t, "config", "set", "--agent", "claude", "--dir", d.Root); err != nil {
+		t.Fatalf("config set --agent claude error = %v", err)
+	}
+	got, err := d.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(&agentdir.Config{Name: "coder", Harness: "claude"}, got); diff != "" {
+		t.Fatalf("agent switch wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestConfigSetReportsWhatRemains(t *testing.T) {
 	t.Parallel()
 	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})

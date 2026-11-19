@@ -298,6 +298,56 @@ func TestSetCreatingInsideAnotherAgent(t *testing.T) {
 	}
 }
 
+func TestSetAgentSwitchWarnings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		settings agentdir.Settings
+		want     []string
+		plain    bool
+	}{
+		{name: "retains overrides", settings: agentdir.Settings{Harness: "claude"}, want: []string{"switching from opencode to claude keeps command, model, image; remove them with `a2a-serve config unset command`, `a2a-serve config unset model`, `a2a-serve config unset image`"}},
+		{name: "explicit command", settings: agentdir.Settings{Harness: "claude", Command: "fakeacp"}, want: []string{"switching from opencode to claude keeps model, image; remove them with `a2a-serve config unset model`, `a2a-serve config unset image`"}},
+		{name: "explicit model", settings: agentdir.Settings{Harness: "claude", Model: "provider/model"}, want: []string{"switching from opencode to claude keeps command, image; remove them with `a2a-serve config unset command`, `a2a-serve config unset image`"}},
+		{name: "explicit image", settings: agentdir.Settings{Harness: "claude", Image: "old-image"}, want: []string{"switching from opencode to claude keeps command, model; remove them with `a2a-serve config unset command`, `a2a-serve config unset model`"}},
+		{name: "all explicit", settings: agentdir.Settings{Harness: "claude", Command: "fakeacp", Model: "provider/model", Image: "old-image"}},
+		{name: "same agent", settings: agentdir.Settings{Harness: "opencode"}},
+		{name: "unrelated setting", settings: agentdir.Settings{Description: "updated"}},
+		{name: "no overrides", settings: agentdir.Settings{Harness: "claude"}, plain: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, dryRun := range []bool{false, true} {
+				t.Run(fmt.Sprintf("dryRun=%t", dryRun), func(t *testing.T) {
+					t.Parallel()
+					before := &agentdir.Config{Name: "coder", Harness: "opencode", Command: []string{"fakeacp"}, Model: "provider/model", Image: "old-image"}
+					if tc.plain {
+						before = &agentdir.Config{Name: "coder", Harness: "opencode"}
+					}
+					d := newAgent(t, before, nil)
+					got, err := Set(t.Context(), d, controlapi.NewClient(d), tc.settings, dryRun)
+					if err != nil {
+						t.Fatalf("Set() error = %v", err)
+					}
+					if diff := cmp.Diff(tc.want, got.Warnings); diff != "" {
+						t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+					}
+					want := before.Clone()
+					if !dryRun {
+						if _, err := tc.settings.Apply(want, d); err != nil {
+							t.Fatalf("Settings.Apply() error = %v", err)
+						}
+					}
+					if diff := cmp.Diff(want, loadConfig(t, d)); diff != "" {
+						t.Fatalf("saved config wrong result (-want +got) diff = %s", diff)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestSetWarnings(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
