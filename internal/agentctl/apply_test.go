@@ -960,7 +960,14 @@ func TestSetConcurrentlyKeepsEveryUpdate(t *testing.T) {
 	errs := make([]error, n)
 	for i := range n {
 		wg.Go(func() {
-			_, errs[i] = Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Env: []string{fmt.Sprintf("VAR%d=1", i)}}, false)
+			// Under load the writers can outlast the wait for the lock; the
+			// error asks to try again, as a user would.
+			for {
+				_, errs[i] = Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Env: []string{fmt.Sprintf("VAR%d=1", i)}}, false)
+				if _, busy := errors.AsType[*agenterr.BusyError](errs[i]); !busy || t.Context().Err() != nil {
+					return
+				}
+			}
 		})
 	}
 	wg.Wait()
