@@ -129,7 +129,10 @@ func (b *Boundary) intercept(guest net.Conn, br *bufio.Reader, g grant, route Ro
 	}
 	upstream := b.upstreamTransport(g, route.checks(), host, port, secure)
 	defer upstream.CloseIdleConnections()
-	var next http.RoundTripper = refuseUpgrades{upstream}
+	var next http.RoundTripper = upstream
+	if !route.upgrades {
+		next = refuseUpgrades{upstream}
+	}
 	if route.wrap != nil {
 		next = route.wrap(next)
 	}
@@ -323,7 +326,10 @@ func (b *Boundary) upstreamTransport(g grant, rules egressrules.Policy, host str
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 			defer cancel()
-			if len(g.addrs) == 0 {
+			// Parallel requests dial at once, so each checks into its own
+			// grant.
+			dg := g
+			if len(dg.addrs) == 0 {
 				checked, rerr := b.authorize(ctx, rules, host, port)
 				if rerr != nil {
 					b.log.write(slog.LevelWarn, "egress blocked", "destination", g.target, "reason", rerr.reason)
@@ -331,9 +337,9 @@ func (b *Boundary) upstreamTransport(g grant, rules egressrules.Policy, host str
 					return nil, rerr
 				}
 				checked.target = g.target
-				g = checked
+				dg = checked
 			}
-			c, _, err := b.dial(ctx, g)
+			c, _, err := b.dial(ctx, dg)
 			return c, err
 		},
 		ResponseHeaderTimeout: httpHeaderTimeout,

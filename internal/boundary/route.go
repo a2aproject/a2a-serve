@@ -60,6 +60,10 @@ type Route struct {
 	// refuses an intercepted connection without TLS.
 	secrets []string
 	tlsOnly bool
+	// upgrades forwards requests to switch protocols, which only the
+	// boundary's own middleware does; next refuses them under the
+	// embedder's.
+	upgrades bool
 }
 
 // Refuse refuses the connection with status and reason.
@@ -92,7 +96,8 @@ func Serve(serve func(net.Conn)) Route {
 }
 
 // HTTP intercepts the connection and sends each of its requests through
-// wrap. A nil wrap sends them to the destination.
+// wrap. A nil wrap sends them to the destination. Requests to switch
+// protocols get 501 from the transport that wrap gets.
 func HTTP(wrap func(next http.RoundTripper) http.RoundTripper) Route {
 	return Route{kind: routeHTTP, wrap: wrap}
 }
@@ -106,7 +111,7 @@ func PolicyRouter(policy func() egressrules.Policy, inject []Injection) Router {
 		r := Route{kind: routeDirect, rules: policy(), ruled: true, suggest: true}
 		for _, inj := range inject {
 			if inj.Host == host && inj.Port == port {
-				r.kind, r.wrap, r.secrets, r.tlsOnly = routeHTTP, inj.wrap, inj.Secrets, true
+				r.kind, r.wrap, r.secrets, r.tlsOnly, r.upgrades = routeHTTP, inj.wrap, inj.Secrets, true, true
 				break
 			}
 		}
@@ -124,7 +129,7 @@ func (r Route) Inject(inj Injection, rules egressrules.Policy) Route {
 	case routeRefuse:
 		return r
 	case routeDirect:
-		r.kind, r.wrap = routeHTTP, inj.wrap
+		r.kind, r.wrap, r.upgrades = routeHTTP, inj.wrap, true
 	case routeHTTP:
 		if wrap := r.wrap; wrap != nil {
 			r.wrap = func(next http.RoundTripper) http.RoundTripper { return wrap(inj.wrap(next)) }
