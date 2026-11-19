@@ -33,11 +33,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/tools"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -67,7 +65,7 @@ func TestMain(m *testing.M) {
 // environment returns an Environment in its own directories.
 func environment(t *testing.T, pool string) a2aserve.Environment {
 	t.Helper()
-	return a2aserve.Environment{Workspace: workspace.Dir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home"), Pool: pool}
+	return a2aserve.Environment{Workspace: a2aserve.SharedDir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home"), Pool: pool}
 }
 
 // newAgent starts an agent of fakeacp without a sandbox, with cfg, and
@@ -88,7 +86,7 @@ func newAgent(t *testing.T, cfg a2aserve.Config) *a2aserve.Agent {
 // returns it with the function that cancels the context of New.
 func startAgent(t *testing.T, cfg a2aserve.Config) (*a2aserve.Agent, context.CancelFunc) {
 	t.Helper()
-	cfg.Profile = agent.Command(fakeACP)
+	cfg.Profile = a2aserve.Command(fakeACP)
 	cfg.Runtime = sandbox.Local()
 	cfg.StateDir = testutil.ShortTempDir(t)
 	if cfg.Main.Workspace == nil {
@@ -180,13 +178,19 @@ func TestAgentAnswersAndDecidesTools(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
-		tools tools.Decider
+		tools []a2aserve.ToolDecider
 		text  string
 		want  string
 	}{
 		{name: "reply", text: "env HOME", want: "env HOME="},
-		{name: "allowed command", tools: tools.Rules{Allow: []string{"command:whoami"}}, text: "whoami", want: "Ran whoami (allow)."},
-		{name: "denied command", tools: tools.Rules{Deny: []string{"execute"}}, text: "whoami", want: "whoami denied."},
+		{name: "allowed command", tools: []a2aserve.ToolDecider{a2aserve.ToolRules{Allow: []string{"command:whoami"}}}, text: "whoami", want: "Ran whoami (allow)."},
+		{name: "denied command", tools: []a2aserve.ToolDecider{a2aserve.ToolRules{Deny: []string{"execute"}}}, text: "whoami", want: "whoami denied."},
+		{
+			name:  "first decider that decides answers",
+			tools: []a2aserve.ToolDecider{nil, a2aserve.ToolRules{Allow: []string{"read"}}, a2aserve.ToolRules{Deny: []string{"execute"}}, a2aserve.ToolRules{Allow: []string{"execute"}}},
+			text:  "whoami",
+			want:  "whoami denied.",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,6 +327,36 @@ func TestMainGetsConfigMainWithoutAskingCallers(t *testing.T) {
 
 	if got == "" {
 		t.Fatalf("Client.SendMessage(pid) in the main process = %q, want its pid", got)
+	}
+}
+
+func TestNewRefusesAnInvalidProfile(t *testing.T) {
+	t.Parallel()
+	for name, p := range map[string]a2aserve.Profile{"zero value": {}, "command without argv": a2aserve.Command()} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a, err := a2aserve.New(t.Context(), a2aserve.Config{Profile: p, Runtime: sandbox.Local(), Main: environment(t, "")})
+			if err == nil {
+				t.Fatalf("a2aserve.New() = %v, nil, want an error", a)
+			}
+		})
+	}
+}
+
+func TestNewWithoutRuntimeRunsDocker(t *testing.T) {
+	log := sandboxtest.FakeDocker(t, sandboxtest.NoImagesDocker)
+
+	a, err := a2aserve.New(t.Context(), a2aserve.Config{Profile: a2aserve.Opencode(), Main: environment(t, ""), StateDir: testutil.ShortTempDir(t)})
+
+	if err == nil {
+		t.Fatalf("a2aserve.New() with a docker that fails = %v, nil, want an error", a)
+	}
+	calls, rerr := os.ReadFile(log)
+	if rerr != nil {
+		t.Fatalf("os.ReadFile(docker log) error = %v", rerr)
+	}
+	if len(calls) == 0 {
+		t.Fatal("a2aserve.New() without a Runtime ran no docker command, want it to run the agent in Docker")
 	}
 }
 

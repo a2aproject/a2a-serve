@@ -20,19 +20,19 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/core/tools"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 func TestToolDeciderReadsCurrentRules(t *testing.T) {
 	t.Parallel()
-	rules := tools.Rules{}
-	decider := &toolDecider{tools: tools.DeciderFunc(func(ctx context.Context, c tools.Call) (tools.Decision, bool, error) { return rules.Decide(ctx, c) })}
+	rules := toolrules.Rules{}
+	decider := &toolDecider{tools: func(ctx context.Context, c Call) (Decision, bool, error) { return decideBy(rules)(ctx, c) }}
 	q := a2aacp.Question{Options: []string{a2aacp.OptionOnce, a2aacp.OptionReject}, Tool: &a2aacp.ToolCall{Kind: "read"}}
 
 	if _, ok := decider.AutoAnswer(context.Background(), nil, q); ok {
 		t.Fatalf("AutoAnswer() without rules ok = true, want false")
 	}
-	rules = tools.Rules{Allow: []string{"read"}}
+	rules = toolrules.Rules{Allow: []string{"read"}}
 	got, ok := decider.AutoAnswer(context.Background(), nil, q)
 	if !ok || got.Option != a2aacp.OptionOnce {
 		t.Fatalf("AutoAnswer() after allowing read = %+v, %v, want %q", got, ok, a2aacp.OptionOnce)
@@ -41,12 +41,12 @@ func TestToolDeciderReadsCurrentRules(t *testing.T) {
 
 func TestToolDeciderAnswers(t *testing.T) {
 	t.Parallel()
-	rules := tools.Rules{
+	rules := toolrules.Rules{
 		Allow: []string{"tool:grafana.*", "command:kubectl get *"},
 		Deny:  []string{"execute", "other"},
 	}
 	decider := &toolDecider{
-		tools:   rules,
+		tools:   decideBy(rules),
 		servers: func() []string { return []string{"grafana"} },
 	}
 	options := []string{a2aacp.OptionAlways, a2aacp.OptionOnce, a2aacp.OptionReject}
@@ -78,5 +78,12 @@ func TestToolDeciderAnswers(t *testing.T) {
 				t.Fatalf("AutoAnswer() = %q, %v, want %q, %v", got.Option, ok, tc.want, tc.wantOK)
 			}
 		})
+	}
+}
+
+func decideBy(rules toolrules.Rules) DecideTool {
+	return func(_ context.Context, c Call) (Decision, bool, error) {
+		d, ok := rules.Decide(c.Call)
+		return Decision{Allow: d.Allow, Rule: d.Entry}, ok, nil
 	}
 }

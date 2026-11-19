@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agent_test
+package a2aserve_test
 
 import (
 	"errors"
@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/core/agent"
+	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
@@ -29,17 +29,17 @@ func TestProfile(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
-		profile   agent.Profile
+		profile   a2aserve.Profile
 		wantName  string
 		wantImage string
 		wantArgv  []string
 	}{
-		{name: "opencode", profile: agent.Opencode(), wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
-		{name: "claude", profile: agent.Claude(), wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
-		{name: "command", profile: agent.Command("/usr/bin/gemini", "--experimental-acp"), wantName: "gemini", wantArgv: []string{"/usr/bin/gemini", "--experimental-acp"}},
-		{name: "command named like a profile has no image", profile: agent.Command("opencode", "acp"), wantName: "opencode", wantArgv: []string{"opencode", "acp"}},
-		{name: "command without argv", profile: agent.Command()},
-		{name: "zero value", profile: agent.Profile{}},
+		{name: "opencode", profile: a2aserve.Opencode(), wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
+		{name: "claude", profile: a2aserve.Claude(), wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
+		{name: "command", profile: a2aserve.Command("/usr/bin/gemini", "--experimental-acp"), wantName: "gemini", wantArgv: []string{"/usr/bin/gemini", "--experimental-acp"}},
+		{name: "command named like a profile has no image", profile: a2aserve.Command("opencode", "acp"), wantName: "opencode", wantArgv: []string{"opencode", "acp"}},
+		{name: "command without argv", profile: a2aserve.Command()},
+		{name: "zero value", profile: a2aserve.Profile{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +57,7 @@ func TestProfile(t *testing.T) {
 	}
 }
 
-func TestLookup(t *testing.T) {
+func TestLookupProfile(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -77,9 +77,9 @@ func TestLookup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := agent.Lookup(tc.agent, tc.argv)
+			p, err := a2aserve.LookupProfile(tc.agent, tc.argv)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("agent.Lookup() error = %v, want error %v", err, tc.wantErr)
+				t.Fatalf("a2aserve.LookupProfile() error = %v, want error %v", err, tc.wantErr)
 			}
 			if err != nil {
 				return
@@ -97,24 +97,24 @@ func TestLookup(t *testing.T) {
 	}
 }
 
-func TestLookupUnknownAgentError(t *testing.T) {
+func TestLookupProfileUnknownAgentError(t *testing.T) {
 	t.Parallel()
-	_, err := agent.Lookup("gemini", nil)
+	_, err := a2aserve.LookupProfile("gemini", nil)
 	var unknown *agentprofile.UnknownAgentError
 	if !errors.As(err, &unknown) {
-		t.Fatalf("agent.Lookup() error = %v, want an *UnknownAgentError", err)
+		t.Fatalf("a2aserve.LookupProfile() error = %v, want an *UnknownAgentError", err)
 	}
-	if diff := cmp.Diff(&agentprofile.UnknownAgentError{Name: "gemini", Known: agent.Names()}, unknown); diff != "" {
-		t.Errorf("agent.Lookup() error wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(&agentprofile.UnknownAgentError{Name: "gemini", Known: a2aserve.ProfileNames()}, unknown); diff != "" {
+		t.Errorf("a2aserve.LookupProfile() error wrong result (-want +got) diff = %s", diff)
 	}
 }
 
-func TestLookupArgvIsCopied(t *testing.T) {
+func TestLookupProfileArgvIsCopied(t *testing.T) {
 	t.Parallel()
 	argv := []string{"gemini", "--experimental-acp"}
-	p, err := agent.Lookup("gemini", argv)
+	p, err := a2aserve.LookupProfile("gemini", argv)
 	if err != nil {
-		t.Fatalf("agent.Lookup() error = %v", err)
+		t.Fatalf("a2aserve.LookupProfile() error = %v", err)
 	}
 	argv[1] = "changed"
 	if diff := cmp.Diff([]string{"gemini", "--experimental-acp"}, p.Argv("")); diff != "" {
@@ -122,44 +122,13 @@ func TestLookupArgvIsCopied(t *testing.T) {
 	}
 }
 
-func TestNames(t *testing.T) {
+func TestProfileNames(t *testing.T) {
 	t.Parallel()
-	got := agent.Names()
+	got := a2aserve.ProfileNames()
 	if diff := cmp.Diff([]string{"claude", "opencode"}, got); diff != "" {
-		t.Errorf("agent.Names() wrong result (-want +got) diff = %s", diff)
+		t.Errorf("a2aserve.ProfileNames() wrong result (-want +got) diff = %s", diff)
 	}
 	if !slices.IsSorted(got) {
-		t.Errorf("agent.Names() = %v, want sorted", got)
-	}
-}
-
-func TestOf(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		profile  any
-		wantName string
-		wantErr  bool
-	}{
-		{name: "opencode", profile: agent.Opencode(), wantName: "opencode"},
-		{name: "command", profile: agent.Command("gemini", "--acp"), wantName: "gemini"},
-		{name: "internal profile", profile: agentprofile.Claude(), wantName: "claude"},
-		{name: "zero value", profile: agent.Profile{}, wantErr: true},
-		{name: "other type", profile: "opencode", wantErr: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			p, err := agentprofile.Of(tc.profile)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("agentprofile.Of() error = %v, want error %v", err, tc.wantErr)
-			}
-			if err != nil {
-				return
-			}
-			if got := p.Name(); got != tc.wantName {
-				t.Errorf("agentprofile.Of().Name() = %q, want %q", got, tc.wantName)
-			}
-		})
+		t.Errorf("a2aserve.ProfileNames() = %v, want sorted", got)
 	}
 }

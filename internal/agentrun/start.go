@@ -31,7 +31,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
@@ -310,7 +309,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	if env.Workspace == nil {
 		return nil, errors.New("no workspace to mount")
 	}
-	att, err := env.Workspace.Attach(ctx, key)
+	att, err := env.Workspace(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +411,7 @@ func (r *Runner) homeMounts(env Environment) []agentprofile.Mount {
 // the workspace first at the path the process sees it, the directory a
 // container mounts there in its place, if another, and the mounts for a
 // custom runtime.
-func workspaceMounts(att workspace.Attachment, extra []sandbox.Mount) ([]agentprofile.Mount, string, []sandbox.Mount) {
+func workspaceMounts(att Attachment, extra []sandbox.Mount) ([]agentprofile.Mount, string, []sandbox.Mount) {
 	seen := cmp.Or(att.Path, att.Dir)
 	out := []agentprofile.Mount{{Src: seen, Dst: seen, ReadOnly: att.ReadOnly}}
 	custom := []sandbox.Mount{{Host: att.Dir, Path: seen, ReadOnly: att.ReadOnly}}

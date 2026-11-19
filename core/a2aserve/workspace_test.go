@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workspace_test
+package a2aserve_test
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/core/workspace"
+	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -51,7 +51,7 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-func attach(t *testing.T, w workspace.Workspace, key string) workspace.Attachment {
+func attach(t *testing.T, w a2aserve.Workspace, key string) a2aserve.Attachment {
 	t.Helper()
 	a, err := w.Attach(context.Background(), key)
 	if err != nil {
@@ -63,20 +63,20 @@ func attach(t *testing.T, w workspace.Workspace, key string) workspace.Attachmen
 	return a
 }
 
-func TestDir(t *testing.T) {
+func TestSharedDir(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	w := workspace.Dir(dir)
+	w := a2aserve.SharedDir(dir)
 	got := attach(t, w, "a")
-	want := workspace.Attachment{Dir: dir}
+	want := a2aserve.Attachment{Dir: dir}
 	if diff := cmp.Diff(want, got, cmp.FilterPath(func(p cmp.Path) bool { return p.Last().String() == ".Release" }, cmp.Ignore())); diff != "" {
-		t.Fatalf("Dir().Attach() wrong attachment (-want +got) diff = %s", diff)
+		t.Fatalf("SharedDir().Attach() wrong attachment (-want +got) diff = %s", diff)
 	}
 	if err := got.Release(); err != nil {
 		t.Fatalf("Release() error = %v", err)
 	}
 	if other := attach(t, w, "b"); other.Dir != dir {
-		t.Fatalf("Dir().Attach(b).Dir = %q, want the shared %q", other.Dir, dir)
+		t.Fatalf("SharedDir().Attach(b).Dir = %q, want the shared %q", other.Dir, dir)
 	}
 }
 
@@ -85,11 +85,11 @@ func TestReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {
 		name string
-		w    workspace.Workspace
-		want workspace.Attachment
+		w    a2aserve.Workspace
+		want a2aserve.Attachment
 	}{
-		{name: "dir", w: workspace.ReadOnly(workspace.Dir(dir)), want: workspace.Attachment{Dir: dir, ReadOnly: true}},
-		{name: "empty", w: workspace.ReadOnly(workspace.Empty(newRoot(t), "/work")), want: workspace.Attachment{Path: "/work", ReadOnly: true}},
+		{name: "dir", w: a2aserve.ReadOnly(a2aserve.SharedDir(dir)), want: a2aserve.Attachment{Dir: dir, ReadOnly: true}},
+		{name: "empty", w: a2aserve.ReadOnly(a2aserve.EmptyDir(newRoot(t), "/work")), want: a2aserve.Attachment{Path: "/work", ReadOnly: true}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,7 +112,7 @@ func TestCopiesCopyOnceAndKeepEdits(t *testing.T) {
 	writeFile(t, filepath.Join(src, "main.go"), "package main")
 	writeFile(t, filepath.Join(src, "sub", "a.txt"), "a")
 	writeFile(t, filepath.Join(src, ".a2a", "state", "secrets"), "KEY=v")
-	w := workspace.Copies(src, workspace.CopyOptions{Dir: newRoot(t)})
+	w := a2aserve.Copies(src, a2aserve.CopyOptions{Dir: newRoot(t)})
 
 	first := attach(t, w, "user:pair:anna#0123")
 	if first.Path != src {
@@ -155,7 +155,7 @@ func TestCopiesKeysGetOwnCopies(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "main.go"), "package main")
-	w := workspace.Copies(src, workspace.CopyOptions{Dir: newRoot(t)})
+	w := a2aserve.Copies(src, a2aserve.CopyOptions{Dir: newRoot(t)})
 	keys := []string{"plain", "user:pair:anna#0123abcd", "a/b/../c", "../escape", "..", ".", "ключ", "with space", "a_b", "a:b", strings.Repeat("x", 300), strings.Repeat("x", 301)}
 	dirs := map[string]string{}
 	for _, key := range keys {
@@ -182,8 +182,8 @@ func TestCopiesDirectoryNameIsDeterministic(t *testing.T) {
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "main.go"), "package main")
 	root := newRoot(t)
-	a := attach(t, workspace.Copies(src, workspace.CopyOptions{Dir: root}), "user:pair:anna#0123")
-	b := attach(t, workspace.Copies(src, workspace.CopyOptions{Dir: root}), "user:pair:anna#0123")
+	a := attach(t, a2aserve.Copies(src, a2aserve.CopyOptions{Dir: root}), "user:pair:anna#0123")
+	b := attach(t, a2aserve.Copies(src, a2aserve.CopyOptions{Dir: root}), "user:pair:anna#0123")
 	if a.Dir != b.Dir {
 		t.Fatalf("Attach().Dir = %q and %q, want the same for the same key", a.Dir, b.Dir)
 	}
@@ -196,19 +196,19 @@ func TestCopiesLimits(t *testing.T) {
 	writeFile(t, filepath.Join(src, "small"), "x")
 	tests := []struct {
 		name string
-		opts workspace.CopyOptions
+		opts a2aserve.CopyOptions
 		keys []string
 		want error
 	}{
-		{name: "bytes", opts: workspace.CopyOptions{MaxBytes: 1024}, keys: []string{"a"}, want: workspace.ErrTooLarge},
-		{name: "entries", opts: workspace.CopyOptions{MaxEntries: 1}, keys: []string{"a"}, want: workspace.ErrTooLarge},
-		{name: "copies", opts: workspace.CopyOptions{MaxCopies: 1}, keys: []string{"a", "b"}, want: workspace.ErrTooMany},
+		{name: "bytes", opts: a2aserve.CopyOptions{MaxBytes: 1024}, keys: []string{"a"}, want: a2aserve.ErrWorkspaceTooLarge},
+		{name: "entries", opts: a2aserve.CopyOptions{MaxEntries: 1}, keys: []string{"a"}, want: a2aserve.ErrWorkspaceTooLarge},
+		{name: "copies", opts: a2aserve.CopyOptions{MaxCopies: 1}, keys: []string{"a", "b"}, want: a2aserve.ErrTooManyCopies},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tc.opts.Dir = newRoot(t)
-			w := workspace.Copies(src, tc.opts)
+			w := a2aserve.Copies(src, tc.opts)
 			var err error
 			for i, key := range tc.keys {
 				_, err = w.Attach(context.Background(), key)
@@ -228,10 +228,10 @@ func TestCopiesFailedCopyLeavesNone(t *testing.T) {
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "big"), strings.Repeat("x", 2048))
 	root := newRoot(t)
-	w := workspace.Copies(src, workspace.CopyOptions{Dir: root, MaxBytes: 1024})
+	w := a2aserve.Copies(src, a2aserve.CopyOptions{Dir: root, MaxBytes: 1024})
 	a, err := w.Attach(context.Background(), "k")
-	if !errors.Is(err, workspace.ErrTooLarge) {
-		t.Fatalf("Attach() = %+v, %v, want %v", a, err, workspace.ErrTooLarge)
+	if !errors.Is(err, a2aserve.ErrWorkspaceTooLarge) {
+		t.Fatalf("Attach() = %+v, %v, want %v", a, err, a2aserve.ErrWorkspaceTooLarge)
 	}
 	if err := os.Remove(filepath.Join(src, "big")); err != nil {
 		t.Fatal(err)
@@ -247,7 +247,7 @@ func TestCopiesAttachConcurrently(t *testing.T) {
 	for i := range 20 {
 		writeFile(t, filepath.Join(src, "d", string(rune('a'+i))), "x")
 	}
-	w := workspace.Copies(src, workspace.CopyOptions{Dir: newRoot(t)})
+	w := a2aserve.Copies(src, a2aserve.CopyOptions{Dir: newRoot(t)})
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
@@ -270,7 +270,7 @@ func TestCopiesAttachConcurrently(t *testing.T) {
 
 func TestCopiesMissingSource(t *testing.T) {
 	t.Parallel()
-	w := workspace.Copies(filepath.Join(t.TempDir(), "missing"), workspace.CopyOptions{Dir: newRoot(t)})
+	w := a2aserve.Copies(filepath.Join(t.TempDir(), "missing"), a2aserve.CopyOptions{Dir: newRoot(t)})
 	if a, err := w.Attach(context.Background(), "k"); err == nil {
 		t.Fatalf("Attach() = %+v, nil, want an error", a)
 	}
@@ -278,9 +278,9 @@ func TestCopiesMissingSource(t *testing.T) {
 
 func TestAttachEmptyKey(t *testing.T) {
 	t.Parallel()
-	for name, w := range map[string]workspace.Workspace{
-		"copies": workspace.Copies(t.TempDir(), workspace.CopyOptions{Dir: newRoot(t)}),
-		"empty":  workspace.Empty(newRoot(t), ""),
+	for name, w := range map[string]a2aserve.Workspace{
+		"copies": a2aserve.Copies(t.TempDir(), a2aserve.CopyOptions{Dir: newRoot(t)}),
+		"empty":  a2aserve.EmptyDir(newRoot(t), ""),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -291,7 +291,7 @@ func TestAttachEmptyKey(t *testing.T) {
 	}
 }
 
-func TestEmpty(t *testing.T) {
+func TestEmptyDir(t *testing.T) {
 	t.Parallel()
 	root := newRoot(t)
 	tests := []struct {
@@ -306,7 +306,7 @@ func TestEmpty(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			w := workspace.Empty(filepath.Join(root, tc.name), tc.at)
+			w := a2aserve.EmptyDir(filepath.Join(root, tc.name), tc.at)
 			a := attach(t, w, tc.key)
 			if want := tc.wantPath(a.Dir); a.Path != want {
 				t.Fatalf("Attach().Path = %q, want %q", a.Path, want)

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package agent lists the coding agents that can be served as A2A agents,
-// and describes custom ones.
-package agent
+package a2aserve
 
 import (
 	"path/filepath"
@@ -23,16 +21,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
-func init() {
-	agentprofile.RegisterUnwrap(func(v any) (agentprofile.Profile, bool) {
-		p, ok := v.(Profile)
-		return p.profile, ok && p.profile != nil
-	})
-}
-
 // Profile is a coding agent that can be served: its command, its image, and
 // how its home is prepared. The zero value is invalid; get one from
-// [Opencode], [Claude], [Command] or [Lookup].
+// [Opencode], [Claude], [Command] or [LookupProfile].
 type Profile struct {
 	profile agentprofile.Profile
 }
@@ -53,10 +44,10 @@ func Command(argv ...string) Profile {
 	return Profile{agentprofile.Custom(filepath.Base(argv[0]), argv)}
 }
 
-// Lookup returns the profile named name. A non-empty argv replaces the
-// command line of the profile, keeping its image and home setup, and allows
-// an agent that has no profile.
-func Lookup(name string, argv []string) (Profile, error) {
+// LookupProfile returns the profile named name. A non-empty argv replaces
+// the command line of the profile, keeping its image and home setup, and
+// allows an agent that has no profile.
+func LookupProfile(name string, argv []string) (Profile, error) {
 	p, err := agentprofile.Lookup(name, slices.Clone(argv))
 	if err != nil {
 		return Profile{}, err
@@ -64,8 +55,8 @@ func Lookup(name string, argv []string) (Profile, error) {
 	return Profile{p}, nil
 }
 
-// Names lists the names of the known profiles, sorted.
-func Names() []string { return agentprofile.ProfileNames() }
+// ProfileNames lists the names of the known profiles, sorted.
+func ProfileNames() []string { return agentprofile.ProfileNames() }
 
 // Name returns the name of the agent, such as "opencode".
 func (p Profile) Name() string {

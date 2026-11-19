@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workspace
+package a2aserve
 
 import (
 	"context"
@@ -25,17 +25,18 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
-// Errors of Copies. They are the errors the copying returns, wrapped with the
-// reason.
+// Errors of [Copies]. They are the errors the copying returns, wrapped with
+// the reason.
 var (
-	// ErrTooLarge is returned for a directory over the limits of a copy.
-	ErrTooLarge = workspaces.ErrTooLarge
-	// ErrTooMany is returned for a new copy once Copies keeps the most it
-	// may.
-	ErrTooMany = workspaces.ErrTooMany
+	// ErrWorkspaceTooLarge is returned for a directory over the limits of a
+	// copy.
+	ErrWorkspaceTooLarge = workspaces.ErrTooLarge
+	// ErrTooManyCopies is returned for a new copy once Copies keeps the
+	// most it may.
+	ErrTooManyCopies = workspaces.ErrTooMany
 )
 
-// CopyOptions configures Copies.
+// CopyOptions configures [Copies].
 type CopyOptions struct {
 	// Dir is where the copies live. It holds one directory per key, named
 	// after it: the key with the characters outside letters, digits, "." and
@@ -58,7 +59,7 @@ type CopyOptions struct {
 // changes, and src stays unchanged. Release marks the copy as used and keeps
 // it.
 func Copies(src string, opts CopyOptions) Workspace {
-	return &private{
+	return &privateWorkspace{
 		engine: &workspaces.Copies{Root: opts.Dir, MaxBytes: opts.MaxBytes, MaxEntries: opts.MaxEntries, MaxCopies: opts.MaxCopies},
 		src:    src,
 		at:     src,
@@ -66,19 +67,19 @@ func Copies(src string, opts CopyOptions) Workspace {
 	}
 }
 
-// Empty returns the workspace that gives each key an empty directory under
-// dir, named as the copies of Copies are. The process sees it at the path at,
+// EmptyDir returns the workspace that gives each key an empty directory
+// under dir, named as the copies of Copies are. The process sees it at the path at,
 // or at its place on the host if at is empty. Release marks the directory as
 // used and keeps it.
-func Empty(dir string, at string) Workspace {
-	return &private{
+func EmptyDir(dir string, at string) Workspace {
+	return &privateWorkspace{
 		engine: workspaces.NewCopies(dir),
 		at:     at,
 		mode:   workspaces.StorageEmpty,
 	}
 }
 
-type private struct {
+type privateWorkspace struct {
 	engine *workspaces.Copies
 	src    string
 	at     string
@@ -93,9 +94,9 @@ type keyLock struct {
 	users int
 }
 
-func (p *private) Attach(ctx context.Context, key string) (Attachment, error) {
+func (p *privateWorkspace) Attach(ctx context.Context, key string) (Attachment, error) {
 	if key == "" {
-		return Attachment{}, errors.New("workspace: empty key")
+		return Attachment{}, errors.New("a2aserve: empty workspace key")
 	}
 	name := dirName(key)
 	unlock := p.lock(name)
@@ -113,7 +114,7 @@ func (p *private) Attach(ctx context.Context, key string) (Attachment, error) {
 
 // lock serializes the preparation of one directory, since the engine expects
 // a single copy per directory at a time. It forgets the locks nobody holds.
-func (p *private) lock(name string) (unlock func()) {
+func (p *privateWorkspace) lock(name string) (unlock func()) {
 	p.mu.Lock()
 	if p.locks == nil {
 		p.locks = map[string]*keyLock{}

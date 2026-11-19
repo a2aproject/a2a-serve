@@ -42,7 +42,7 @@
 * Separate what is fixed for an object's life from what applies live, and pass live values as functions or interfaces that read the current state.
 * The public API speaks A2A. ACP is an implementation detail of running the agent, and shows only where a custom agent has to speak it.
 * Imports between public packages point one way, and none imports the package that composes them. Enforce the import rules with a test.
-* Name packages and types so they read without stutter (`tools.Rules`, `agent.Profile`), and avoid names our users know with another meaning: `Runner` is ADK's term, `Controller` is Kubernetes'.
+* Name packages and types so they read without stutter (`egress.Policy`, `sandbox.Runtime`), and avoid names our users know with another meaning: `Runner` is ADK's term, `Controller` is Kubernetes'.
 
 ### Correctness
 

@@ -30,7 +30,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -745,7 +744,7 @@ func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 		sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{Secrets: []string{"KEY"}} }, st),
 		tasks:     st.Tasks("", nil),
 	}
-	env := agentrun.Environment{Workspace: workspace.Dir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home")}
+	env := agentrun.Environment{Workspace: sharedWorkspace(t.TempDir()), Home: filepath.Join(t.TempDir(), "home")}
 	engine, err := agentrun.New(agentrun.Config{
 		Profile:  agentprofile.Custom("fake", []string{fakeACP}),
 		Runtime:  sandbox.Local(),
@@ -789,5 +788,11 @@ func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 	release()
 	if _, ok := engine.StartedWith(key); ok {
 		t.Fatalf("Server.admitTurn() kept the process that started with the old sandbox, want it stopped")
+	}
+}
+
+func sharedWorkspace(dir string) agentrun.Workspace {
+	return func(context.Context, string) (agentrun.Attachment, error) {
+		return agentrun.Attachment{Dir: dir, Release: func() error { return nil }}, nil
 	}
 }

@@ -35,10 +35,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
-	"github.com/a2aproject/a2a-serve/core/agent"
 	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -65,7 +63,7 @@ import (
 // build creates later, when they run.
 func (s *Server) newAgent(ctx context.Context, opts Options) error {
 	cfg := s.rt.Config()
-	profile, err := agent.Lookup(cfg.Harness, cfg.Command)
+	profile, err := a2aserve.LookupProfile(cfg.Harness, cfg.Command)
 	if err != nil {
 		return err
 	}
@@ -86,7 +84,7 @@ func (s *Server) newAgent(ctx context.Context, opts Options) error {
 		Model:   cfg.Model,
 		Runtime: sandboxRuntime(cfg, opts),
 		Egress:  b,
-		Tools:   s.toolDecider(),
+		Tools:   s.toolDeciders(),
 		Main:    main,
 		Callers: callers{s},
 		Pools: map[string]a2aserve.Pool{
@@ -341,14 +339,14 @@ func (s *Server) workspaceOf(env *a2aserve.Environment, proc *agentrun.ProcessOp
 	if local {
 		storage = workspaces.StorageShared
 	}
-	w := workspace.Dir(ws.Src)
+	w := a2aserve.SharedDir(ws.Src)
 	switch {
 	case ws.Dst != ws.Src:
 		w = pathError{err: &agentprofile.WorkspacePathError{Src: ws.Src, Dst: ws.Dst}}
 	case storage == workspaces.StorageOwn || storage == workspaces.StorageEmpty:
 		w = &privateWorkspace{copies: s.copies, name: workspaceName(key), owner: owner, storage: storage, src: ws.Src}
 	case ws.ReadOnly && !local || storage == workspaces.StorageReadOnly:
-		w = workspace.ReadOnly(w)
+		w = a2aserve.ReadOnly(w)
 	}
 	env.Workspace = w
 	for _, m := range grantMounts(storage, mounts)[1:] {
@@ -392,22 +390,22 @@ type privateWorkspace struct {
 	src                  string
 }
 
-func (p *privateWorkspace) Attach(ctx context.Context, _ string) (workspace.Attachment, error) {
+func (p *privateWorkspace) Attach(ctx context.Context, _ string) (a2aserve.Attachment, error) {
 	dir, err := p.copies.Prepare(ctx, p.name, p.owner, p.storage, p.src)
 	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
-		return workspace.Attachment{}, &agentcfg.CopyError{Err: err}
+		return a2aserve.Attachment{}, &agentcfg.CopyError{Err: err}
 	}
 	if err != nil {
-		return workspace.Attachment{}, err
+		return a2aserve.Attachment{}, err
 	}
-	return workspace.Attachment{Dir: dir, Path: p.src, Release: func() error { return nil }}, nil
+	return a2aserve.Attachment{Dir: dir, Path: p.src, Release: func() error { return nil }}, nil
 }
 
 // pathError is a workspace that a process can't see at its own path.
 type pathError struct{ err error }
 
-func (p pathError) Attach(context.Context, string) (workspace.Attachment, error) {
-	return workspace.Attachment{}, p.err
+func (p pathError) Attach(context.Context, string) (a2aserve.Attachment, error) {
+	return a2aserve.Attachment{}, p.err
 }
 
 // sessionStore gives the agent the sessions of the conversations in the

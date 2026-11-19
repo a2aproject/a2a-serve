@@ -28,7 +28,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
-	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
@@ -66,6 +65,12 @@ func privateDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func sharedDir(dir string) Workspace {
+	return func(context.Context, string) (Attachment, error) {
+		return Attachment{Dir: dir, Release: func() error { return nil }}, nil
+	}
 }
 
 func newTestRunner(t *testing.T, cfg Config) *Runner {
@@ -130,7 +135,7 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 				procHome = filepath.Join(state, "users", tc.name)
 			}
 			env := Environment{
-				Workspace: workspace.Dir(root),
+				Workspace: sharedDir(root),
 				Name:      "a2a-coder-" + tc.name,
 				Home:      procHome,
 				Hide:      []string{agentDir},

@@ -83,7 +83,7 @@ func TestProfileNamesAreNotReserved(t *testing.T) {
 	t.Parallel()
 	for _, name := range agentprofile.ProfileNames() {
 		if slices.Contains(agentdir.ReservedHarnesses, name) {
-			t.Fatalf("agent.ProfileNames() = %v, want none of the reserved %v", agentprofile.ProfileNames(), agentdir.ReservedHarnesses)
+			t.Fatalf("agentprofile.ProfileNames() = %v, want none of the reserved %v", agentprofile.ProfileNames(), agentdir.ReservedHarnesses)
 		}
 	}
 }

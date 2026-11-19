@@ -57,13 +57,10 @@ var sharedLeaves = []string{
 // package may import: egress <- sandbox <- a2aserve, and no package imports
 // a2aserve.
 var publicImports = map[string][]string{
-	"egress":    nil,
-	"sandbox":   {"egress"},
-	"workspace": nil,
-	"tools":     nil,
-	"agent":     nil,
-	"approval":  nil,
-	"a2aserve":  {"agent", "egress", "sandbox", "tools", "workspace"},
+	"egress":   nil,
+	"sandbox":  {"egress"},
+	"approval": nil,
+	"a2aserve": {"egress", "sandbox"},
 }
 
 // platforms are the systems whose files the test lists, since go list sees
