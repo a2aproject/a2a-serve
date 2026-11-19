@@ -107,8 +107,23 @@ func (r *Runner) pruneContainers(ctx context.Context) error {
 	return nil
 }
 
-// envFilesDir holds the env files of containers.
-func (r *Runner) envFilesDir() string { return filepath.Join(r.stateDir, "run", "env") }
+// envFilesDir holds the env files of containers: in the state directory of
+// the Docker runtime, if it has one.
+func (r *Runner) envFilesDir() string {
+	if r.rt.info.StateDir != "" {
+		return filepath.Join(r.rt.info.StateDir, "env")
+	}
+	return filepath.Join(r.stateDir, "run", "env")
+}
+
+// egressDir holds the sockets of the egress boundaries of containers: in
+// the state directory of the Docker runtime, if it has one.
+func (r *Runner) egressDir() string {
+	if r.rt.info.StateDir != "" {
+		return filepath.Join(r.rt.info.StateDir, "egress")
+	}
+	return r.socketDir()
+}
 
 // pruneEnvFiles removes the env files of containers that an earlier run
 // left behind, before any container starts.

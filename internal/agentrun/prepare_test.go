@@ -171,20 +171,38 @@ func TestPrepareRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
 
 func TestPruneEnvFilesRemovesLeftoversOfEarlierRun(t *testing.T) {
 	t.Parallel()
-	state := t.TempDir()
-	envFiles := filepath.Join(state, "run", "env")
-	if err := os.MkdirAll(envFiles, 0o700); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		// docker is the state directory of the Docker runtime, and envFiles
+		// where the env files are under the state directories.
+		docker, envFiles string
+	}{
+		{name: "state directory of the agent", envFiles: "agent/run/env"},
+		{name: "state directory of the runtime", docker: "docker", envFiles: "docker/env"},
 	}
-	leftover := filepath.Join(envFiles, "a2a-env-123")
-	if err := os.WriteFile(leftover, []byte("KEY=secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	r := newTestRunner(t, Config{StateDir: state})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			envFiles := filepath.Join(root, tc.envFiles)
+			if err := os.MkdirAll(envFiles, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			leftover := filepath.Join(envFiles, "a2a-env-123")
+			if err := os.WriteFile(leftover, []byte("KEY=secret\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := Config{StateDir: filepath.Join(root, "agent")}
+			if tc.docker != "" {
+				cfg.Runtime = sandbox.Docker(sandbox.DockerOptions{StateDir: filepath.Join(root, tc.docker)})
+			}
+			r := newTestRunner(t, cfg)
 
-	r.pruneEnvFiles()
+			r.pruneEnvFiles()
 
-	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("os.Stat(%s) error = %v, want %v after Runner.pruneEnvFiles()", leftover, err, os.ErrNotExist)
+			if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("os.Stat(%s) error = %v, want %v after Runner.pruneEnvFiles()", leftover, err, os.ErrNotExist)
+			}
+		})
 	}
 }

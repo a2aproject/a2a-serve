@@ -31,7 +31,7 @@ func init() {
 		case local:
 			return sandboxrt.RuntimeInfo{Local: true}, true
 		case *docker:
-			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress}, true
+			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress, StateDir: rt.opts.StateDir}, true
 		}
 		return sandboxrt.RuntimeInfo{}, false
 	})

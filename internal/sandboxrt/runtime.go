@@ -27,6 +27,9 @@ type RuntimeInfo struct {
 	Launcher string
 	// Progress receives the output of pulling an image, or nil.
 	Progress io.Writer
+	// StateDir keeps the env files of the containers in env, and the
+	// sockets of their egress boundaries in egress, or is "".
+	StateDir string
 }
 
 var runtimeOf func(any) (RuntimeInfo, bool)

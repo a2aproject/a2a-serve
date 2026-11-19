@@ -80,7 +80,10 @@ type Config struct {
 	Profile agent.Profile
 	// Model selects the model of every session, in the agent's format.
 	// Empty keeps the agent's default.
-	Model   string
+	Model string
+	// Runtime runs the processes. The env files of Docker containers and
+	// the sockets of their egress boundaries go to the StateDir of
+	// sandbox.DockerOptions, and without one to StateDir.
 	Runtime sandbox.Runtime
 	// Egress is the boundary each process gets an endpoint of, with the
 	// Credentials of its Environment. Nil gives the processes the

@@ -360,7 +360,7 @@ func New(cfg Config) (*Runner, error) {
 		r.pools[name] = &procs{max: p.MaxProcesses}
 	}
 	r.egress = newEgressState()
-	r.boundaries = sandboxrt.NewBoundaries(r.socketDir(), sandboxrt.SocketIDLen, idAlphabet, nil)
+	r.boundaries = sandboxrt.NewBoundaries(r.egressDir(), sandboxrt.SocketIDLen, idAlphabet, nil)
 	r.rt.init(r)
 	r.decider = &toolDecider{tools: cfg.Tools, servers: r.mcpServerNames, denied: cfg.Hooks.Denied, log: r.log}
 	l, err := r.listen(cfg.Options.Executor == nil)

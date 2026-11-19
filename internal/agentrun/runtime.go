@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
@@ -52,7 +51,7 @@ func runtimeOf(rt sandbox.Runtime) (sandboxRuntime, error) {
 	return sandboxRuntime{kind: agentprofile.SandboxDocker, info: info}, nil
 }
 
-// init sets up the Docker backend, whose env files are in the state
+// init sets up the Docker backend, whose env files are in the env files
 // directory of r.
 func (rt *sandboxRuntime) init(r *Runner) {
 	if rt.kind != agentprofile.SandboxDocker {
@@ -62,7 +61,7 @@ func (rt *sandboxRuntime) init(r *Runner) {
 	if rt.info.Launcher != "" {
 		launcher = func() string { return rt.info.Launcher }
 	}
-	rt.backend = sandboxrt.NewDocker(filepath.Join(r.stateDir, "run", "env"), launcher)
+	rt.backend = sandboxrt.NewDocker(r.envFilesDir(), launcher)
 }
 
 // imageProgress returns where the main process reports fetching its image.
