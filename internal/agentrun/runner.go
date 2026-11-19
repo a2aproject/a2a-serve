@@ -180,7 +180,8 @@ type Options struct {
 type Callers interface {
 	// Key returns the key of a new conversation, such as its caller's.
 	Key(ctx context.Context, contextID string) (string, error)
-	// Environment returns what the process of key gets now.
+	// Environment returns what the process of key gets now. The runner
+	// never asks for "", whose process gets Main.
 	Environment(ctx context.Context, key string) (Environment, error)
 	// Admit refuses a turn of the caller in ctx in the process of key, or
 	// holds what the turn needs until release.
@@ -628,13 +629,14 @@ func (r *Runner) removeState() error {
 	return os.RemoveAll(r.stateDir)
 }
 
-// environment returns what the process of key gets now.
+// environment returns what the process of key gets now: Main for "", and
+// what Callers gives for other keys.
 func (r *Runner) environment(ctx context.Context, key string) (Environment, error) {
-	if r.cfg.Callers != nil {
-		return r.cfg.Callers.Environment(ctx, key)
-	}
 	if key == "" {
 		return r.cfg.Main, nil
+	}
+	if r.cfg.Callers != nil {
+		return r.cfg.Callers.Environment(ctx, key)
 	}
 	return Environment{}, fmt.Errorf("unknown key %q", key)
 }

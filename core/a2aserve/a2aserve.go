@@ -92,7 +92,8 @@ type Config struct {
 	Egress *egress.Boundary
 	// Tools decides tool calls; nil asks about every call.
 	Tools tools.Decider
-	// Main is what the process of key "" gets.
+	// Main is what the process of key "" gets: at its start, and for its
+	// turns and sessions.
 	Main Environment
 	// Callers runs different callers in different processes; nil runs
 	// every conversation in Main.
@@ -148,12 +149,14 @@ type Environment struct {
 }
 
 // Callers runs different callers in different processes. Keys are opaque;
-// the key "" is the process of Main.
+// the key "" is the process of Main, which gets Config.Main for its whole
+// life: the Agent never calls Environment with "".
 type Callers interface {
 	// Key returns the key of a new conversation, such as its caller's.
 	Key(ctx context.Context, contextID string) (string, error)
 	// Environment returns what the process of key gets now. The Agent
-	// calls it on every start, turn and session of the process.
+	// calls it on every start, turn and session of the process, for every
+	// key but "".
 	Environment(ctx context.Context, key string) (Environment, error)
 	// Admit refuses a turn of the caller in ctx in the process of key, or
 	// holds what the turn needs until release.

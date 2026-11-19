@@ -253,3 +253,14 @@ func TestStopIdleStopsAnIdleProcess(t *testing.T) {
 		t.Fatalf("Agent.Processes() after Agent.StopIdle() wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestMainGetsConfigMainWithoutAskingCallers(t *testing.T) {
+	t.Parallel()
+	a := keyedAgent(t)
+
+	got := send(t, client(t, a), "-1", "pid")
+
+	if got == "" {
+		t.Fatalf("Client.SendMessage(pid) in the main process = %q, want its pid", got)
+	}
+}
