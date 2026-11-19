@@ -67,11 +67,17 @@ func TestCheckWorkspaceSize(t *testing.T) {
 
 func TestExplainWordsWorkspaceFailures(t *testing.T) {
 	t.Parallel()
+	down, err := fsys.Client("http://127.0.0.1:1/secret-value/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, downErr := down.Stat(context.Background(), ".")
 	tests := []struct {
-		name string
-		ws   workspace
-		err  error
-		want []string
+		name    string
+		ws      workspace
+		err     error
+		want    []string
+		notWant []string
 	}{
 		{
 			name: "conflict",
@@ -81,9 +87,29 @@ func TestExplainWordsWorkspaceFailures(t *testing.T) {
 		},
 		{
 			name: "dir past the limits",
-			ws:   workspace{kind: WorkspaceDir, sync: SyncTurn},
+			ws:   workspace{kind: WorkspaceDir, sync: SyncTurn, liveOK: true},
 			err:  fmt.Errorf("writing back: %w", a2aserve.ErrWorkspaceTooLarge),
 			want: []string{"limits", "remove files", "--workspace-sync live"},
+		},
+		{
+			name:    "URL past the limits where live can't work",
+			ws:      workspace{kind: WorkspaceURL, sync: SyncTurn},
+			err:     fmt.Errorf("writing back: %w", a2aserve.ErrWorkspaceTooLarge),
+			want:    []string{"limits", "remove files"},
+			notWant: []string{"--workspace-sync live"},
+		},
+		{
+			name: "URL past the limits where live works",
+			ws:   workspace{kind: WorkspaceURL, sync: SyncTurn, liveOK: true},
+			err:  fmt.Errorf("writing back: %w", a2aserve.ErrWorkspaceTooLarge),
+			want: []string{"--workspace-sync live"},
+		},
+		{
+			name:    "URL host that doesn't answer",
+			ws:      workspace{kind: WorkspaceURL, shown: "http://127.0.0.1:1", sync: SyncTurn},
+			err:     fmt.Errorf("syncing the workspace: %w", downErr),
+			want:    []string{"The workspace at http://127.0.0.1:1 didn't answer", "go back at the next turn"},
+			notWant: []string{"secret-value"},
 		},
 		{
 			name: "full memory workspace",
@@ -104,6 +130,11 @@ func TestExplainWordsWorkspaceFailures(t *testing.T) {
 			for _, w := range tc.want {
 				if !strings.Contains(parts[0].Text(), w) {
 					t.Fatalf("workspace.explain() = %q, want it to contain %q", parts[0].Text(), w)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(parts[0].Text(), w) {
+					t.Fatalf("workspace.explain() = %q, want it without %q", parts[0].Text(), w)
 				}
 			}
 		})

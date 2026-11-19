@@ -179,6 +179,7 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Output of a tool call in `hooks/afterTool` | 64 KiB |
 | An answer of the tools endpoint to `a2a-run` | 1 MiB |
 | Requests of `a2a-run` to the tools endpoint at once | 16 |
+| Check at start that the file server of a `--workspace` URL answers | 10 seconds |
 | Workspace with `turn` sync | 1 GiB of files and 200000 entries, also for `--workspace memory` as a whole. A larger `dir:` workspace fails at start. A workspace that grows past them fails the turn until files are removed. |
 | Files in the changes artifact | 1 MiB each and 4 MiB in total. Past that, the artifact lists the file without its content. |
 | Paths that the changes artifact lists | 1000. Past that, it counts the rest. |

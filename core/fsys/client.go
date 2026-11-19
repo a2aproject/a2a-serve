@@ -35,13 +35,18 @@ import (
 )
 
 // Client returns the tree that a file server serves at rawURL with the
-// wire protocol of [Handler]: http://host:port with an optional path
-// prefix, or unix:///path/to/socket. It refuses paths outside the rules of
+// wire protocol of [Handler]: http://host:port or https://host:port with
+// an optional path prefix, or unix:///path/to/socket. It refuses paths outside the rules of
 // the package before it sends them, and bounds what it reads: a listing
 // and a batch of changes to [MaxEntries]. Changes waits at most until the
 // deadline of its context, in requests of up to [MaxChangesWait].
 func Client(rawURL string) (FS, error) {
 	u, err := url.Parse(rawURL)
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		// The error of url.Parse quotes the URL, whose path may carry a
+		// secret.
+		err = ue.Err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parsing the file server URL: %w", err)
 	}
@@ -55,11 +60,12 @@ func Client(rawURL string) (FS, error) {
 	}
 	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}}
 	switch u.Scheme {
-	case "http":
+	case "http", "https":
 		if u.Host == "" {
 			return nil, errors.New("the file server URL has no host")
 		}
 		c.base = strings.TrimSuffix(u.String(), "/")
+		c.shown = u.Scheme + "://" + u.Host
 	case "unix":
 		if u.Host != "" || u.Path == "" {
 			return nil, errors.New("want the file server socket as unix:///path/to/socket")
@@ -70,8 +76,9 @@ func Client(rawURL string) (FS, error) {
 			return d.DialContext(ctx, "unix", socket)
 		}
 		c.base = "http://fsys"
+		c.shown = "unix://" + socket
 	default:
-		return nil, fmt.Errorf("the file server URL has the scheme %q; want http or unix", u.Scheme)
+		return nil, fmt.Errorf("the file server URL has the scheme %q; want http, https or unix", u.Scheme)
 	}
 	return c, nil
 }
@@ -83,7 +90,34 @@ func noRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastR
 
 type client struct {
 	base string
-	http *http.Client
+	// shown names the server in errors: its scheme and host, or its
+	// socket, without the path, which may carry a secret.
+	shown string
+	http  *http.Client
+}
+
+// requestError is the error of a request that got no answer. Unlike the
+// *url.Error of net/http, it leaves out the URL of the request.
+type requestError struct {
+	method, shown string
+	err           error
+}
+
+func (e *requestError) Error() string { return e.method + " " + e.shown + ": " + e.err.Error() }
+func (e *requestError) Unwrap() error { return e.err }
+
+// Timeout reports whether the request timed out, as net.Error does.
+func (e *requestError) Timeout() bool {
+	t, ok := e.err.(interface{ Timeout() bool })
+	return ok && t.Timeout()
+}
+
+// requestErr returns err of a request without the URL of the request.
+func (c *client) requestErr(method string, err error) error {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		err = ue.Err
+	}
+	return &requestError{method: method, shown: c.shown, err: err}
 }
 
 var (
@@ -100,12 +134,12 @@ func (c *client) do(ctx context.Context, op, p, method, route string, query url.
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
-		return nil, &fs.PathError{Op: op, Path: p, Err: err}
+		return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, err)}
 	}
 	maps.Copy(req.Header, header)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, &fs.PathError{Op: op, Path: p, Err: err}
+		return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, err)}
 	}
 	if slices.Contains(ok, resp.StatusCode) {
 		return resp, nil
@@ -268,7 +302,9 @@ func (c *client) Write(ctx context.Context, p string, r io.Reader, mode fs.FileM
 	}
 	q := pathQuery(p)
 	q.Set("mode", fmt.Sprintf("%04o", uint32(mode.Perm())))
-	resp, err := c.do(ctx, "write", p, http.MethodPut, "/file", q, header, r, http.StatusOK)
+	// The transport closes a body that is an io.Closer, and r is the
+	// caller's.
+	resp, err := c.do(ctx, "write", p, http.MethodPut, "/file", q, header, struct{ io.Reader }{r}, http.StatusOK)
 	if err != nil {
 		return Info{}, err
 	}

@@ -391,10 +391,21 @@ func fail(w http.ResponseWriter, op, path string, err error) {
 		return
 	}
 	code, status := classify(err)
-	if status == http.StatusInternalServerError {
-		slog.Debug("a request of the file server failed", "op", op, "path", path, "error", err)
+	if status < http.StatusInternalServerError {
+		reply(w, status, wireError{Error: err.Error(), Code: code})
+		return
 	}
-	reply(w, status, wireError{Error: err.Error(), Code: code})
+	// The text of an error of the tree, such as a Client's, may carry a
+	// secret, so the answer says only what kind of failure it was.
+	slog.Debug("a request of the file server failed", "op", op, "path", path, "error", err)
+	msg := "the file server failed"
+	switch {
+	case code == codeBusy:
+		msg = errBusy.Error()
+	case status == http.StatusServiceUnavailable:
+		msg = "the request timed out or was canceled"
+	}
+	reply(w, status, wireError{Error: op + " " + path + ": " + msg, Code: code})
 }
 
 func quote(version string) string { return `"` + version + `"` }

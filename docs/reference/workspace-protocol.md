@@ -2,11 +2,11 @@
 
 This page specifies the HTTP protocol through which a program serves the agent's workspace as a file tree, so that the agent works on the files that the program holds.
 
-The protocol maps one to one onto the Go interface `fsys.FS` in `core/fsys`. In Go, `fsys.Handler` serves a tree with it and `fsys.Client` reads one. A server in any language implements the requests below. A planned `a2a-run --workspace <url>` takes the URL of such a server.
+The protocol maps one to one onto the Go interface `fsys.FS` in `core/fsys`. In Go, `fsys.Handler` serves a tree with it and `fsys.Client` reads one. A server in any language implements the requests below. [`a2a-run --workspace <url>`](a2a-run.md#workspace) takes the URL of such a server.
 
 ## Transport
 
-The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` with an optional path prefix. Requests are plain HTTP/1.1. The protocol has no authentication, so serve it only on a Unix socket or a loopback address.
+The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` or `https://host:port` with an optional path prefix. Requests are plain HTTP/1.1. The protocol has no authentication, so serve it only on a Unix socket or a loopback address.
 
 ## Paths
 
@@ -41,7 +41,7 @@ Fields with a zero value may be left out.
 | --- | --- | --- |
 | `GET /stat?path=P` | | `200` with the entry at `P`. A symlink isn't followed. |
 | `GET /list?path=P` | | `200` with `{"entries":[...]}`, the entries of the directory `P` sorted by name |
-| `GET /file?path=P` | | `200` with the bytes of the file `P`, and its version in `ETag` |
+| `GET /file?path=P` | | `200` with the bytes of the file `P`, and its version in quotes in `ETag` |
 | `PUT /file?path=P&mode=0644` | The new contents | `200` with the entry written. It replaces the file or creates it, and creates the missing parent directories. `mode` is octal. |
 | `DELETE /file?path=P` | | `204`. It removes the entry, a directory with its contents. |
 | `POST /mkdir` | `{"path":"P","mode":493}` | `204`. It creates the directory and its missing parents. A directory already there isn't an error. |
@@ -61,7 +61,7 @@ Fields with a zero value may be left out.
 
 `GET /changes` returns the entries that changed since `cursor`, the latest state of each, and the cursor to pass next. The cursor is opaque. An empty cursor returns no changes and the current cursor.
 
-When nothing changed, the server waits for a change up to `wait` milliseconds, then answers with no changes and the same cursor. When the server no longer has the changes since `cursor`, it answers `410` with the code `resync` and the current cursor in `cursor`. The client then reads the tree again and continues from that cursor.
+When nothing changed, the server waits for a change up to `wait` milliseconds, then answers with no changes and the same cursor. When the server no longer has the changes since `cursor`, or doesn't know the cursor, it answers `410` with the code `resync` and the current cursor in `cursor`. The client then reads the tree again and continues from that cursor.
 
 ## Errors
 
@@ -84,3 +84,19 @@ A failed request has a JSON body with a message and a code:
 | 503 | `busy` | Too many requests at once |
 
 Other failures get `500`.
+
+## Conformance
+
+The conformance suite of `a2a-run` checks a server from a checkout of this repository:
+
+```sh
+go test ./internal/a2arun/conformance -workspace unix:///path/to/socket
+```
+
+It works in a directory of its own in the tree, `a2a-run-conformance-` and a random suffix, and removes it at the end. The reference host serves a tree in memory on the same socket as its egress proxy and tools endpoint:
+
+```sh
+go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock --workspace
+```
+
+Pass `unix:///tmp/host.sock` to `--workspace`, `--tools` and `--egress-proxy` alike. The reference host logs each change of its tree on stderr.

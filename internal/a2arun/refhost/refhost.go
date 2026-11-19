@@ -16,7 +16,8 @@
 // tunnels or intercepts each connection, answers or forwards the requests
 // it intercepts, and records what it saw; it refuses loopback, link-local
 // and private destinations unless told otherwise. Its tools endpoint serves
-// MCP with one tool and the hooks of a2a-run. One listener can serve both.
+// MCP with one tool and the hooks of a2a-run, and its workspace endpoint a
+// file tree with the workspace protocol. One listener can serve all three.
 // It serves the tests and the conformance suite.
 package refhost
 
@@ -95,7 +96,14 @@ type Config struct {
 	// Tools serves the requests in origin form, such as the MCP endpoint
 	// of [NewTools]; nil refuses them.
 	Tools http.Handler
+	// Workspace serves the requests in origin form to the paths of the
+	// workspace protocol, such as fsys.Handler of a tree, in place of
+	// Tools; nil leaves them to Tools.
+	Workspace http.Handler
 }
+
+// workspacePaths are the paths of the requests of the workspace protocol.
+var workspacePaths = []string{"/stat", "/list", "/file", "/mkdir", "/symlink", "/rename", "/changes"}
 
 // maxRecords bounds what a Host records.
 const maxRecords = 1000
@@ -211,6 +219,10 @@ func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
 func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		h.connect(w, r)
+		return
+	}
+	if !r.URL.IsAbs() && h.cfg.Workspace != nil && slices.Contains(workspacePaths, r.URL.Path) {
+		h.cfg.Workspace.ServeHTTP(w, r)
 		return
 	}
 	if !r.URL.IsAbs() && h.cfg.Tools != nil {
