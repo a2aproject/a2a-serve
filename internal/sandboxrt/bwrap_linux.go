@@ -32,6 +32,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
@@ -89,26 +90,57 @@ func CheckBubblewrap(ctx context.Context) error {
 }
 
 // Probe implements [Backend]: bwrap makes a sandbox, and whether the
-// egress boundary and live workspaces can work.
+// egress boundary and live workspaces can work, which it checks by running
+// the launcher's check, since a user namespace may lack what they take.
 func (b *Bubblewrap) Probe(ctx context.Context) (Capabilities, error) {
 	if err := CheckBubblewrap(ctx); err != nil {
 		return Capabilities{}, err
 	}
 	var c Capabilities
-	if _, err := b.launcherPath(); err != nil {
-		c.Boundary = &boundaryError{why: err.Error()}
-	} else if err := CheckTUN(); err != nil {
-		c.Boundary = &boundaryError{why: err.Error()}
-	}
+	launcher, err := b.launcherPath()
 	switch {
-	case c.Boundary != nil:
-		c.Served = fmt.Errorf("a live workspace needs the egress boundary, whose launcher mounts it: %w", c.Boundary)
+	case err != nil:
+		c.Boundary = &boundaryError{why: err.Error()}
+	case CheckTUN() != nil:
+		c.Boundary = &boundaryError{why: CheckTUN().Error()}
 	default:
-		if _, err := os.Stat("/dev/fuse"); err != nil {
-			c.Served = fmt.Errorf("this machine has no FUSE device: %w", err)
+		if err := checkSetup(ctx, launcher, false); err != nil {
+			c.Boundary = &boundaryError{why: err.Error()}
+		}
+	}
+	if c.Boundary != nil {
+		c.Served = fmt.Errorf("a live workspace needs the egress boundary, whose launcher mounts it: %w", c.Boundary)
+		return c, nil
+	}
+	if _, err := os.Stat("/dev/fuse"); err != nil {
+		c.Served = fmt.Errorf("this machine has no FUSE device: %w", err)
+	} else if err := checkSetup(ctx, launcher, true); err != nil {
+		c.Served = err
+		if sme, ok := errors.AsType[*ServedMountError](err); ok {
+			c.Served = errors.New("bubblewrap can't mount a live workspace here: " + sme.Reason)
 		}
 	}
 	return c, nil
+}
+
+// checkSetup runs the launcher's check in a sandbox with an egress
+// directory of its own, and, if served, a live workspace of an empty tree.
+func checkSetup(ctx context.Context, launcher string, served bool) error {
+	dir, err := os.MkdirTemp("", "a2a-bwrap-")
+	if err != nil {
+		return err
+	}
+	run := &bwrapRun{system: systemArgs(), launcher: launcher, egressDir: dir}
+	closeFn := func() error { return nil }
+	if served {
+		mounts, closeServed, err := serveTrees([]ServedMount{{Dst: "/probe", Tree: fsys.Memory()}}, dir)
+		if err != nil {
+			return errors.Join(err, os.RemoveAll(dir))
+		}
+		run.served, closeFn = mounts, closeServed
+	}
+	err = run.check(ctx)
+	return errors.Join(err, closeFn(), os.RemoveAll(dir))
 }
 
 // launcherPath returns the launcher that the sandboxes run.
@@ -553,7 +585,7 @@ func (r *bwrapRun) check(ctx context.Context) error {
 	case exited && len(r.served) > 0 && ee.ExitCode() == boundary.MountFailedExit:
 		return &ServedMountError{Dst: r.served[0].Dst, Reason: mountReasonOf(string(out))}
 	case exited && ee.ExitCode() == boundary.SetupFailedExit:
-		return &EgressSetupError{Reason: reasonOf(string(out))}
+		return &EgressSetupError{Reason: "bubblewrap can't set up the sandbox's network here: " + reasonOf(string(out))}
 	}
 	return fmt.Errorf("checking the setup of the bubblewrap sandbox: %w: %s", err, firstLine(strings.TrimSpace(string(out))))
 }
