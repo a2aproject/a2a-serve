@@ -340,7 +340,9 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 }
 
 // Handler returns the A2A request handler of the agent, which Config.A2A
-// configures. It builds it on the first call.
+// configures. It builds it on the first call. Its CancelTask retries a
+// cancel that lost a race with the end of the task's execution, such as
+// one that just asked a question.
 func (a *Agent) Handler() a2asrv.RequestHandler {
 	a.once.Do(func() {
 		var exec a2asrv.AgentExecutor = a.r
@@ -369,7 +371,7 @@ func (a *Agent) Handler() a2asrv.RequestHandler {
 			log = slog.Default()
 		}
 		opts = append(opts, a2asrv.WithLogger(log))
-		a.handler = a2asrv.NewHandler(exec, opts...)
+		a.handler = withRetryingCancel(a2asrv.NewHandler(exec, opts...))
 	})
 	return a.handler
 }
