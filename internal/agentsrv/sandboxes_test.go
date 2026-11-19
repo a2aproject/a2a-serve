@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/core/workspace"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -42,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
@@ -710,28 +712,70 @@ func TestGrantMounts(t *testing.T) {
 	}
 }
 
-type countingCloser struct{ closed int }
+// startedCallers runs every conversation of key in a fakeacp process
+// that started with the sandbox started.
+type startedCallers struct {
+	key     string
+	env     agentrun.Environment
+	started access.Sandbox
+}
 
-func (c *countingCloser) Close() error {
-	c.closed++
-	return nil
+func (c startedCallers) Key(context.Context, string) (string, error) { return c.key, nil }
+
+func (c startedCallers) Environment(_ context.Context, key string) (agentrun.Environment, error) {
+	if key != c.key {
+		return agentrun.Environment{}, errors.New("unknown agent key " + key)
+	}
+	env := c.env
+	env.Pool, env.Process = usersPool, &agentrun.ProcessOptions{State: c.started}
+	return env, nil
+}
+
+func (c startedCallers) Admit(context.Context, string, *a2asrv.ExecutorContext) (func(), error) {
+	return func() {}, nil
 }
 
 func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	key := agentkey.User(auth.PairPrincipal("ann"))
 	st := openStore(t)
 	s := &Server{
 		sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{Secrets: []string{"KEY"}} }, st),
 		tasks:     st.Tasks("", nil),
 	}
-	s.engine = newTestRunner(t, s)
-	proc := &countingCloser{}
-	if err := s.engine.RecordStart(ctx, key, proc, access.Sandbox{Storage: workspaces.StorageShared}); err != nil {
-		t.Fatalf("Runner.RecordStart() error = %v", err)
+	env := agentrun.Environment{Workspace: workspace.Dir(t.TempDir()), Home: filepath.Join(t.TempDir(), "home")}
+	engine, err := agentrun.New(agentrun.Config{
+		Profile:  agentprofile.Custom("fake", []string{fakeACP}),
+		Runtime:  sandbox.Local(),
+		Main:     env,
+		Callers:  startedCallers{key: key, env: env, started: access.Sandbox{Storage: workspaces.StorageShared}},
+		Pools:    map[string]agentrun.Pool{usersPool: {MaxProcesses: maxUserAgents}},
+		StateDir: testutil.ShortTempDir(t),
+	})
+	if err != nil {
+		t.Fatalf("agentrun.New() error = %v", err)
 	}
-	turn, err := s.engine.AdmitTurn(ctx, key, "", nil, true)
+	if err := engine.Start(ctx); err != nil {
+		t.Fatalf("Runner.Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if err := engine.Close(context.Background()); err != nil {
+			t.Errorf("Runner.Close() error = %v", err)
+		}
+	})
+	s.engine = engine
+	for _, err := range engine.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello"))}) {
+		if err != nil {
+			t.Fatalf("Runner.Execute() error = %v", err)
+		}
+	}
+	if _, ok := engine.StartedWith(key); !ok {
+		t.Fatalf("Runner.StartedWith() after a turn = false, want the process running")
+	}
+	turn, err := engine.AdmitTurn(ctx, key, "", nil, true)
 	if err != nil {
 		t.Fatalf("Runner.AdmitTurn() error = %v", err)
 	}
@@ -743,7 +787,7 @@ func TestTurnRightAfterTheLastTaskEndedRestartsTheProcess(t *testing.T) {
 		t.Fatalf("Server.admitTurn() while the turn of an ended task finishes error = %v, want nil", err)
 	}
 	release()
-	if proc.closed != 1 {
-		t.Fatalf("Server.admitTurn() closed the process %d times, want 1", proc.closed)
+	if _, ok := engine.StartedWith(key); ok {
+		t.Fatalf("Server.admitTurn() kept the process that started with the old sandbox, want it stopped")
 	}
 }

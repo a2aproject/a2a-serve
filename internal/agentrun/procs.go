@@ -463,18 +463,3 @@ func (r *Runner) stop(ctx context.Context, keys []string) (release func(), err e
 	}
 	return releaseAll, nil
 }
-
-// RecordStart records proc as the running process of key in its pool,
-// which started with state, as a start does. The tests of the frontend
-// use it in place of an agent process.
-func (r *Runner) RecordStart(ctx context.Context, key string, proc io.Closer, state any) error {
-	p, err := r.poolOf(ctx, key)
-	if err != nil {
-		return err
-	}
-	if p == nil {
-		return fmt.Errorf("no pool runs the process %q", key)
-	}
-	p.started(p.get(key), proc, state)
-	return nil
-}
