@@ -110,7 +110,7 @@ When a contact asks for an approval, the task ends its turn in `input-required` 
 `--sandbox` picks where the agent runs:
 
 - `docker`, the default, runs the agent in a container of its image.
-- `bwrap` runs the agent that this machine has with [bubblewrap](https://github.com/containers/bubblewrap), on Linux. It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `/dev/fuse` for a `memory` or URL workspace with `live` sync. Every connection of the agent goes through `a2a-run`, and it fails to start where that can't work.
+- `bwrap` runs the agent that this machine has with [bubblewrap](https://github.com/containers/bubblewrap), on Linux. It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `/dev/fuse` for a `memory` or URL workspace with `live` sync. Every connection of the agent goes through `a2a-run`, and it fails to start where that can't work. Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor by default; the error then names the setting and how to lift it, as [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes.
 - `local` runs the agent on this machine with no isolation.
 
 With `bwrap`, the agent sees the system directories, a few files of `/etc`, the workspace and its home. It finds its command, and the `a2a` CLI with `--contact`, on your `PATH`. An agent that needs other files of your home directory, such as one that npm installed under a version manager, doesn't start; use one that its own installer put in place, or `--sandbox docker`. [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes the setup.

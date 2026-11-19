@@ -78,7 +78,52 @@ func CheckBubblewrap(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return &BubblewrapError{Problem: fmt.Sprintf("didn't make a sandbox within %s", bwrapTimeout), Fix: "check that bwrap works on this machine"}
 	}
-	return &BubblewrapError{Problem: "can't make a sandbox on this machine", Fix: "allow unprivileged user namespaces", Err: fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))}
+	return &BubblewrapError{Problem: "can't make a sandbox on this machine", Fix: userNamespaceFix("/proc"), Err: fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))}
+}
+
+// sysctl returns the value of the sysctl at name under proc, such as
+// "kernel/apparmor_restrict_unprivileged_userns", or "" where it has none.
+func sysctl(proc, name string) string {
+	b, err := os.ReadFile(filepath.Join(proc, "sys", name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// appArmorFix returns how to lift the AppArmor restriction of unprivileged
+// user namespaces, as Ubuntu 24.04 sets by default, which also strips
+// capabilities in them, or "" where it doesn't apply. proc is where procfs
+// is mounted.
+func appArmorFix(proc string) string {
+	if sysctl(proc, "kernel/apparmor_restrict_unprivileged_userns") != "1" {
+		return ""
+	}
+	return "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+}
+
+// userNamespaceFix returns how to let bwrap make user namespaces on the
+// machine whose procfs is at proc.
+func userNamespaceFix(proc string) string {
+	if fix := appArmorFix(proc); fix != "" {
+		return fix
+	}
+	if sysctl(proc, "kernel/unprivileged_userns_clone") == "0" {
+		return "run sudo sysctl -w kernel.unprivileged_userns_clone=1"
+	}
+	if sysctl(proc, "user/max_user_namespaces") == "0" {
+		return "run sudo sysctl -w user.max_user_namespaces=15000"
+	}
+	return "allow unprivileged user namespaces"
+}
+
+// withAppArmorFix returns reason with how to lift the AppArmor restriction
+// of user namespaces, where it applies.
+func withAppArmorFix(reason string) string {
+	if fix := appArmorFix("/proc"); fix != "" {
+		return reason + "; " + fix
+	}
+	return reason
 }
 
 // Probe implements [Backend]: bwrap makes a sandbox, and whether the
@@ -109,7 +154,7 @@ func (b *Bubblewrap) Probe(ctx context.Context) (Capabilities, error) {
 	} else if err := checkSetup(ctx, launcher, true); err != nil {
 		c.Served = err
 		if sme, ok := errors.AsType[*ServedMountError](err); ok {
-			c.Served = errors.New("bubblewrap can't mount a live workspace here: " + sme.Reason)
+			c.Served = errors.New(withAppArmorFix("bubblewrap can't mount a live workspace here: " + sme.Reason))
 		}
 	}
 	return c, nil
@@ -652,7 +697,7 @@ func (r *bwrapRun) check(ctx context.Context) error {
 	case exited && len(r.served) > 0 && ee.ExitCode() == boundary.MountFailedExit:
 		return &ServedMountError{Dst: r.served[0].Dst, Reason: mountReasonOf(string(out))}
 	case exited && ee.ExitCode() == boundary.SetupFailedExit:
-		return &EgressSetupError{Reason: "bubblewrap can't set up the sandbox's network here: " + reasonOf(string(out))}
+		return &EgressSetupError{Reason: withAppArmorFix("bubblewrap can't set up the sandbox's network here: " + reasonOf(string(out)))}
 	}
 	return fmt.Errorf("checking the setup of the bubblewrap sandbox: %w: %s", err, firstLine(strings.TrimSpace(string(out))))
 }

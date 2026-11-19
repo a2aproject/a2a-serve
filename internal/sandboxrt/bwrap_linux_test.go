@@ -230,3 +230,49 @@ func TestSystemViewLeavesOutHomes(t *testing.T) {
 		t.Fatalf("hostPrograms() dirs of a program in a home under a system directory wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestUserNamespaceFix(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		sysctls     map[string]string
+		wantFix     string
+		wantNetwork string
+	}{
+		"no restriction": {wantFix: "allow unprivileged user namespaces"},
+		"apparmor": {
+			sysctls:     map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "1\n"},
+			wantFix:     "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+			wantNetwork: "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+		},
+		"apparmor off": {sysctls: map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "0\n"}, wantFix: "allow unprivileged user namespaces"},
+		"debian clone sysctl": {
+			sysctls: map[string]string{"kernel/unprivileged_userns_clone": "0\n"},
+			wantFix: "run sudo sysctl -w kernel.unprivileged_userns_clone=1",
+		},
+		"no user namespaces": {
+			sysctls: map[string]string{"user/max_user_namespaces": "0\n"},
+			wantFix: "run sudo sysctl -w user.max_user_namespaces=15000",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			proc := t.TempDir()
+			for p, v := range tc.sysctls {
+				file := filepath.Join(proc, "sys", p)
+				if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte(v), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := userNamespaceFix(proc); got != tc.wantFix {
+				t.Fatalf("userNamespaceFix() = %q, want %q", got, tc.wantFix)
+			}
+			if got := appArmorFix(proc); got != tc.wantNetwork {
+				t.Fatalf("appArmorFix() = %q, want %q", got, tc.wantNetwork)
+			}
+		})
+	}
+}
