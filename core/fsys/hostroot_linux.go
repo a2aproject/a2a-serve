@@ -127,8 +127,11 @@ func (r *fdRoot) Readlink(name string) (target string, err error) {
 	err = r.at("readlink", name, func(dir int, base string) error {
 		buf := make([]byte, maxSymlinkTarget)
 		n, err := unix.Readlinkat(dir, base, buf)
+		if err != nil {
+			return err
+		}
 		target = string(buf[:n])
-		return err
+		return nil
 	})
 	return target, err
 }
