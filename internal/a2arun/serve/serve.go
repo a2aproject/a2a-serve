@@ -102,7 +102,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating the state directory: %w", err)
 	}
-	rt, summary, err := srv.runtime(ctx, s, stderr)
+	rt, summary, boundary, err := srv.runtime(ctx, s, stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,10 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	switch {
 	case s.egressProxy != "":
 		srv.ready.Egress = EgressProxy
-	case s.sandbox == SandboxDocker:
+	case s.sandbox == SandboxDocker && boundary:
 		srv.ready.Egress = EgressPolicy
+	case s.sandbox == SandboxDocker:
+		srv.ready.Egress = EgressNone
 	}
 	return srv, nil
 }
@@ -224,28 +226,29 @@ func (s *Server) dir(dir, pattern string) (string, error) {
 }
 
 // runtime returns the sandbox runtime of set, and how the ready line
-// describes it. It checks that Docker answers before anything starts.
-func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (sandbox.Runtime, string, error) {
+// describes it, and whether the egress boundary decides the sandbox's
+// connections. It checks that Docker answers before anything starts.
+func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_ sandbox.Runtime, summary string, boundary bool, _ error) {
 	if set.sandbox == SandboxLocal {
-		return sandbox.Local(), SandboxLocal, nil
+		return sandbox.Local(), SandboxLocal, false, nil
 	}
 	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
 	caps, err := rt.Probe(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if !caps.Boundary && set.egressProxy != "" {
-		return nil, "", fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
+		return nil, "", false, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)
 	}
 	rootless, err := sandboxrt.CheckDocker(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if rootless {
-		return rt, SandboxDocker + " (rootless)", nil
+		return rt, SandboxDocker + " (rootless)", caps.Boundary, nil
 	}
-	return rt, SandboxDocker, nil
+	return rt, SandboxDocker, caps.Boundary, nil
 }

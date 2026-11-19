@@ -36,7 +36,7 @@ Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stder
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
 | `sandbox` | `docker`, `docker (rootless)` or `local` |
 | `workspace` | `dir` |
-| `egress` | With `--sandbox docker`: `policy` when `--egress` and `--egress-allow` decide the agent's connections, or `proxy` with `--egress-proxy` |
+| `egress` | What decides the agent's connections, with `--sandbox docker`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
 | `error` | Why it failed to start, with `ready` false |
 
 When it fails to start, it prints `{"ready":false,"error":"..."}` and exits with code 2 for invalid flags, or 1 for other errors.

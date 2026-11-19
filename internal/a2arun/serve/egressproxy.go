@@ -27,10 +27,13 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
-// How the ready line names the egress of the Docker sandbox.
+// How the ready line names what decides the Docker sandbox's connections:
+// the egress policy, the egress proxy, or nothing, when the sandbox can't
+// route them through a2a-run and uses Docker's own network.
 const (
 	EgressPolicy = "policy"
 	EgressProxy  = "proxy"
+	EgressNone   = "none"
 )
 
 // resolveEgressProxy checks the --egress-proxy URL of cfg, which replaces
@@ -50,7 +53,7 @@ func resolveEgressProxy(cfg Config) (string, error) {
 		return "", usagef("--egress-proxy can't be used with %s: the proxy decides every connection of the agent and adds the model keys", strings.Join(conflicts, ", "))
 	}
 	if _, err := egress.NewProxyRouter(egress.ProxyConfig{URL: cfg.EgressProxy}); err != nil {
-		return "", usagef("invalid --egress-proxy %q: %w", cfg.EgressProxy, err)
+		return "", usagef("invalid --egress-proxy: %w", err)
 	}
 	return cfg.EgressProxy, nil
 }

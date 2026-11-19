@@ -18,6 +18,9 @@
 //
 //	go test ./internal/a2arun/conformance -egress-proxy <url> -intercept api.anthropic.com:443 -refuse blocked.example:443
 //
+// A proxy must refuse this host's loopback; -allow-loopback skips that
+// check for one that means to reach it.
+//
 // Without -egress-proxy it tests the reference host.
 package conformance
 
@@ -30,6 +33,7 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +52,12 @@ type Config struct {
 	// Refuse is a host:port that the proxy refuses; "" skips the check.
 	Refuse string
 	// Forward is set when the proxy forwards plain HTTP requests to
-	// 127.0.0.1, where the suite serves an upstream.
+	// 127.0.0.1, where the suite serves an upstream. It needs
+	// AllowLoopback.
 	Forward bool
+	// AllowLoopback is set for a proxy that means to reach this host's
+	// loopback, which skips the check that it refuses it.
+	AllowLoopback bool
 }
 
 // timeout bounds each step; a2a-run waits less for a decision.
@@ -65,6 +73,9 @@ func Run(t *testing.T, cfg Config) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg.Forward && !cfg.AllowLoopback {
+		t.Fatal("Forward needs AllowLoopback: the suite's upstream listens on 127.0.0.1")
+	}
 	p := proxy{network: network, addr: addr}
 	t.Run("egress proxy refuses", func(t *testing.T) {
 		if cfg.Refuse == "" {
@@ -77,6 +88,12 @@ func Run(t *testing.T, cfg Config) {
 			t.Skip("no host to intercept")
 		}
 		testIntercept(t, p, cfg.Intercept)
+	})
+	t.Run("egress proxy refuses loopback", func(t *testing.T) {
+		if cfg.AllowLoopback {
+			t.Skip("the proxy means to reach loopback")
+		}
+		testLoopback(t, p)
 	})
 	t.Run("egress proxy forwards and streams", func(t *testing.T) {
 		if !cfg.Forward {
@@ -184,6 +201,59 @@ func testForward(t *testing.T, p proxy) {
 	rest, err := io.ReadAll(body)
 	if err != nil || string(rest) != "\ndata: two\n\n" {
 		t.Fatalf("rest of GET %s = %q, %v, want the second event", u, rest, err)
+	}
+}
+
+// testLoopback checks that neither a tunnel nor a forwarded request
+// reaches a listener on this host's loopback, by address or by a name.
+func testLoopback(t *testing.T, p proxy) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := make(chan struct{}, 1)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			select {
+			case reached <- struct{}{}:
+			default:
+			}
+			if err := c.Close(); err != nil {
+				t.Logf("closing a loopback connection: %v", err)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("closing the loopback listener error = %v", err)
+		}
+	})
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	for _, target := range []string{net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("localhost", port)} {
+		if resp := p.connect(t, target, false); resp.StatusCode < 400 {
+			t.Fatalf("CONNECT %s = %d, want 4xx or 5xx: the proxy must refuse loopback destinations it doesn't mean to expose", target, resp.StatusCode)
+		}
+		c, br := p.dial(t)
+		u := "http://" + target + "/"
+		if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n\r\n", u, target, egress.ProxyHeaderContext, contextID); err != nil {
+			t.Fatalf("sending GET %s error = %v", u, err)
+		}
+		resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
+		if err != nil {
+			t.Fatalf("reading the answer to GET %s error = %v", u, err)
+		}
+		if resp.StatusCode < 400 {
+			t.Fatalf("GET %s through the proxy = %d, want 4xx or 5xx", u, resp.StatusCode)
+		}
+	}
+	select {
+	case <-reached:
+		t.Fatal("a connection through the proxy reached this host's loopback")
+	default:
 	}
 }
 

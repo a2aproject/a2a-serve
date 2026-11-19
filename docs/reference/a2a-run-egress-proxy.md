@@ -34,6 +34,10 @@ Any other answer, an answer that doesn't parse, or no answer in time refuses the
 
 A proxy that ignores the `A2A-Run-*` headers tunnels or refuses, so an off-the-shelf HTTP proxy works without interception.
 
+## Destinations the proxy must refuse
+
+`a2a-run` checks no destination address of a tunnel or of a request it sends to the proxy. The proxy reaches what it connects to, so the agent reaches it too. Refuse loopback, link-local and private destinations that you don't mean to expose, both by address and by a name that resolves to one. Otherwise the agent can reach services on the host, such as the A2A endpoint of `a2a-run` itself on `--listen 127.0.0.1:port`, and on your network. Check the address that you connect to, after resolving the name.
+
 ## Intercepted requests
 
 After `accept`, the agent's requests on that connection go to the proxy in absolute form, over a pool of connections to the proxy:
@@ -48,7 +52,7 @@ Content-Type: application/json
 ```
 
 - `A2A-Run-Task` is the A2A task that the agent process works on, when a turn is in progress.
-- `a2a-run` removes the `A2A-Run-*` headers that the agent sent, so the agent can't speak for another context.
+- `a2a-run` removes the headers that the agent sent whose names start with `A2A-Run-`, in any case and with `_` in place of `-`, so the agent can't speak for another context.
 - The proxy answers as any HTTP proxy does. It can forward the request, rewrite it, or answer it itself. `a2a-run` streams the answer to the agent as it arrives, so server-sent events work.
 - A request to switch protocols, such as to a WebSocket, gets `501`.
 
@@ -69,4 +73,4 @@ $ go test ./internal/a2arun/conformance -egress-proxy unix:///run/host/egress.so
     -intercept api.anthropic.com:443 -refuse blocked.example:443
 ```
 
-Add `-forward` when the proxy forwards plain HTTP requests to `127.0.0.1`, where the suite serves an upstream that streams events. Without `-egress-proxy`, the suite tests the reference host in `internal/a2arun/refhost`.
+The suite also checks that the proxy refuses this host's loopback. Add `-allow-loopback` for a proxy that means to reach it, and `-forward` as well when it forwards plain HTTP requests to `127.0.0.1`, where the suite serves an upstream that streams events. Without `-egress-proxy`, the suite tests the reference host in `internal/a2arun/refhost`.

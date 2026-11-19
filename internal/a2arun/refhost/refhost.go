@@ -14,24 +14,28 @@
 
 // Package refhost is a reference host of a2a-run: an egress proxy that
 // refuses, tunnels or intercepts each connection, answers or forwards the
-// requests it intercepts, and records what it saw. It serves the tests and
-// the conformance suite.
+// requests it intercepts, and records what it saw. It refuses loopback,
+// link-local and private destinations unless told otherwise. It serves the
+// tests and the conformance suite.
 package refhost
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 // Decision is what the proxy does with a connection.
@@ -84,6 +88,9 @@ type Config struct {
 	Upstream http.RoundTripper
 	// Dial dials the destinations of tunnels; nil dials them directly.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// AllowPrivate lets tunnels and forwarded requests reach loopback,
+	// link-local and private addresses.
+	AllowPrivate bool
 }
 
 // maxRecords bounds what a Host records.
@@ -108,10 +115,10 @@ func New(cfg Config) *Host {
 	if cfg.Dial == nil {
 		cfg.Dial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
 	}
-	if cfg.Upstream == nil {
-		cfg.Upstream = &http.Transport{DialContext: cfg.Dial, ForceAttemptHTTP2: true, DisableCompression: true}
-	}
 	h := &Host{cfg: cfg}
+	if cfg.Upstream == nil {
+		cfg.Upstream = &http.Transport{DialContext: h.dial, ForceAttemptHTTP2: true, DisableCompression: true}
+	}
 	h.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			for name := range pr.Out.Header {
@@ -123,8 +130,46 @@ func New(cfg Config) *Host {
 		Transport:     cfg.Upstream,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			if errors.Is(err, errPrivate) {
+				http.Error(w, errPrivate.Error(), http.StatusForbidden)
+				return
+			}
+			http.Error(w, "forwarding the request failed", http.StatusBadGateway)
+		},
 	}
 	return h
+}
+
+// errPrivate refuses a destination that isn't a public address.
+var errPrivate = errors.New("the destination is loopback, link-local or private")
+
+// dial dials addr with Config.Dial, at an address it resolves to. Unless
+// Config.AllowPrivate, it refuses a name with any address that isn't
+// public, so that the agent can't reach this host or its network.
+func (h *Host) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	if h.cfg.AllowPrivate {
+		return h.cfg.Dial(ctx, network, addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	var ips []netip.Addr
+	if ip, err := netip.ParseAddr(host); err == nil {
+		ips = []netip.Addr{ip}
+	} else if ips, err = net.DefaultResolver.LookupNetIP(ctx, "ip", host); err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("%s has no address", host)
+	}
+	for _, ip := range ips {
+		if !egressrules.Public(ip) {
+			return nil, errPrivate
+		}
+	}
+	return h.cfg.Dial(ctx, network, net.JoinHostPort(ips[0].Unmap().String(), port))
 }
 
 // Connects returns the CONNECT requests the host got.
@@ -206,7 +251,11 @@ func (h *Host) connect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Host) tunnel(w http.ResponseWriter, r *http.Request) {
-	upstream, err := h.cfg.Dial(r.Context(), "tcp", r.Host)
+	upstream, err := h.dial(r.Context(), "tcp", r.Host)
+	if errors.Is(err, errPrivate) {
+		http.Error(w, errPrivate.Error(), http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		http.Error(w, "dialing the destination failed", http.StatusBadGateway)
 		return

@@ -274,8 +274,10 @@ func (p *ProxyRouter) forward(key string) func(http.RoundTripper) http.RoundTrip
 			out := r.Clone(r.Context())
 			out.RequestURI = ""
 			for name := range out.Header {
-				// The client mustn't speak for another context.
-				if strings.HasPrefix(name, "A2a-Run-") {
+				// The client mustn't speak for another context, in any
+				// spelling that a proxy may read as one of these headers:
+				// CGI-style stacks read _ as -.
+				if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-run-") {
 					delete(out.Header, name)
 				}
 			}
@@ -379,3 +381,11 @@ type readerConn struct {
 }
 
 func (c *readerConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// CloseWrite passes a half-close on to the proxy, which may still answer.
+func (c *readerConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}

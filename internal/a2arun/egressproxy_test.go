@@ -56,7 +56,8 @@ func TestEgressProxyReportsInvalidFlags(t *testing.T) {
 		{name: "with egress rules", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--egress", "allowlist", "--egress-allow", "nas.lan"}, want: "--egress-proxy can't be used with --egress, --egress-allow: the proxy decides every connection"},
 		{name: "with a model key", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--inject-model-key", "anthropic=ANTHROPIC_API_KEY"}, want: "--egress-proxy can't be used with --inject-model-key"},
 		{name: "local sandbox", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--sandbox", "local"}, want: "--egress-proxy need --sandbox docker"},
-		{name: "invalid URL", args: []string{"--egress-proxy", "https://proxy.example:443"}, want: `invalid --egress-proxy "https://proxy.example:443": invalid egress proxy URL: the URL isn't http or unix`},
+		{name: "invalid URL", args: []string{"--egress-proxy", "https://proxy.example:443"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL isn't http or unix"},
+		{name: "URL with credentials", args: []string{"--egress-proxy", "http://user:hunter2@proxy.example:8080/?token=hunter2"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL can't carry credentials"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,14 +71,15 @@ func TestEgressProxyReportsInvalidFlags(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &ready); err != nil || code != 2 || ready.Ready || !strings.Contains(ready.Error, tc.want) {
 				t.Fatalf("a2arun.Main(%q) = %d with stdout %q, want 2 and a ready line with an error containing %q", args, code, stdout.String(), tc.want)
 			}
+			if out := stdout.String() + stderr.String(); strings.Contains(out, "hunter2") {
+				t.Fatalf("a2arun.Main(%q) output = %q, want it without the URL's secrets", args, out)
+			}
 		})
 	}
 }
 
-// dockerTestEnv builds what the Docker test needs, or skips without
-// Docker or the egress boundary: a2a-run built as releases are, and an
-// image with fakeacp.
-func dockerTestEnv(t *testing.T) (bin, image string) {
+// requireDocker skips without Docker and the egress boundary of Linux.
+func requireDocker(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" || os.Getenv("A2A_SERVE_SANDBOX_RELAY") == "1" {
 		t.Skip("needs the egress boundary of Linux without an egress container")
@@ -88,27 +90,35 @@ func dockerTestEnv(t *testing.T) (bin, image string) {
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skipf("docker isn't available: %v", err)
 	}
-	dir := t.TempDir()
-	bin = filepath.Join(dir, "a2a-run")
-	ctxDir := filepath.Join(dir, "image")
-	for _, b := range []struct{ out, pkg string }{{bin, "../../cmd/a2a-run"}, {filepath.Join(ctxDir, "fakeacp"), "../agentsrv/testdata/fakeacp"}} {
-		build := exec.Command("go", "build", "-o", b.out, b.pkg)
-		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
-		}
-	}
-	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background())
-	if err != nil {
-		t.Fatalf("Docker().Probe() error = %v", err)
-	}
-	if !caps.Boundary {
-		t.Skipf("the boundary can't work here: %s", caps.Problem)
-	}
-	image = "a2a-run-test-fakeacp:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
-	build := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
-	build.Stdin = strings.NewReader("FROM scratch\nCOPY fakeacp /usr/local/bin/fakeacp\n")
+}
+
+// buildA2ARun builds a2a-run with CGO_ENABLED set to cgo; releases build
+// it with 0.
+func buildA2ARun(t *testing.T, cgo string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "a2a-run")
+	build := exec.Command("go", "build", "-o", bin, "../../cmd/a2a-run")
+	build.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS=linux")
 	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build a2a-run with CGO_ENABLED=%s error = %v\n%s", cgo, err, out)
+	}
+	return bin
+}
+
+// buildFakeacpImage builds an image whose /usr/local/bin/fakeacp is
+// fakeacp, and returns its name.
+func buildFakeacpImage(t *testing.T) string {
+	t.Helper()
+	ctxDir := t.TempDir()
+	build := exec.Command("go", "build", "-o", filepath.Join(ctxDir, "fakeacp"), "../agentsrv/testdata/fakeacp")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build fakeacp error = %v\n%s", err, out)
+	}
+	image := "a2a-run-test-fakeacp:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
+	docker := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
+	docker.Stdin = strings.NewReader("FROM scratch\nCOPY fakeacp /usr/local/bin/fakeacp\n")
+	if out, err := docker.CombinedOutput(); err != nil {
 		t.Fatalf("docker build error = %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
@@ -116,7 +126,24 @@ func dockerTestEnv(t *testing.T) (bin, image string) {
 			t.Errorf("docker rmi %s error = %v: %s", image, err, out)
 		}
 	})
-	return bin, image
+	return image
+}
+
+// dockerTestEnv builds what the Docker test needs, or skips without
+// Docker or the egress boundary: a2a-run built as releases are, and an
+// image with fakeacp.
+func dockerTestEnv(t *testing.T) (bin, image string) {
+	t.Helper()
+	requireDocker(t)
+	bin = buildA2ARun(t, "0")
+	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Docker().Probe() error = %v", err)
+	}
+	if !caps.Boundary {
+		t.Skipf("the boundary can't work here: %s", caps.Problem)
+	}
+	return bin, buildFakeacpImage(t)
 }
 
 // serveHost serves h on a Unix socket in dir and returns its URL.
@@ -236,6 +263,26 @@ func TestEgressProxyDecidesTheDockerSandboxConnections(t *testing.T) {
 	// The agent may retry a refused connection, on another address.
 	if diff := cmp.Diff(wantConnects, slices.Compact(host.Connects())); diff != "" {
 		t.Fatalf("host connects wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestReadyLineReportsNoEgressBoundary(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	if out, err := exec.Command("go", "env", "CGO_ENABLED").Output(); err != nil || strings.TrimSpace(string(out)) != "1" {
+		t.Skip("needs cgo, to build an a2a-run that the sandbox can't launch")
+	}
+	bin := buildA2ARun(t, "1")
+	if caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background()); err != nil || caps.Boundary {
+		t.Skipf("Docker().Probe() = %+v, %v, want no boundary for an a2a-run built with cgo", caps, err)
+	}
+	dir := testutil.ShortTempDir(t)
+
+	ready := startBinary(t, bin, "--sandbox", "docker", "--image", buildFakeacpImage(t), "--command", "/usr/local/bin/fakeacp",
+		"--workspace", "dir:"+t.TempDir(), "--listen", "unix://"+filepath.Join(dir, "a2a.sock"))
+
+	if ready.Egress != serve.EgressNone {
+		t.Fatalf("ready line egress without a boundary = %q, want %q", ready.Egress, serve.EgressNone)
 	}
 }
 

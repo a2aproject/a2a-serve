@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,7 +42,9 @@ import (
 type fakeProxy struct {
 	t    *testing.T
 	echo string
-	next chan struct{}
+	// afterEOF answers each connection once it has read all of it.
+	afterEOF string
+	next     chan struct{}
 
 	mu   sync.Mutex
 	seen []string
@@ -49,7 +52,7 @@ type fakeProxy struct {
 
 func newFakeProxy(t *testing.T) *fakeProxy {
 	t.Helper()
-	return &fakeProxy{t: t, echo: echoServer(t), next: make(chan struct{})}
+	return &fakeProxy{t: t, echo: echoServer(t), afterEOF: afterEOFServer(t), next: make(chan struct{})}
 }
 
 func (p *fakeProxy) record(s string) {
@@ -66,7 +69,7 @@ func (p *fakeProxy) requests() []string {
 
 func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
-		p.record(r.Method + " " + r.RequestURI + " context=" + r.Header.Get(egress.ProxyHeaderContext) + " task=" + r.Header.Get(egress.ProxyHeaderTask) + " host=" + r.Host)
+		p.record(r.Method + " " + r.RequestURI + " context=" + r.Header.Get(egress.ProxyHeaderContext) + " task=" + r.Header.Get(egress.ProxyHeaderTask) + " host=" + r.Host + spoofed(r.Header))
 		if r.URL.Path == "/sse" {
 			p.stream(w)
 			return
@@ -86,8 +89,12 @@ func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "refuse.test":
 		w.Header().Set("Connection", "close")
 		http.Error(w, "no\x00 calls\r\n  to refuse.test today", http.StatusForbidden)
-	case "tunnel.test":
-		upstream, err := net.Dial("tcp", p.echo)
+	case "tunnel.test", "eof.test":
+		target := p.echo
+		if host == "eof.test" {
+			target = p.afterEOF
+		}
+		upstream, err := net.Dial("tcp", target)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -100,11 +107,14 @@ func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if _, err := io.Copy(upstream, brw); err != nil {
 				p.t.Logf("tunnel: %v", err)
 			}
-			closeLog(p.t, upstream)
+			if err := upstream.(*net.TCPConn).CloseWrite(); err != nil {
+				p.t.Logf("tunnel: %v", err)
+			}
 		}()
 		if _, err := io.Copy(c, upstream); err != nil {
 			p.t.Logf("tunnel: %v", err)
 		}
+		closeLog(p.t, upstream)
 		closeLog(p.t, c)
 	default:
 		c, _ := hijack(p.t, w)
@@ -113,6 +123,23 @@ func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		closeLog(p.t, c)
 	}
+}
+
+// spoofed returns the names of the headers in h that a proxy can read as
+// A2A-Run-* headers, besides the ones a2a-run sets.
+func spoofed(h http.Header) string {
+	var out []string
+	for name := range h {
+		norm := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
+		if strings.HasPrefix(norm, "a2a-run-") && name != "A2a-Run-Context" && name != "A2a-Run-Task" {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	slices.Sort(out)
+	return " spoofed=" + strings.Join(out, ",")
 }
 
 func (p *fakeProxy) stream(w http.ResponseWriter) {
@@ -132,6 +159,33 @@ func (p *fakeProxy) stream(w http.ResponseWriter) {
 		}
 		http.NewResponseController(w).Flush() //nolint:errcheck // a failed flush shows as a missing event
 	}
+}
+
+// afterEOFServer answers each connection with what it read, once the
+// connection's input ends, and returns its address.
+func afterEOFServer(t *testing.T) string {
+	t.Helper()
+	ln := listenTCP(t)
+	t.Cleanup(func() { closeLog(t, ln) })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer closeLog(t, c)
+				got, err := io.ReadAll(c)
+				if err != nil {
+					return
+				}
+				if _, err := io.WriteString(c, "after EOF: "+string(got)); err != nil {
+					t.Logf("answering after EOF: %v", err)
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
 }
 
 func hijack(t *testing.T, w http.ResponseWriter) (net.Conn, *bufio.ReadWriter) {
@@ -253,7 +307,7 @@ func TestProxyRouterForwardsInterceptedRequests(t *testing.T) {
 	addr, ca := proxyEndpoint(t, egress.ProxyConfig{URL: url, Task: func(key string) string { return "task-of-" + key }}, 5*time.Second, "ctx-1")
 	c := client(t, addr, ca)
 
-	status, body, err := get(t, c, "https://api.example.test/v1/models?page=2", http.Header{"A2a-Run-Context": {"forged"}})
+	status, body, err := get(t, c, "https://api.example.test/v1/models?page=2", http.Header{"A2a-Run-Context": {"forged"}, "A2A_Run_Context": {"victim"}, "a2a_run-task": {"victim"}, "A2a-Run-Other": {"x"}})
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("GET https://api.example.test = %d, %v, want 200", status, err)
 	}
@@ -272,6 +326,33 @@ func TestProxyRouterForwardsInterceptedRequests(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, p.requests()); diff != "" {
 		t.Fatalf("proxy requests wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestProxyRouterTunnelsPassHalfCloses(t *testing.T) {
+	t.Parallel()
+	p := newFakeProxy(t)
+	addr, _ := proxyEndpoint(t, egress.ProxyConfig{URL: serveProxy(t, listenTCP(t), p)}, 5*time.Second, "ctx-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	status, _, c, err := tunnel(ctx, addr, "eof.test:7")
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("CONNECT eof.test = %d, %v, want 200", status, err)
+	}
+	defer closeLog(t, c)
+	if _, err := io.WriteString(c, "ping"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.(*bufferedConn).Conn.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(c)
+	if err != nil || string(got) != "after EOF: ping" {
+		t.Fatalf("answer after the client's half-close = %q, %v, want %q", got, err, "after EOF: ping")
 	}
 }
 

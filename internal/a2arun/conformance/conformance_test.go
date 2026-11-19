@@ -26,25 +26,32 @@ import (
 )
 
 var (
-	egressProxy = flag.String("egress-proxy", "", "egress proxy URL to test, http://host:port or unix:///path (default: the reference host)")
-	intercept   = flag.String("intercept", "", "host:port that the egress proxy intercepts")
-	refuse      = flag.String("refuse", "", "host:port that the egress proxy refuses")
-	forward     = flag.Bool("forward", false, "the egress proxy forwards plain HTTP requests to 127.0.0.1")
+	egressProxy   = flag.String("egress-proxy", "", "egress proxy URL to test, http://host:port or unix:///path (default: the reference host)")
+	intercept     = flag.String("intercept", "", "host:port that the egress proxy intercepts")
+	refuse        = flag.String("refuse", "", "host:port that the egress proxy refuses")
+	forward       = flag.Bool("forward", false, "the egress proxy forwards plain HTTP requests to 127.0.0.1; needs -allow-loopback")
+	allowLoopback = flag.Bool("allow-loopback", false, "the egress proxy means to reach this host's loopback")
 )
 
 func TestConformance(t *testing.T) {
-	cfg := Config{EgressProxy: *egressProxy, Intercept: *intercept, Refuse: *refuse, Forward: *forward}
-	if cfg.EgressProxy == "" {
-		cfg = Config{EgressProxy: serveRefhost(t), Intercept: "api.anthropic.com:443", Refuse: "blocked.example:443", Forward: true}
+	if *egressProxy != "" {
+		Run(t, Config{EgressProxy: *egressProxy, Intercept: *intercept, Refuse: *refuse, Forward: *forward, AllowLoopback: *allowLoopback})
+		return
 	}
-	Run(t, cfg)
+	t.Run("reference host", func(t *testing.T) {
+		Run(t, Config{EgressProxy: serveRefhost(t, false), Intercept: "api.anthropic.com:443", Refuse: "blocked.example:443"})
+	})
+	t.Run("reference host reaching loopback", func(t *testing.T) {
+		Run(t, Config{EgressProxy: serveRefhost(t, true), Forward: true, AllowLoopback: true})
+	})
 }
 
 // serveRefhost serves the reference host on a Unix socket, refusing
-// blocked.example, and returns its URL.
-func serveRefhost(t *testing.T) string {
+// blocked.example, and private destinations unless allowPrivate, and
+// returns its URL.
+func serveRefhost(t *testing.T, allowPrivate bool) string {
 	t.Helper()
-	h := refhost.New(refhost.Config{Decide: func(c refhost.Connect) refhost.Decision {
+	h := refhost.New(refhost.Config{AllowPrivate: allowPrivate, Decide: func(c refhost.Connect) refhost.Decision {
 		if c.Target == "blocked.example:443" {
 			return refhost.Refuse("blocked.example is off limits")
 		}
