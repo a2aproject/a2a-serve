@@ -26,6 +26,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
 	"slices"
@@ -130,7 +131,7 @@ func checkSetup(ctx context.Context, launcher string, served bool) error {
 	if err != nil {
 		return err
 	}
-	run := &bwrapRun{system: systemArgs(), launcher: launcher, egressDir: dir}
+	run := &bwrapRun{system: hostSystemView().args, launcher: launcher, egressDir: dir}
 	closeFn := func() error { return nil }
 	if served {
 		mounts, closeServed, err := serveTrees([]ServedMount{{Dst: "/probe", Tree: fsys.Memory()}}, dir)
@@ -166,7 +167,8 @@ func (b *Bubblewrap) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 	if err := CheckBubblewrap(ctx); err != nil {
 		return nil, err
 	}
-	cmdPath, programDirs, err := hostPrograms(spec.Command, b.programs)
+	view := hostSystemView()
+	cmdPath, programDirs, err := hostPrograms(spec.Command, b.programs, view)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +180,7 @@ func (b *Bubblewrap) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		return nil, fmt.Errorf("creating the directory of the sandbox's files: %w", err)
 	}
 	run := &bwrapRun{
-		system:   systemArgs(),
+		system:   view.args,
 		mounts:   spec.Mounts,
 		masks:    spec.Masks,
 		scratch:  spec.Scratch,
@@ -274,7 +276,7 @@ func (b *Bubblewrap) probeOnce(served bool, probe func() error) error {
 
 // systemDirs are the directories of this machine that a bubblewrap sandbox
 // shows read-only, as links where they are links, as on systems that
-// merged them into /usr.
+// merged them into /usr, except the home directories under them.
 var systemDirs = []string{"/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"}
 
 // etcFiles are the entries of /etc that a bubblewrap sandbox shows
@@ -289,18 +291,90 @@ var etcFiles = []string{
 	"localtime", "timezone", "os-release", "mime.types",
 }
 
-// systemArgs returns the arguments of bwrap that show the system
-// directories of this machine.
-func systemArgs() []string {
-	var args []string
-	for _, d := range systemDirs {
-		if target, err := os.Readlink(d); err == nil {
-			args = append(args, "--symlink", target, d)
-			continue
-		}
-		args = append(args, "--ro-bind-try", d, d)
+// systemView is what a sandbox shows of the system directories: the
+// arguments of bwrap, and the paths they show, each with what's under it.
+type systemView struct {
+	args  []string
+	shown []string
+}
+
+// newSystemView returns the view of dirs without homes. A directory that
+// holds a home, such as /usr on machines that keep homes under
+// /usr/local, shows its other entries, and so on down to the home, which
+// it leaves out.
+func newSystemView(dirs, homes []string) systemView {
+	var v systemView
+	holdsHome := func(d string) bool {
+		return slices.ContainsFunc(homes, func(h string) bool { return h == d || strings.HasPrefix(h, d+"/") })
 	}
-	return args
+	var add func(d string)
+	add = func(d string) {
+		if target, err := os.Readlink(d); err == nil {
+			v.args = append(v.args, "--symlink", target, d)
+			v.shown = append(v.shown, d)
+			return
+		}
+		if !holdsHome(d) {
+			v.args = append(v.args, "--ro-bind-try", d, d)
+			v.shown = append(v.shown, d)
+			return
+		}
+		if slices.Contains(homes, d) {
+			return
+		}
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			add(filepath.Join(d, e.Name()))
+		}
+	}
+	for _, d := range dirs {
+		add(d)
+	}
+	return v
+}
+
+// shows reports whether v shows p.
+func (v systemView) shows(p string) bool {
+	return slices.ContainsFunc(v.shown, func(d string) bool { return p == d || strings.HasPrefix(p, d+"/") })
+}
+
+// userHomes returns the home directories of the user, as $HOME and the
+// user database name them, with links resolved too.
+func userHomes() []string {
+	var homes []string
+	add := func(h string) {
+		if h == "" || !filepath.IsAbs(h) {
+			return
+		}
+		for _, p := range []string{filepath.Clean(h), fsutil.ResolvePath(h)} {
+			if !slices.Contains(homes, p) {
+				homes = append(homes, p)
+			}
+		}
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		add(h)
+	}
+	if u, err := user.Current(); err == nil {
+		add(u.HomeDir)
+	}
+	return homes
+}
+
+// hostSystemView returns the view of this machine's system directories,
+// which leaves out the user's home directories and, where a system
+// directory holds them, the directories that hold the homes of others.
+func hostSystemView() systemView {
+	homes := userHomes()
+	for _, h := range slices.Clone(homes) {
+		if parent := filepath.Dir(h); parent != "/" && !slices.Contains(systemDirs, parent) && !slices.Contains(homes, parent) {
+			homes = append(homes, parent)
+		}
+	}
+	return newSystemView(systemDirs, homes)
 }
 
 // systemPath is the PATH of the system directories.
@@ -309,9 +383,10 @@ const systemPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 // bwrapPath returns the PATH of a sandbox: the directories in which this
 // machine's PATH found the programs, then the system directories.
 func bwrapPath(programs []programDir) string {
+	system := strings.Split(systemPath, ":")
 	var dirs []string
 	for _, p := range programs {
-		if p.onPath && !slices.Contains(dirs, p.dir) {
+		if p.onPath && !slices.Contains(dirs, p.dir) && !slices.Contains(system, p.dir) {
 			dirs = append(dirs, p.dir)
 		}
 	}
@@ -324,20 +399,19 @@ type programDir struct {
 	dir string
 	// onPath is set for the directory in which PATH found the program.
 	onPath bool
+	// shown is set where the system view shows the directory already.
+	shown bool
 }
 
 // hostPrograms finds the command of c and the programs names on this
 // machine's PATH, and returns the path of the command and the directories
-// of the programs that the system directories don't hold: the one in
-// which PATH found each, and the one of its file with links resolved. A
-// command path with a slash that isn't absolute is in the sandbox, such as
-// in the workspace.
-func hostPrograms(c Command, names []string) (string, []programDir, error) {
+// of the programs: the one in which PATH found each, and the one of its
+// file with links resolved. A command path with a slash that isn't
+// absolute is in the sandbox, such as in the workspace.
+func hostPrograms(c Command, names []string, view systemView) (string, []programDir, error) {
 	var dirs []programDir
 	add := func(d programDir) error {
-		if underSystemDirs(d.dir) {
-			return nil
-		}
+		d.shown = view.shows(d.dir)
 		broad, err := projectfiles.BroadMount(d.dir)
 		if err != nil {
 			return err
@@ -386,12 +460,6 @@ func hostPrograms(c Command, names []string) (string, []programDir, error) {
 		}
 	}
 	return cmdPath, dirs, nil
-}
-
-// underSystemDirs reports whether the sandboxes show p with the system
-// directories.
-func underSystemDirs(p string) bool {
-	return slices.ContainsFunc(systemDirs, func(d string) bool { return p == d || strings.HasPrefix(p, d+"/") })
 }
 
 // hostBundle returns the system CA bundle of this machine, or "".
@@ -511,7 +579,9 @@ func (r *bwrapRun) args(check bool) []string {
 func (r *bwrapRun) mountOps() []mountOp {
 	var ops []mountOp
 	for _, p := range r.programs {
-		ops = append(ops, mountOp{dst: p.dir, args: []string{"--ro-bind", p.dir, p.dir}})
+		if !p.shown {
+			ops = append(ops, mountOp{dst: p.dir, args: []string{"--ro-bind", p.dir, p.dir}})
+		}
 	}
 	for _, m := range r.mounts {
 		flag := "--bind"

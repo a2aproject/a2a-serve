@@ -46,6 +46,10 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 	rt, probe := bubblewrapRuntime(t, sandbox.MountHostDir)
 
 	ro, rw, home := t.TempDir(), t.TempDir(), t.TempDir()
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("os.UserHomeDir() error = %v", err)
+	}
 	writeFile(t, filepath.Join(ro, "hello.txt"), "hello")
 	writeFile(t, filepath.Join(ro, "private", "key"), "key")
 	server := listen(t)
@@ -73,7 +77,7 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 		Command: sandbox.Command{Path: probe, Dir: "/data", Args: []string{
 			"read:/data/hello.txt", "write:/data/new.txt", "ls:/data/private", "write:/rw/new.txt",
 			"write:/scratch/new.txt", "write:/empty/new.txt", "write:/home/agent/new.txt", "env:HOME", "env:SSL_CERT_FILE",
-			"read:/etc/shadow", "ls:/root", "unix:/run/a2a/api.sock",
+			"read:/etc/shadow", "ls:/root", "ls:" + userHome, "unix:/run/a2a/api.sock",
 			"dial:allowed.test:80", "dial:refused.test:80", "dial:127.0.0.1:" + server, "dial:1.1.1.1:80",
 			"caps:", "unshare:user", "userns:" + probe,
 		}},
@@ -102,6 +106,7 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 		"env:SSL_CERT_FILE /run/a2a-egress-ca-bundle.pem",
 		"read:/etc/shadow error",
 		"ls:/root error",
+		"ls:" + userHome + " error",
 		"unix:/run/a2a/api.sock ok",
 		"dial:allowed.test:80 ok",
 		"dial:refused.test:80 refused",

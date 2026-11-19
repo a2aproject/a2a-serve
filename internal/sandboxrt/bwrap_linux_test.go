@@ -143,14 +143,14 @@ func TestHostPrograms(t *testing.T) {
 	}
 	t.Setenv("PATH", filepath.Dir(link)+":"+filepath.Dir(cli)+":/usr/bin")
 
-	path, dirs, err := hostPrograms(Command{Path: "agent"}, []string{"a2a", "sh"})
+	path, dirs, err := hostPrograms(Command{Path: "agent"}, []string{"a2a", "sh"}, newSystemView([]string{"/usr", "/bin"}, nil))
 	if err != nil {
 		t.Fatalf("hostPrograms() error = %v", err)
 	}
 	if path != real {
 		t.Fatalf("hostPrograms() path = %q, want %q", path, real)
 	}
-	want := []programDir{{dir: filepath.Dir(link), onPath: true}, {dir: filepath.Dir(real)}, {dir: filepath.Dir(cli), onPath: true}}
+	want := []programDir{{dir: filepath.Dir(link), onPath: true}, {dir: filepath.Dir(real)}, {dir: filepath.Dir(cli), onPath: true}, {dir: "/usr/bin", onPath: true, shown: true}}
 	if diff := cmp.Diff(want, dirs, cmp.AllowUnexported(programDir{})); diff != "" {
 		t.Fatalf("hostPrograms() dirs wrong result (-want +got) diff = %s", diff)
 	}
@@ -158,10 +158,10 @@ func TestHostPrograms(t *testing.T) {
 		t.Fatalf("bwrapPath() = %q, want %q", got, want)
 	}
 
-	if _, _, err := hostPrograms(Command{Path: "./bin/agent"}, nil); err != nil {
+	if _, _, err := hostPrograms(Command{Path: "./bin/agent"}, nil, systemView{}); err != nil {
 		t.Fatalf("hostPrograms() of a path in the sandbox error = %v", err)
 	}
-	_, _, err = hostPrograms(Command{Path: "agent"}, []string{"a2a-missing"})
+	_, _, err = hostPrograms(Command{Path: "agent"}, []string{"a2a-missing"}, systemView{})
 	if pe, ok := errors.AsType[*ProgramError](err); !ok || pe.Name != "a2a-missing" {
 		t.Fatalf("hostPrograms() with a missing program error = %v, want a ProgramError of a2a-missing", err)
 	}
@@ -175,8 +175,51 @@ func TestHostProgramsRefusesProgramInTheHomeDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := hostPrograms(Command{Path: agent}, nil)
+	_, _, err := hostPrograms(Command{Path: agent}, nil, systemView{})
 	if !errors.Is(err, errBroadProgramDir) {
 		t.Fatalf("hostPrograms() of a program in the home directory error = %v, want %v", err, errBroadProgramDir)
+	}
+}
+
+func TestSystemViewLeavesOutHomes(t *testing.T) {
+	root := t.TempDir()
+	usr := filepath.Join(root, "usr")
+	home := filepath.Join(usr, "local", "corp", "home", "me")
+	for _, d := range []string{filepath.Join(usr, "bin"), filepath.Join(usr, "local", "bin"), filepath.Join(usr, "local", "corp", "tools"), filepath.Join(home, ".ssh"), filepath.Join(home, "go", "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("usr/bin", filepath.Join(root, "bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	v := newSystemView([]string{usr, filepath.Join(root, "bin")}, []string{home})
+	want := []string{
+		"--ro-bind-try", filepath.Join(usr, "bin"), filepath.Join(usr, "bin"),
+		"--ro-bind-try", filepath.Join(usr, "local", "bin"), filepath.Join(usr, "local", "bin"),
+		"--ro-bind-try", filepath.Join(usr, "local", "corp", "tools"), filepath.Join(usr, "local", "corp", "tools"),
+		"--symlink", "usr/bin", filepath.Join(root, "bin"),
+	}
+	if diff := cmp.Diff(want, v.args); diff != "" {
+		t.Fatalf("newSystemView() args wrong result (-want +got) diff = %s", diff)
+	}
+	for p, want := range map[string]bool{filepath.Join(usr, "bin", "sh"): true, filepath.Join(home, ".ssh"): false, filepath.Join(usr, "local", "corp"): false} {
+		if got := v.shows(p); got != want {
+			t.Fatalf("systemView.shows(%q) = %v, want %v", p, got, want)
+		}
+	}
+
+	t.Setenv("PATH", filepath.Join(home, "go", "bin"))
+	tool := filepath.Join(home, "go", "bin", "a2a")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, dirs, err := hostPrograms(Command{Path: "./agent"}, []string{"a2a"}, v)
+	if err != nil {
+		t.Fatalf("hostPrograms() error = %v", err)
+	}
+	if diff := cmp.Diff([]programDir{{dir: filepath.Join(home, "go", "bin"), onPath: true}}, dirs, cmp.AllowUnexported(programDir{})); diff != "" {
+		t.Fatalf("hostPrograms() dirs of a program in a home under a system directory wrong result (-want +got) diff = %s", diff)
 	}
 }
