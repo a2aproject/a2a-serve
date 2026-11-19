@@ -75,7 +75,7 @@ func (r *Runner) startMain(ctx context.Context) (exec a2asrv.AgentExecutor, clos
 	r.logf("✓ %s is running (ACP)", r.cfg.Profile.Name())
 	since := time.Now()
 	r.mainSince.Store(&since)
-	return r.turns.guard(r.stalls.guard(acp)), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
+	return r.turns.guard(r.stalls.guard(r.toolsDone.guard(acp))), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 func (r *Runner) logf(format string, args ...any) {
@@ -154,7 +154,7 @@ func (r *Runner) startPool(ctx context.Context, name string) (a2asrv.AgentExecut
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing %s: %w", cmp.Or(r.cfg.Options.PoolLabels[name], "the agent processes of the pool "+name), err)
 	}
-	return r.turns.guard(r.stalls.guard(acp)), func(context.Context) error { return acp.Close() }, nil
+	return r.turns.guard(r.stalls.guard(r.toolsDone.guard(acp))), func(context.Context) error { return acp.Close() }, nil
 }
 
 // countedTurn counts each turn in the agent process of its conversation
@@ -546,7 +546,7 @@ func (r *Runner) acpConfig(procs *procs) *a2aacp.Config {
 		Session:      r.sessionParams,
 		Settings:     r.sessionSettings,
 		Turn:         r.countAgentTurn(r.stalls.turn(r.turns.turn(turn))),
-		Converter:    r.stalls,
+		Converter:    r.toolsDone.converter(r.stalls),
 		Abandoned:    r.abandoned,
 		Failure:      r.cfg.Hooks.Explain,
 	}

@@ -173,6 +173,12 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Egress proxy refusal | `a2a-run` reads 4 KB of the body and shows the agent the first 256 characters on one line |
 | Egress proxy answer to an intercepted request | The head must arrive within 10 minutes and fit in 64 KB. The sandbox's own limits on intercepted requests also apply. |
 | Idle connections to the egress proxy | 32, each closed after 90 seconds unused |
+| Start of the session with the tools endpoint | 10 seconds |
+| Answer to `hooks/beforeTool` | 30 seconds; a call without an answer in time is denied |
+| `hooks/afterTool` notification | 10 seconds. Up to 64 wait to be sent; more are dropped. |
+| Output of a tool call in `hooks/afterTool` | 64 KiB |
+| An answer of the tools endpoint to `a2a-run` | 1 MiB |
+| Requests of `a2a-run` to the tools endpoint at once | 16 |
 
 ## Logs
 

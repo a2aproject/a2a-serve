@@ -28,6 +28,10 @@ var ToolKinds = slices.Clone(toolrules.Kinds)
 
 // ToolCall is a tool call that an agent asks permission for.
 type ToolCall struct {
+	// ID is the agent's ID of the call, and Title its description of it,
+	// such as the command line or the agent's name of the tool.
+	ID    string
+	Title string
 	// Kind is the ACP tool kind: read, edit, execute, and so on.
 	Kind string
 	// Tool is <server>.<tool> for an MCP tool.
@@ -117,7 +121,7 @@ func decideTools(ds []ToolDecider) agentrun.DecideTool {
 		return nil
 	}
 	return func(ctx context.Context, c agentrun.Call) (agentrun.Decision, bool, error) {
-		call := ToolCall{Kind: c.Kind, Tool: c.Tool, MCP: c.MCP, Command: c.Command, ContextID: c.ContextID, TaskID: c.TaskID}
+		call := ToolCall{ID: c.ID, Title: c.Title, Kind: c.Kind, Tool: c.Tool, MCP: c.MCP, Command: c.Command, ContextID: c.ContextID, TaskID: c.TaskID}
 		for _, d := range ds {
 			dec, ok, err := d.Decide(ctx, call)
 			if err != nil {

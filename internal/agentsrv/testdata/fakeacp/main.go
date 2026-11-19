@@ -35,6 +35,11 @@
 //	orphan <file>    starts a process in a session of its own, writes its
 //	                 PID to file, and exits mid-turn
 //	mcp              replies with the MCP servers of session/new
+//	mcpcall <server> <tool> <text>
+//	                 asks permission for the tool of the HTTP MCP server of
+//	                 session/new, named <server>_<tool> as opencode names
+//	                 it; once allowed, calls it with {"text": <text>} and
+//	                 reports its output
 //	pid              replies with the host name and process ID
 //	model            replies with the model of the session
 //	agents           replies with the agents URL and the socket that
@@ -65,6 +70,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -843,11 +849,154 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		}
 		a.chunk(sid, "Pushed ("+option+").")
 		end("end_turn")
+	case "mcpcall":
+		a.mcpCall(sid, s, arg)
+		end("end_turn")
 	default:
 		a.chunk(sid, "Hello ")
 		a.chunk(sid, "from fakeacp.")
 		end("end_turn")
 	}
+}
+
+// mcpCall asks permission for a tool of an MCP server of the session, by
+// arg "<server> <tool> <text>", then calls it and reports the output.
+func (a *agent) mcpCall(sid string, s *session, arg string) {
+	server, rest, _ := strings.Cut(arg, " ")
+	tool, text, _ := strings.Cut(rest, " ")
+	var url string
+	for _, raw := range s.MCPServers {
+		var srv struct {
+			Type, Name, URL string
+		}
+		if json.Unmarshal(raw, &srv) == nil && srv.Name == server && srv.Type == "http" {
+			url = srv.URL
+		}
+	}
+	if url == "" {
+		a.chunk(sid, "mcp error: no HTTP MCP server "+server)
+		return
+	}
+	id := "m1"
+	a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": id, "title": server + "_" + tool, "kind": "other", "status": "pending", "rawInput": map[string]any{"text": text}})
+	resp := a.call("session/request_permission", map[string]any{
+		"sessionId": sid,
+		"toolCall":  map[string]any{"toolCallId": id},
+		"options": []map[string]any{
+			{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+			{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
+		},
+	})
+	var r struct {
+		Outcome struct {
+			OptionID string `json:"optionId"`
+		} `json:"outcome"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil || r.Outcome.OptionID != "allow" {
+		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "failed"})
+		a.chunk(sid, "mcp denied")
+		return
+	}
+	a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "in_progress"})
+	out, err := callMCPTool(url, tool, text)
+	if err != nil {
+		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "failed"})
+		a.chunk(sid, "mcp error: "+err.Error())
+		return
+	}
+	a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed",
+		"content": []map[string]any{{"type": "content", "content": map[string]any{"type": "text", "text": out}}}})
+	a.chunk(sid, "mcp result: "+out)
+}
+
+// callMCPTool calls the tool of the streamable HTTP MCP server at url,
+// with a session of its own.
+func callMCPTool(url, tool, text string) (string, error) {
+	c := &http.Client{Timeout: 30 * time.Second}
+	session := ""
+	post := func(msg map[string]any) (json.RawMessage, error) {
+		msg["jsonrpc"] = "2.0"
+		body, err := json.Marshal(msg)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if session != "" {
+			req.Header.Set("Mcp-Session-Id", session)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "fakeacp: closing an MCP answer:", err)
+			}
+		}()
+		if id := resp.Header.Get("Mcp-Session-Id"); id != "" {
+			session = id
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusAccepted {
+			return nil, nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(data)))
+		}
+		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+			for line := range strings.Lines(string(data)) {
+				if d, ok := strings.CutPrefix(strings.TrimSpace(line), "data:"); ok && strings.Contains(d, `"id"`) {
+					data = []byte(d)
+				}
+			}
+		}
+		var r struct {
+			Result json.RawMessage `json:"result"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(data, &r); err != nil {
+			return nil, err
+		}
+		if r.Error != nil {
+			return nil, errors.New(r.Error.Message)
+		}
+		return r.Result, nil
+	}
+	if _, err := post(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{
+		"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "fakeacp", "version": "1"},
+	}}); err != nil {
+		return "", fmt.Errorf("initialize: %w", err)
+	}
+	if _, err := post(map[string]any{"method": "notifications/initialized"}); err != nil {
+		return "", fmt.Errorf("initialized: %w", err)
+	}
+	res, err := post(map[string]any{"id": 2, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": map[string]any{"text": text}}})
+	if err != nil {
+		return "", fmt.Errorf("tools/call: %w", err)
+	}
+	var out struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil {
+		return "", err
+	}
+	var texts []string
+	for _, c := range out.Content {
+		texts = append(texts, c.Text)
+	}
+	return strings.Join(texts, ""), nil
 }
 
 // parseAgentsURL returns the agents URL of the line the agent server adds

@@ -68,6 +68,7 @@ type Server struct {
 	agent    *a2aserve.Agent
 	boundary *egress.Boundary
 	proxy    *egress.ProxyRouter
+	tools    *hostTools
 	ln       net.Listener
 	http     *http.Server
 	served   chan error
@@ -106,9 +107,14 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.tools != nil {
+		if srv.tools, err = startTools(ctx, *s.tools, cfg.Version, srv.log); err != nil {
+			return nil, err
+		}
+	}
 	turns := newTurns()
 	if s.sandbox == SandboxDocker {
-		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns); err != nil {
+		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
 			return nil, err
 		}
 	}
@@ -128,17 +134,21 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if s.sandbox == SandboxDocker {
 		base.Limits = limits
 	}
+	if srv.tools != nil {
+		base.MCPServers = []a2aserve.MCPServer{srv.tools.server(s.sandbox)}
+	}
 	mem := newMemory(defaultMemoryLimits, time.Now)
 	srv.agent, err = a2aserve.New(ctx, a2aserve.Config{
 		Profile:  s.profile,
 		Model:    s.model,
 		Runtime:  rt,
 		Egress:   srv.boundary,
+		Tools:    srv.tools.deciders(),
 		Main:     base,
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
-		Hooks:    a2aserve.Hooks{Turn: turns.turn},
+		Hooks:    a2aserve.Hooks{Turn: turns.turn, ToolDone: srv.tools.toolDone()},
 		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}},
 		StateDir: stateDir,
 		Log:      srv.log,
@@ -186,7 +196,7 @@ func (s *Server) Close(ctx context.Context) error {
 		err = errors.Join(err, serr, s.http.Close())
 	}
 	s.agent, s.ln = nil, nil
-	return errors.Join(err, s.release())
+	return errors.Join(err, s.closeTools(ctx), s.release())
 }
 
 // release closes and removes what Start set up and Close didn't.
@@ -204,6 +214,9 @@ func (s *Server) release() error {
 	if s.proxy != nil {
 		s.proxy.CloseIdleConnections()
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), toolsCloseTimeout)
+	defer cancel()
+	errs = append(errs, s.closeTools(ctx))
 	for _, dir := range s.temp {
 		errs = append(errs, fsutil.RemoveAll(dir))
 	}
@@ -239,6 +252,9 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	}
 	if !caps.Boundary && set.egressProxy != "" {
 		return nil, "", false, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-run, which Docker here can't: %s", caps.Problem)
+	}
+	if !caps.Boundary && set.tools != nil {
+		return nil, "", false, fmt.Errorf("--tools with --sandbox docker needs a sandbox that routes the agent's connections through a2a-run, which Docker here can't: %s; use --sandbox local with an http:// URL", caps.Problem)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)

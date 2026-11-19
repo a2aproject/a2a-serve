@@ -62,6 +62,20 @@ Each A2A context runs in an agent process of its own. A process stops when it is
 
 When the agent asks before a tool call, the task waits in `input-required`. Answer it on the same task, as [Approval Messages](approval-messages.md) describes.
 
+## Host tools
+
+`--tools` gives every agent session the host's MCP server, and lets the host decide tool calls:
+
+```console
+$ a2a-run --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --tools unix:///run/host/tools.sock --listen unix:///tmp/a2a-run.sock
+```
+
+The agent sees the host's tools as those of the MCP server `host`. When the host advertises hooks, `a2a-run` asks it about each tool call the agent asks permission for, and tells it the result of each tool call. [Tools endpoint](a2a-run-tools.md) specifies the protocol.
+
+## Stopping
+
 On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent processes, and removes the Unix socket and its temporary directories.
 
 ## Flags
@@ -81,6 +95,7 @@ On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent pro
 | `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
 | `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
 | `--workspace dir:path` |  | Workspace that the agent processes share: dir:path, a directory |
+| `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises |
 | `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
 | `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts |
 | `--home directory` |  | Agent home directory, which every agent process shares (default: a temporary directory, removed at exit) |

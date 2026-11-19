@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package refhost is a reference host of a2a-run: an egress proxy that
-// refuses, tunnels or intercepts each connection, answers or forwards the
-// requests it intercepts, and records what it saw. It refuses loopback,
-// link-local and private destinations unless told otherwise. It serves the
-// tests and the conformance suite.
+// Package refhost is a reference host of a2a-run. Its egress proxy refuses,
+// tunnels or intercepts each connection, answers or forwards the requests
+// it intercepts, and records what it saw; it refuses loopback, link-local
+// and private destinations unless told otherwise. Its tools endpoint serves
+// MCP with one tool and the hooks of a2a-run. One listener can serve both.
+// It serves the tests and the conformance suite.
 package refhost
 
 import (
@@ -91,6 +92,9 @@ type Config struct {
 	// AllowPrivate lets tunnels and forwarded requests reach loopback,
 	// link-local and private addresses.
 	AllowPrivate bool
+	// Tools serves the requests in origin form, such as the MCP endpoint
+	// of [NewTools]; nil refuses them.
+	Tools http.Handler
 }
 
 // maxRecords bounds what a Host records.
@@ -207,6 +211,10 @@ func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
 func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		h.connect(w, r)
+		return
+	}
+	if !r.URL.IsAbs() && h.cfg.Tools != nil {
+		h.cfg.Tools.ServeHTTP(w, r)
 		return
 	}
 	if !r.URL.IsAbs() {
