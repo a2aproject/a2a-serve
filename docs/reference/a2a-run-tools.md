@@ -16,7 +16,18 @@ The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/202
 
 Every new agent session gets the endpoint as the MCP server `host`. The agent names its tools as it names other MCP tools: `host_echo` in opencode, `mcp__host__echo` in Claude Code.
 
-In a Docker sandbox, the agent reaches the server at `http://tools.a2a-run.internal` with the path of the URL. `a2a-run` sends these requests to the endpoint with the endpoint's own host in `Host` and the query of the URL, so the sandbox needs no port of the host machine and never sees the query. With `--egress-proxy`, these requests don't reach the egress proxy. With `--sandbox local`, the agent connects to the URL itself, so `--tools` must be an `http://` or `https://` URL there.
+In a Docker sandbox, the agent reaches the server at `http://tools.a2a-run.internal` with the path of the URL. `a2a-run` sends these requests to the endpoint with the endpoint's own host in `Host` and the query of the URL, so the sandbox needs no port of the host machine and never sees the query. It answers requests to other paths with 403, and methods other than `POST`, `GET` and `DELETE` with 405, without sending them. With `--egress-proxy`, these requests don't reach the egress proxy. With `--sandbox local`, the agent connects to the URL itself, so `--tools` must be an `http://` or `https://` URL there.
+
+## Origin
+
+The agent and `a2a-run` both reach the endpoint, so `a2a-run` marks who sent each request in the `A2A-Run-Origin` header:
+
+| Value | Sender |
+| --- | --- |
+| `a2a-run` | The session of `a2a-run` itself, which sends the hooks |
+| `sandbox` | The agent in a Docker sandbox. `a2a-run` drops the `A2A-Run-` headers that the agent sends, in any spelling, and sets this one. |
+
+Accept `hooks/*` only with `A2A-Run-Origin: a2a-run`, and answer the others with 403, so that the agent can't decide its own tool calls or report made-up results. With `--sandbox local`, the agent connects to the endpoint itself and can send any header, so the header doesn't tell it from `a2a-run`.
 
 ## a2a-run's session
 
@@ -35,7 +46,7 @@ The `initialize` result says which hooks the host answers:
 }
 ```
 
-Without `a2a-run/hooks`, `a2a-run` calls no hook. It sends `Mcp-Session-Id` and `Mcp-Protocol-Version` on later requests when the endpoint gave them. When the endpoint answers a request with 404, `a2a-run` starts a new session and sends the request again. It ends the session with `DELETE` when it stops.
+Without `a2a-run/hooks`, `a2a-run` calls no hook. It sends `Mcp-Session-Id` and `Mcp-Protocol-Version` on later requests when the endpoint gave them. When the endpoint answers a request or a notification with 404, `a2a-run` starts one new session, ends the old one, and sends the message again. It ends the session with `DELETE` when it stops.
 
 Answers can be `application/json` or a `text/event-stream` that carries the answer as one of its events. [Limits](limits.md#a2a-run) has the size and time limits.
 
@@ -91,7 +102,7 @@ The hook sees the calls that the agent asks permission for. `a2a-run` configures
 
 ## Check an endpoint
 
-The conformance suite checks a tools endpoint in any language: `initialize`, `tools/list`, an unknown method, and the hooks it advertises.
+The conformance suite checks a tools endpoint in any language: `initialize`, `tools/list`, an unknown method, the hooks it advertises, and that it refuses them from the sandbox.
 
 ```console
 $ go test ./internal/a2arun/conformance -tools unix:///run/host/tools.sock

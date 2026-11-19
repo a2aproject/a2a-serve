@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -37,6 +38,13 @@ const (
 	// HooksCapability is the experimental capability of a host that
 	// answers hooks.
 	HooksCapability = "a2a-run/hooks"
+	// HeaderOrigin says who sent a request to the endpoint.
+	HeaderOrigin = "A2A-Run-Origin"
+	// OriginA2ARun is the origin of a2a-run's own session.
+	OriginA2ARun = "a2a-run"
+	// OriginSandbox is the origin of the agent's requests, which a2a-run
+	// forwards from the sandbox.
+	OriginSandbox = "sandbox"
 	// MaxMessage bounds an answer of the endpoint.
 	MaxMessage = 1 << 20
 	// maxConns bounds the requests to the endpoint at once.
@@ -53,6 +61,10 @@ type Client struct {
 	clientVersion string
 	slots         chan struct{}
 	ids           atomic.Int64
+
+	// renewing serializes starting sessions, so that callers that find the
+	// session gone wait for one new session.
+	renewing sync.Mutex
 
 	mu      sync.Mutex
 	session string
@@ -82,9 +94,16 @@ type RPCError struct {
 func (e *RPCError) Error() string { return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message) }
 
 // Dial starts a session with the endpoint ep: it sends initialize and
-// notifications/initialized.
+// notifications/initialized. Its requests say they come from a2a-run in
+// HeaderOrigin.
 func Dial(ctx context.Context, ep Endpoint, version string) (*Client, error) {
-	c := &Client{ep: ep, hc: &http.Client{Transport: ep.Transport(), CheckRedirect: noRedirects}, clientVersion: version, slots: make(chan struct{}, maxConns)}
+	return DialThrough(ctx, ep, version, ep.Transport())
+}
+
+// DialThrough is Dial with requests sent through rt, such as
+// [Endpoint.Proxy] to act as the agent does.
+func DialThrough(ctx context.Context, ep Endpoint, version string, rt http.RoundTripper) (*Client, error) {
+	c := &Client{ep: ep, hc: &http.Client{Transport: rt, CheckRedirect: noRedirects}, clientVersion: version, slots: make(chan struct{}, maxConns)}
 	if err := c.initialize(ctx); err != nil {
 		c.hc.CloseIdleConnections()
 		return nil, err
@@ -107,64 +126,100 @@ func (c *Client) Hooks() HookSupport {
 	return h
 }
 
+// initialize starts a new session and makes it the client's once the
+// endpoint knows it is initialized.
 func (c *Client) initialize(ctx context.Context) error {
-	c.mu.Lock()
-	c.session, c.version = "", ""
-	c.mu.Unlock()
 	params := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "a2a-run", "version": c.clientVersion},
 	}
 	var res initializeResult
-	session, err := c.roundTrip(ctx, "initialize", params, true, &res)
+	session, err := c.roundTrip(ctx, "", "", "initialize", params, true, &res)
 	if err != nil {
 		return err
 	}
 	if res.ProtocolVersion == "" {
 		return c.ep.errorf("the initialize result has no protocolVersion")
 	}
+	if _, err := c.roundTrip(ctx, session, res.ProtocolVersion, "notifications/initialized", nil, false, nil); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	c.session, c.version, c.init = session, res.ProtocolVersion, res
 	c.mu.Unlock()
-	return c.Notify(ctx, "notifications/initialized", nil)
+	return nil
+}
+
+// current returns the session and the protocol version.
+func (c *Client) current() (session, version string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session, c.version
+}
+
+// renew starts a new session in place of stale, which the endpoint forgot,
+// unless another caller already did. It ends stale.
+func (c *Client) renew(ctx context.Context, stale string) error {
+	c.renewing.Lock()
+	defer c.renewing.Unlock()
+	if session, _ := c.current(); session != stale {
+		return nil
+	}
+	if err := c.initialize(ctx); err != nil {
+		return err
+	}
+	if err := c.end(ctx, stale, ""); err != nil {
+		slog.Debug("ending a session that the tools endpoint forgot", "error", err)
+	}
+	return nil
 }
 
 // Call sends the request method with params and decodes its result into
 // result. When the endpoint forgot the session, it starts a new one and
 // sends the request again.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
-	_, err := c.roundTrip(ctx, method, params, true, result)
+	return c.send(ctx, method, params, true, result)
+}
+
+// Notify sends the notification method with params. When the endpoint
+// forgot the session, it starts a new one and sends the notification
+// again.
+func (c *Client) Notify(ctx context.Context, method string, params any) error {
+	return c.send(ctx, method, params, false, nil)
+}
+
+func (c *Client) send(ctx context.Context, method string, params any, call bool, result any) error {
+	session, version := c.current()
+	_, err := c.roundTrip(ctx, session, version, method, params, call, result)
 	if !errors.Is(err, errSessionGone) {
 		return err
 	}
-	if err := c.initialize(ctx); err != nil {
+	if err := c.renew(ctx, session); err != nil {
 		return err
 	}
-	_, err = c.roundTrip(ctx, method, params, true, result)
-	return err
-}
-
-// Notify sends the notification method with params.
-func (c *Client) Notify(ctx context.Context, method string, params any) error {
-	_, err := c.roundTrip(ctx, method, params, false, nil)
+	session, version = c.current()
+	_, err = c.roundTrip(ctx, session, version, method, params, call, result)
 	return err
 }
 
 // Close ends the session.
 func (c *Client) Close(ctx context.Context) error {
 	defer c.hc.CloseIdleConnections()
-	c.mu.Lock()
-	session := c.session
-	c.mu.Unlock()
+	session, version := c.current()
 	if session == "" {
 		return nil
 	}
+	return c.end(ctx, session, version)
+}
+
+// end ends session. The endpoint may answer 404 for one it forgot.
+func (c *Client) end(ctx context.Context, session, version string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.ep.URL(), nil)
 	if err != nil {
 		return err
 	}
-	c.headers(req)
+	headers(req, session, version)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return c.ep.errorf("ending the session: %w", withoutURL(err))
@@ -174,21 +229,21 @@ func (c *Client) Close(ctx context.Context) error {
 
 var errSessionGone = errors.New("the endpoint forgot the session")
 
-// headers sets the session headers of a request.
-func (c *Client) headers(req *http.Request) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.session != "" {
-		req.Header.Set("Mcp-Session-Id", c.session)
+// headers sets the origin and the session headers of a request.
+func headers(req *http.Request, session, version string) {
+	req.Header.Set(HeaderOrigin, OriginA2ARun)
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
 	}
-	if c.version != "" {
-		req.Header.Set("Mcp-Protocol-Version", c.version)
+	if version != "" {
+		req.Header.Set("Mcp-Protocol-Version", version)
 	}
 }
 
-// roundTrip sends one message, a request if call, and decodes the result
-// of the answer into result. It returns the session ID of the answer.
-func (c *Client) roundTrip(ctx context.Context, method string, params any, call bool, result any) (string, error) {
+// roundTrip sends one message in session, a request if call, and decodes
+// the result of the answer into result. It returns the session ID of the
+// answer.
+func (c *Client) roundTrip(ctx context.Context, session, version, method string, params any, call bool, result any) (_ string, err error) {
 	select {
 	case c.slots <- struct{}{}:
 		defer func() { <-c.slots }()
@@ -214,7 +269,7 @@ func (c *Client) roundTrip(ctx context.Context, method string, params any, call 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	c.headers(req)
+	headers(req, session, version)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return "", c.ep.errorf("%s: %w", method, withoutURL(err))
@@ -224,12 +279,12 @@ func (c *Client) roundTrip(ctx context.Context, method string, params any, call 
 			err = cerr
 		}
 	}()
-	session := resp.Header.Get("Mcp-Session-Id")
+	answered := resp.Header.Get("Mcp-Session-Id")
 	switch {
-	case resp.StatusCode == http.StatusNotFound && req.Header.Get("Mcp-Session-Id") != "":
+	case resp.StatusCode == http.StatusNotFound && session != "":
 		return "", errSessionGone
 	case !call && (resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent):
-		return session, nil
+		return answered, nil
 	case resp.StatusCode != http.StatusOK:
 		snippet, rerr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		if rerr != nil {
@@ -263,7 +318,7 @@ func (c *Client) roundTrip(ctx context.Context, method string, params any, call 
 			return "", c.ep.errorf("%s: decoding the result: %w", method, err)
 		}
 	}
-	return session, nil
+	return answered, nil
 }
 
 // readAnswer returns the JSON-RPC answer with id in resp, a JSON body or

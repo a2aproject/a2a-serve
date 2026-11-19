@@ -17,6 +17,7 @@ package hosttools_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -397,5 +399,164 @@ func TestProxySendsRequestsToTheEndpoint(t *testing.T) {
 	}
 	if got, want := <-got, u.Host+" /mcp?token=secret-token"; got != want {
 		t.Fatalf("Proxy().RoundTrip() reached the endpoint with %q, want %q", got, want)
+	}
+}
+
+func TestProxyRefusesWhatIsNotTheEndpoint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		method, path string
+		wantStatus   int
+		wantReached  bool
+	}{
+		{method: http.MethodPost, path: "/mcp", wantStatus: http.StatusNoContent, wantReached: true},
+		{method: http.MethodGet, path: "/mcp", wantStatus: http.StatusNoContent, wantReached: true},
+		{method: http.MethodDelete, path: "/mcp", wantStatus: http.StatusNoContent, wantReached: true},
+		{method: http.MethodGet, path: "/admin", wantStatus: http.StatusForbidden},
+		{method: http.MethodPost, path: "/mcp/x", wantStatus: http.StatusForbidden},
+		{method: http.MethodPost, path: "/MCP", wantStatus: http.StatusForbidden},
+		{method: http.MethodPost, path: "/a/../mcp", wantStatus: http.StatusForbidden},
+		{method: http.MethodPut, path: "/mcp", wantStatus: http.StatusMethodNotAllowed},
+		{method: http.MethodOptions, path: "/mcp", wantStatus: http.StatusMethodNotAllowed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			t.Parallel()
+			reached := make(chan struct{}, 1)
+			ep := serve(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached <- struct{}{}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req, err := http.NewRequestWithContext(t.Context(), tc.method, "http://tools.a2a-run.internal"+tc.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := ep.Proxy().RoundTrip(req)
+			if err != nil {
+				t.Fatalf("Proxy().RoundTrip() error = %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.wantStatus || (len(reached) == 1) != tc.wantReached {
+				t.Fatalf("Proxy().RoundTrip(%s %s) = %d, reached the endpoint %v, want %d and %v", tc.method, tc.path, resp.StatusCode, len(reached) == 1, tc.wantStatus, tc.wantReached)
+			}
+		})
+	}
+}
+
+func TestProxyMarksTheSandboxOrigin(t *testing.T) {
+	t.Parallel()
+	got := make(chan http.Header, 1)
+	ep := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://tools.a2a-run.internal/mcp", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(hosttools.HeaderOrigin, hosttools.OriginA2ARun)
+	req.Header["A2a_Run_Origin"] = []string{hosttools.OriginA2ARun}
+	req.Header.Set("A2A-Run-Context", "another")
+	req.Header.Set("X-Other", "kept")
+	resp, err := ep.Proxy().RoundTrip(req)
+	if err != nil {
+		t.Fatalf("Proxy().RoundTrip() error = %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h := <-got
+	var a2aRun []string
+	for name, v := range h {
+		if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-run-") {
+			a2aRun = append(a2aRun, name+"="+strings.Join(v, ","))
+		}
+	}
+	if diff := cmp.Diff([]string{http.CanonicalHeaderKey(hosttools.HeaderOrigin) + "=" + hosttools.OriginSandbox}, a2aRun); diff != "" || h.Get("X-Other") != "kept" {
+		t.Fatalf("headers that reached the endpoint wrong result (-want +got) diff = %s, X-Other %q", diff, h.Get("X-Other"))
+	}
+}
+
+func TestClientSendsTheA2ARunOrigin(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: allHooks})
+	var mu sync.Mutex
+	var origins []string
+	ep := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		origins = append(origins, r.Method+" "+r.Header.Get(hosttools.HeaderOrigin))
+		mu.Unlock()
+		host.ServeHTTP(w, r)
+	}))
+	c, err := hosttools.Dial(t.Context(), ep, "test")
+	if err != nil {
+		t.Fatalf("hosttools.Dial() error = %v", err)
+	}
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatalf("Client.Close() error = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff([]string{"POST a2a-run", "POST a2a-run", "DELETE a2a-run"}, origins); diff != "" {
+		t.Fatalf("origins of the client's requests wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestToolDoneStartsANewSessionWhenTheHostForgetsIt(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: allHooks})
+	h := hosttools.NewHooks(dial(t, serve(t, host)), hosttools.DefaultHookTimeouts, slog.New(slog.DiscardHandler))
+	host.ForgetSessions()
+	h.ToolDone(t.Context(), a2aserve.ToolResult{ID: "t1", Status: "completed"})
+	h.ToolDone(t.Context(), a2aserve.ToolResult{ID: "t2", Status: "completed"})
+	h.Close(t.Context())
+	if got := len(host.Records(hosttools.MethodAfterTool)); got != 2 {
+		t.Fatalf("host got %d hooks/afterTool after it forgot the session, want 2", got)
+	}
+	if got := len(host.Records("initialize")); got != 2 {
+		t.Fatalf("host got %d initialize, want 2", got)
+	}
+}
+
+func TestConcurrentCallsShareOneNewSession(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: allHooks})
+	var mu sync.Mutex
+	deletes := 0
+	ep := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+			deletes++
+			mu.Unlock()
+		}
+		host.ServeHTTP(w, r)
+	}))
+	h := hooks(t, ep, hosttools.DefaultHookTimeouts)
+	host.ForgetSessions()
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan string, n)
+	for i := range n {
+		wg.Go(func() {
+			got, ok, err := h.Decide(context.Background(), a2aserve.ToolCall{ID: fmt.Sprint("t", i), Kind: "execute", Command: "ls"})
+			if err != nil || !ok || !got.Allow {
+				errs <- fmt.Sprintf("Hooks.Decide() = %+v, %v, %v, want allowed", got, ok, err)
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatal(e)
+	}
+	if got := len(host.Records("initialize")); got != 2 {
+		t.Fatalf("host got %d initialize for %d calls after it forgot the session, want 2", got, n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if deletes != 1 {
+		t.Fatalf("client ended %d sessions, want the replaced one ended once", deletes)
 	}
 }

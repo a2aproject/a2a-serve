@@ -23,6 +23,7 @@ import (
 	"mime"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
@@ -129,6 +130,11 @@ func (h *Tools) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var m message
 	if err := json.Unmarshal(data, &m); err != nil || m.JSONRPC != "2.0" || m.Method == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"jsonrpc": "2.0", "id": nil, "error": rpcError{-32700, "want a JSON-RPC request or notification"}})
+		return
+	}
+	if strings.HasPrefix(m.Method, "hooks/") && r.Header.Get(hosttools.HeaderOrigin) != hosttools.OriginA2ARun {
+		// The agent reaches this endpoint too; only a2a-run sends hooks.
+		http.Error(w, "hooks are only for a2a-run's own session", http.StatusForbidden)
 		return
 	}
 	if m.Method != "initialize" {

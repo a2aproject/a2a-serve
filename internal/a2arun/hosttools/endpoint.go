@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -95,17 +97,65 @@ func (e Endpoint) Transport() *http.Transport {
 	return t
 }
 
-// Proxy returns a transport that sends each request to the endpoint, with
-// the endpoint's scheme, host and query in place of the request's, so that
-// a client given only [Endpoint.Path] never sees the query. The request
-// keeps its path.
+// Proxy returns a transport for the agent's requests from the sandbox. It
+// refuses a request to another path than the endpoint's, or with a method
+// that streamable HTTP doesn't use, without sending it. It sends the others
+// to the endpoint with the endpoint's scheme, host and query in place of the
+// request's, so that a client given only [Endpoint.Path] never sees the
+// query. It drops the request's A2A-Run- headers and sets HeaderOrigin to
+// OriginSandbox, so that the host can tell the agent from a2a-run.
 func (e Endpoint) Proxy() http.RoundTripper {
 	t := e.Transport()
+	path := e.url.EscapedPath()
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method != http.MethodPost && r.Method != http.MethodGet && r.Method != http.MethodDelete:
+			resp := refusal(r, http.StatusMethodNotAllowed, "the tools endpoint takes POST, GET and DELETE")
+			resp.Header.Set("Allow", "POST, GET, DELETE")
+			closeRequest(r)
+			return resp, nil
+		case r.URL.Opaque != "" || r.URL.EscapedPath() != path:
+			closeRequest(r)
+			return refusal(r, http.StatusForbidden, "the tools endpoint is at "+path), nil
+		}
 		r = r.Clone(r.Context())
+		for name := range r.Header {
+			// CGI-style stacks read _ as -.
+			if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-run-") {
+				delete(r.Header, name)
+			}
+		}
+		r.Header.Set(HeaderOrigin, OriginSandbox)
 		r.URL.Scheme, r.URL.Host, r.Host, r.URL.RawQuery = e.url.Scheme, e.url.Host, e.url.Host, e.url.RawQuery
 		return t.RoundTrip(r)
 	})
+}
+
+// refusal returns an answer to r with status and the text msg.
+func refusal(r *http.Request, status int, msg string) *http.Response {
+	body := msg + "\n"
+	return &http.Response{
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		StatusCode:    status,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        http.Header{"Content-Type": {"text/plain; charset=utf-8"}},
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       r,
+	}
+}
+
+// closeRequest closes the body of a request that a transport doesn't send,
+// as a transport must.
+func closeRequest(r *http.Request) {
+	if r.Body == nil {
+		return
+	}
+	if err := r.Body.Close(); err != nil {
+		slog.Debug("closing the body of a refused request to the tools endpoint", "error", err)
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

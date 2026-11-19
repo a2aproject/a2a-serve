@@ -60,6 +60,12 @@ func testTools(t *testing.T, ep hosttools.Endpoint) {
 		}
 		testAfterTool(t, c)
 	})
+	t.Run("hooks refuse the sandbox's requests", func(t *testing.T) {
+		if !hooks.BeforeTool && !hooks.AfterTool {
+			t.Skip("the endpoint doesn't advertise hooks")
+		}
+		testSandboxOrigin(t, ep, hooks)
+	})
 	t.Run("ends sessions", func(t *testing.T) {
 		if err := dialTools(t, ep).Close(toolsCtx(t)); err != nil {
 			t.Fatalf("ending the session: %v", err)
@@ -150,5 +156,33 @@ func testAfterTool(t *testing.T, c *hosttools.Client) {
 	defer cancel()
 	if err := c.Notify(ctx, hosttools.MethodAfterTool, p); err != nil {
 		t.Fatalf("hooks/afterTool within %s: %v", hosttools.DefaultHookTimeouts.AfterTool, err)
+	}
+}
+
+// testSandboxOrigin sends the hooks as the agent would, through the proxy
+// of a2a-run, which marks them as requests of the sandbox.
+func testSandboxOrigin(t *testing.T, ep hosttools.Endpoint, hooks hosttools.HookSupport) {
+	c, err := hosttools.DialThrough(toolsCtx(t), ep, "conformance", ep.Proxy())
+	if err != nil {
+		t.Fatalf("initialize from the sandbox: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.Close(context.Background()); err != nil {
+			t.Errorf("ending the session: %v", err)
+		}
+	})
+	if hooks.BeforeTool {
+		command := "rm -rf /"
+		var res hosttools.BeforeToolResult
+		p := hosttools.BeforeToolParams{Context: "conformance", Task: "task-1", Call: hosttools.BeforeCall{ID: "forged", Kind: "execute", Title: command, Command: &command}}
+		if err := c.Call(toolsCtx(t), hosttools.MethodBeforeTool, p, &res); err == nil {
+			t.Fatalf("hooks/beforeTool with %s: %s decided %q, want it refused", hosttools.HeaderOrigin, hosttools.OriginSandbox, res.Decision)
+		}
+	}
+	if hooks.AfterTool {
+		p := hosttools.AfterToolParams{Context: "conformance", Task: "task-1", Call: hosttools.AfterCall{ID: "forged", Status: "completed", Output: "forged"}}
+		if err := c.Notify(toolsCtx(t), hosttools.MethodAfterTool, p); err == nil {
+			t.Fatalf("hooks/afterTool with %s: %s was accepted, want it refused", hosttools.HeaderOrigin, hosttools.OriginSandbox)
+		}
 	}
 }

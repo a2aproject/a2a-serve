@@ -65,6 +65,7 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 
 			task := sendTask(t, c, "context-a", "mcpcall host echo through the boundary")
 			refused := sendTask(t, c, "context-a", "dial "+serve.ToolsHost+":81")
+			otherPath := sendTask(t, c, "context-a", "fetch http://"+serve.ToolsHost+"/admin")
 
 			if got, want := testutil.AllArtifactText(task), "mcp result: echo: through the boundary"; got != want {
 				t.Fatalf("Client.SendMessage(mcpcall) = %q, want %q", got, want)
@@ -78,6 +79,9 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 			waitRecords(t, tools, hosttools.MethodAfterTool, 1)
 			if text := testutil.AllArtifactText(refused); !strings.Contains(text, "dial error") {
 				t.Fatalf("Client.SendMessage(dial %s:81) = %q, want a dial error", serve.ToolsHost, text)
+			}
+			if text := testutil.AllArtifactText(otherPath); !strings.HasPrefix(text, "fetch 403") {
+				t.Fatalf("Client.SendMessage(fetch http://%s/admin) = %q, want 403", serve.ToolsHost, text)
 			}
 			for _, c := range host.Connects() {
 				if strings.HasPrefix(c.Target, serve.ToolsHost) {
