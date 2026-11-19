@@ -423,24 +423,31 @@ func (h Hooks) engine(frontend agentrun.Hooks, cfg A2A) agentrun.Hooks {
 	return out
 }
 
+// maxAbandonAttempts bounds the updates of an abandoned task that lose to
+// concurrent writes, such as the handler still storing its question.
+const maxAbandonAttempts = 10
+
 // abandon stores the event that ends a task whose agent stopped while it
 // waited for an answer, unless the task ended first, such as by a reply.
 func abandon(store taskstore.Store, materializer taskstore.UpdateMaterializer) func(context.Context, *a2a.TaskStatusUpdateEvent) error {
 	return func(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) error {
-		stored, err := store.Get(ctx, ev.TaskID)
-		if err != nil {
-			return err
-		}
-		if stored.Task.Status.State.Terminal() {
-			return nil
-		}
-		task, err := materializer.ApplyUpdate(ctx, stored.Task, ev)
-		if err != nil {
-			return err
-		}
-		_, err = store.Update(ctx, &taskstore.UpdateRequest{Task: task, Event: ev, PrevTask: stored.Task, PrevVersion: stored.Version})
-		if errors.Is(err, taskstore.ErrConcurrentModification) {
-			return nil
+		var err error
+		for range maxAbandonAttempts {
+			stored, gerr := store.Get(ctx, ev.TaskID)
+			if gerr != nil {
+				return gerr
+			}
+			if stored.Task.Status.State.Terminal() {
+				return nil
+			}
+			task, aerr := materializer.ApplyUpdate(ctx, stored.Task, ev)
+			if aerr != nil {
+				return aerr
+			}
+			_, err = store.Update(ctx, &taskstore.UpdateRequest{Task: task, Event: ev, PrevTask: stored.Task, PrevVersion: stored.Version})
+			if !errors.Is(err, taskstore.ErrConcurrentModification) {
+				return err
+			}
 		}
 		return err
 	}
