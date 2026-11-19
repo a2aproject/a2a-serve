@@ -44,7 +44,7 @@ When it fails to start, it prints `{"ready":false,"error":"..."}` and exits with
 
 The endpoint serves A2A over JSON-RPC at `/` and over REST, and the agent card at `/.well-known/agent-card.json`. It doesn't authenticate callers, so it listens only on a Unix socket or a loopback address.
 
-Each A2A context runs in an agent process of its own. A process stops when it is idle, and `--max-processes` bounds how many run at once. See [limits](limits.md#a2a-run).
+Each A2A context runs in an agent process of its own. A process stops when it is idle, and `--max-processes` bounds how many run at once. `a2a-run` keeps tasks in memory and forgets a context some time after its tasks ended. See [limits](limits.md#a2a-run).
 
 When the agent asks before a tool call, the task waits in `input-required`. Answer it on the same task, as [Approval Messages](approval-messages.md) describes.
 
@@ -67,7 +67,7 @@ On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent pro
 | `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
 | `--workspace dir:path` |  | Workspace that the agent processes share: dir:path, a directory |
 | `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
-| `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room |
+| `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts |
 | `--home directory` |  | Agent home directory, which every agent process shares (default: a temporary directory, removed at exit) |
 | `--state-dir directory` |  | State directory for the files of the agent processes that no process may see, such as their sockets (default: a temporary directory, removed at exit) |
 <!-- /generated:a2a-run-flags -->

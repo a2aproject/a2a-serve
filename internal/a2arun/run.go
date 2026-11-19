@@ -93,7 +93,7 @@ func newRunCmd(std IO) *cobra.Command {
 	f.StringArrayVar(&cfg.ModelKeys, "inject-model-key", nil, "API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of "+strings.Join(egressrules.ProviderNames(), ", ")+" and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY")
 	f.StringVar(&cfg.Workspace, "workspace", "", "Workspace that the agent processes share: `dir:path`, a directory")
 	f.StringVar(&cfg.Listen, "listen", serve.DefaultListen, "Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port")
-	f.IntVar(&cfg.MaxProcesses, "max-processes", serve.DefaultMaxProcesses, "Agent processes that run at once, one per A2A context; an idle process stops to make room")
+	f.IntVar(&cfg.MaxProcesses, "max-processes", serve.DefaultMaxProcesses, "Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-run, started to check that the agent starts")
 	f.StringVar(&cfg.Home, "home", "", "Agent home `directory`, which every agent process shares (default: a temporary directory, removed at exit)")
 	f.StringVar(&cfg.StateDir, "state-dir", "", "State `directory` for the files of the agent processes that no process may see, such as their sockets (default: a temporary directory, removed at exit)")
 	return cmd

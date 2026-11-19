@@ -25,7 +25,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -99,7 +98,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating the state directory: %w", err)
 	}
-	rt, summary, err := srv.runtime(ctx, s, stateDir, stderr)
+	rt, summary, err := srv.runtime(ctx, s, stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +124,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	if s.sandbox == SandboxDocker {
 		base.Limits = limits
 	}
+	mem := newMemory(defaultMemoryLimits, time.Now)
 	srv.agent, err = a2aserve.New(ctx, a2aserve.Config{
 		Profile:  s.profile,
 		Model:    s.model,
@@ -133,7 +133,8 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Main:     base,
 		Callers:  contexts{base: base},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
-		A2A:      a2aserve.A2A{MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}},
+		Sessions: mem.sessions(),
+		A2A:      a2aserve.A2A{TaskStore: mem, MaxExecutions: maxExecutions, Capabilities: &a2a.AgentCapabilities{Streaming: true}},
 		StateDir: stateDir,
 		Log:      srv.log,
 		Stderr:   stderr,
@@ -210,18 +211,11 @@ func (s *Server) dir(dir, pattern string) (string, error) {
 
 // runtime returns the sandbox runtime of set, and how the ready line
 // describes it. It checks that Docker answers before anything starts.
-func (s *Server) runtime(ctx context.Context, set settings, stateDir string, stderr io.Writer) (sandbox.Runtime, string, error) {
+func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (sandbox.Runtime, string, error) {
 	if set.sandbox == SandboxLocal {
 		return sandbox.Local(), SandboxLocal, nil
 	}
-	// Without a state directory of its own, the Docker runtime writes env
-	// files into a directory of the core's temporary state that nothing
-	// creates, and the first container fails to start.
-	dockerDir := filepath.Join(stateDir, "docker")
-	if err := fsutil.MkdirPrivate(dockerDir); err != nil {
-		return nil, "", err
-	}
-	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr, StateDir: dockerDir})
+	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
 	caps, err := rt.Probe(ctx)
 	if err != nil {
 		return nil, "", err

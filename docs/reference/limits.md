@@ -159,12 +159,15 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 
 | Limit | Value |
 | --- | --- |
-| Agent processes running at once | 4. `--max-processes` changes it, up to 64. |
+| Agent processes running at once | 4 for the A2A contexts. `--max-processes` changes it, up to 64. One more process runs for the life of `a2a-run`, started to check that the agent starts. |
 | Idle agent process | Stops after 10 minutes |
 | Tasks running at once | 64 |
 | Question with no answer | The task fails after 4 hours |
 | Memory, CPUs and processes of a container | 4 GB, 2 CPUs and 512 processes |
 | Length of a context ID | 256 characters |
+| Tasks and agent sessions of a context | Forgotten 1 hour after the context's last change, once all its tasks ended |
+| Contexts kept | 1000. Past that, or past 256 MB of tasks, `a2a-run` forgets the contexts whose tasks all ended, least recently changed first. |
+| Tasks kept for one context | 100. Past that, `a2a-run` forgets the oldest tasks that ended. |
 | Requests at once | 1024, including open streams |
 
 ## Logs
