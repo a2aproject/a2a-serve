@@ -557,7 +557,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		})
 		s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 		s.callers = &callerInterceptor{approvals: s.approvals, tasks: s.tasks, waiting: waiting, budget: s.budget, engine: func() *agentrun.Runner { return s.engine }, dir: s.dir, removeHome: s.forgetHome}
-		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(s.agent.Handler())), a2alimit.Default())
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(s.agent.Handler()), a2alimit.Default())
 	})
 	s.ops = agentops.New(agentops.Deps{
 		Store:     s.store,
