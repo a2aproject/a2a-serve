@@ -18,12 +18,16 @@
 //
 //	go test ./internal/a2arun/conformance -egress-proxy <url> -intercept api.anthropic.com:443 -refuse blocked.example:443
 //	go test ./internal/a2arun/conformance -tools <url>
+//	go test ./internal/a2arun/conformance -workspace <url>
 //
 // A proxy must refuse this host's loopback; -allow-loopback skips that
 // check for one that means to reach it. The tools endpoint is http://,
 // https:// or unix:///path, and the suite checks the hooks it advertises.
+// The workspace is the file server of a2a-run --workspace, http://,
+// https:// or unix:///path; the suite works in a directory of its own in
+// the tree and removes it at the end.
 //
-// Without -egress-proxy or -tools it tests the reference host.
+// Without -egress-proxy, -tools or -workspace it tests the reference host.
 package conformance
 
 import (
@@ -63,6 +67,9 @@ type Config struct {
 	AllowLoopback bool
 	// Tools is the URL of the tools endpoint; "" skips its tests.
 	Tools string
+	// Workspace is the URL of the file server of the workspace; "" skips
+	// its tests.
+	Workspace string
 }
 
 // timeout bounds each step; a2a-run waits less for a decision.
@@ -89,6 +96,12 @@ func Run(t *testing.T, cfg Config) {
 			t.Fatalf("invalid tools URL: %v", err)
 		}
 		testTools(t, ep)
+	})
+	t.Run("workspace", func(t *testing.T) {
+		if cfg.Workspace == "" {
+			t.Skip("no workspace")
+		}
+		testWorkspace(t, cfg.Workspace)
 	})
 }
 

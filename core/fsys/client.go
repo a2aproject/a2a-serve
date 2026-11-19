@@ -35,8 +35,8 @@ import (
 )
 
 // Client returns the tree that a file server serves at rawURL with the
-// wire protocol of [Handler]: http://host:port with an optional path
-// prefix, or unix:///path/to/socket. It refuses paths outside the rules of
+// wire protocol of [Handler]: http://host:port or https://host:port with
+// an optional path prefix, or unix:///path/to/socket. It refuses paths outside the rules of
 // the package before it sends them, and bounds what it reads: a listing
 // and a batch of changes to [MaxEntries]. Changes waits at most until the
 // deadline of its context, in requests of up to [MaxChangesWait].
@@ -55,7 +55,7 @@ func Client(rawURL string) (FS, error) {
 	}
 	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}}
 	switch u.Scheme {
-	case "http":
+	case "http", "https":
 		if u.Host == "" {
 			return nil, errors.New("the file server URL has no host")
 		}
@@ -71,7 +71,7 @@ func Client(rawURL string) (FS, error) {
 		}
 		c.base = "http://fsys"
 	default:
-		return nil, fmt.Errorf("the file server URL has the scheme %q; want http or unix", u.Scheme)
+		return nil, fmt.Errorf("the file server URL has the scheme %q; want http, https or unix", u.Scheme)
 	}
 	return c, nil
 }
@@ -268,7 +268,9 @@ func (c *client) Write(ctx context.Context, p string, r io.Reader, mode fs.FileM
 	}
 	q := pathQuery(p)
 	q.Set("mode", fmt.Sprintf("%04o", uint32(mode.Perm())))
-	resp, err := c.do(ctx, "write", p, http.MethodPut, "/file", q, header, r, http.StatusOK)
+	// The transport closes a body that is an io.Closer, and r is the
+	// caller's.
+	resp, err := c.do(ctx, "write", p, http.MethodPut, "/file", q, header, struct{ io.Reader }{r}, http.StatusOK)
 	if err != nil {
 		return Info{}, err
 	}

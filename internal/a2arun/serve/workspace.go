@@ -19,9 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -35,6 +37,9 @@ import (
 const (
 	WorkspaceDir    = "dir"
 	WorkspaceMemory = "memory"
+	// WorkspaceURL is a tree that the host serves with the workspace
+	// protocol.
+	WorkspaceURL = "url"
 )
 
 // Syncs of --workspace-sync, as the ready line names them.
@@ -45,6 +50,13 @@ const (
 	// SyncLive lets every context change the workspace in place.
 	SyncLive = "live"
 )
+
+// workspaceCheckTimeout bounds the check at start that the host serves the
+// workspace of a URL.
+const workspaceCheckTimeout = 10 * time.Second
+
+// liveHint is the hint of a live workspace that the sandbox can't mount.
+const liveHint = "use --workspace-sync turn, which works on every sandbox"
 
 // workspaceLimits bound a workspace with turn sync, which
 // docs/reference/limits.md lists.
@@ -60,11 +72,20 @@ type workspace struct {
 	kind string
 	// path is the directory of dir:<path>.
 	path string
-	sync string
+	// client is the tree of a URL.
+	client fsys.FS
+	// shown names a memory or URL workspace in errors, a URL without what
+	// may carry a secret.
+	shown string
+	sync  string
 }
 
-// parseWorkspace parses dir:<path> or memory, and the sync of
-// --workspace-sync.
+// served reports whether the sandbox mounts the workspace as a served
+// tree: a live workspace that isn't a host directory.
+func (w workspace) served() bool { return w.sync == SyncLive && w.kind != WorkspaceDir }
+
+// parseWorkspace parses dir:<path>, memory or the URL of a host's tree,
+// and the sync of --workspace-sync.
 func parseWorkspace(v, sync, sandbox string) (workspace, error) {
 	switch sync {
 	case "":
@@ -74,20 +95,24 @@ func parseWorkspace(v, sync, sandbox string) (workspace, error) {
 		return workspace{}, usagef("invalid --workspace-sync %q: want %s or %s", sync, SyncTurn, SyncLive)
 	}
 	if v == "" {
-		return workspace{}, usagef("no workspace: pass --workspace dir:<path> or --workspace memory")
+		return workspace{}, usagef("no workspace: pass --workspace dir:<path>, --workspace memory, or the URL of your file server")
 	}
-	if v == WorkspaceMemory {
-		if sync == SyncLive {
-			return workspace{}, usagef("--workspace-sync live needs --workspace dir:<path>; a live memory workspace is planned, use --workspace-sync turn")
+	if v == WorkspaceMemory || isURL(v) {
+		w := workspace{kind: WorkspaceMemory, shown: WorkspaceMemory, sync: sync}
+		if isURL(v) {
+			var err error
+			if w, err = parseWorkspaceURL(v, sync); err != nil {
+				return workspace{}, err
+			}
 		}
-		return workspace{kind: WorkspaceMemory, sync: sync}, nil
-	}
-	if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "unix://") {
-		return workspace{}, usagef("invalid --workspace %q: a workspace that the host serves is planned; want dir:<path> or memory", v)
+		if w.served() && sandbox == SandboxLocal {
+			return workspace{}, usagef("--workspace-sync live with --workspace %s needs --sandbox docker, which mounts the workspace in the sandbox; %s", w.shown, liveHint)
+		}
+		return w, nil
 	}
 	kind, path, ok := strings.Cut(v, ":")
 	if !ok || kind != WorkspaceDir || path == "" {
-		return workspace{}, usagef("invalid --workspace %q: want dir:<path> or memory", v)
+		return workspace{}, usagef("invalid --workspace %q: want dir:<path>, memory, or an http://, https:// or unix:///path URL", v)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -115,6 +140,46 @@ func parseWorkspace(v, sync, sandbox string) (workspace, error) {
 		}
 	}
 	return workspace{kind: WorkspaceDir, path: abs, sync: sync}, nil
+}
+
+func isURL(v string) bool {
+	return strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "unix://")
+}
+
+// parseWorkspaceURL parses the URL of a host's file server. Its errors
+// leave out the URL, whose path may carry a secret.
+func parseWorkspaceURL(v, sync string) (workspace, error) {
+	u, err := neturl.Parse(v)
+	if err != nil {
+		return workspace{}, usagef("invalid --workspace: the URL doesn't parse; want http://host:port, https://host:port or unix:///path")
+	}
+	client, err := fsys.Client(v)
+	if err != nil {
+		return workspace{}, usagef("invalid --workspace: %w", err)
+	}
+	shown := u.Scheme + "://" + u.Host
+	if u.Scheme == "unix" {
+		shown = "unix://" + u.Path
+	}
+	return workspace{kind: WorkspaceURL, client: client, shown: shown, sync: sync}, nil
+}
+
+// check checks that the host serves the workspace of a URL: that its root
+// is a directory.
+func (w workspace) check(ctx context.Context) error {
+	if w.kind != WorkspaceURL {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, workspaceCheckTimeout)
+	defer cancel()
+	info, err := w.client.Stat(ctx, ".")
+	if err != nil {
+		return fmt.Errorf("the file server of --workspace %s doesn't answer: %s", w.shown, redactURLs(err.Error()))
+	}
+	if !info.Mode.IsDir() {
+		return fmt.Errorf("the file server of --workspace %s serves a root that isn't a directory", w.shown)
+	}
+	return nil
 }
 
 // checkWorkspaceSize fails with a usage error if the directory dir holds
@@ -154,10 +219,13 @@ func checkWorkspaceSize(dir string, limits workspaceLimits) error {
 	return nil
 }
 
-// tree returns the file tree of a turn-synced workspace.
+// tree returns the file tree of the workspace.
 func (w workspace) tree() fsys.FS {
-	if w.kind == WorkspaceMemory {
+	switch w.kind {
+	case WorkspaceMemory:
 		return fsys.MemoryWithLimits(fsys.MemoryLimits{MaxBytes: defaultWorkspaceLimits.bytes, MaxEntries: defaultWorkspaceLimits.entries})
+	case WorkspaceURL:
+		return w.client
 	}
 	return fsys.Dir(w.path)
 }
@@ -167,9 +235,15 @@ func (w workspace) tree() fsys.FS {
 // empty directory with turn sync. synced gets what each turn wrote to
 // tree.
 //
-// Each process sees its private directory at its path on the host: the
-// agent profiles expect the workspace at the same path on both sides.
+// With turn sync, each process sees its private directory at its path on
+// the host: the agent profiles expect the workspace at the same path on
+// both sides. A live tree has no path on the host, so the processes see it
+// at the default path of the core.
 func (w workspace) build(tree fsys.FS, stateDir string, synced func(context.Context, string, []fsys.Info)) (contexts, main a2aserve.Workspace, err error) {
+	if w.served() {
+		ws := a2aserve.Live(tree, a2aserve.LiveOptions{})
+		return ws, ws, nil
+	}
 	if w.sync == SyncLive {
 		ws := a2aserve.SharedDir(w.path)
 		return ws, ws, nil
@@ -187,8 +261,8 @@ func (w workspace) build(tree fsys.FS, stateDir string, synced func(context.Cont
 func (w workspace) explain(_ context.Context, _ *a2asrv.ExecutorContext, err error) []*a2a.Part {
 	if errors.Is(err, a2aserve.ErrWorkspaceTooLarge) || errors.Is(err, fsys.ErrFull) {
 		text := fmt.Sprintf("The workspace is past a2a-run's limits of %d entries and %d bytes (%v). Ask the agent to remove files it doesn't need, or remove files yourself, then send the message again.", defaultWorkspaceLimits.entries, defaultWorkspaceLimits.bytes, err)
-		if w.kind == WorkspaceDir {
-			text += " To work on a larger directory, restart a2a-run with --workspace-sync live."
+		if w.kind != WorkspaceMemory && w.sync == SyncTurn {
+			text += " To work on a larger workspace, restart a2a-run with --workspace-sync live."
 		}
 		return []*a2a.Part{a2a.NewTextPart(text)}
 	}

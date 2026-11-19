@@ -15,14 +15,20 @@
 package a2arun_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
+	"github.com/a2aproject/a2a-serve/core/fsys"
+	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/refhost"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/serve"
@@ -95,4 +101,94 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T) {
+	t.Parallel()
+	bin, image := dockerTestEnv(t)
+	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Docker().Probe() error = %v", err)
+	}
+	served := slices.Contains(caps.Mounts, sandbox.MountServed)
+	tests := []struct {
+		name string
+		// workspace returns the --workspace value, and a function that
+		// reads hello.txt as the host sees it.
+		workspace func(t *testing.T) (string, func(*testing.T, *a2aclient.Client) string)
+	}{
+		{
+			name: "url",
+			workspace: func(t *testing.T) (string, func(*testing.T, *a2aclient.Client) string) {
+				tree := fsys.Memory()
+				return serveTree(t, tree), func(t *testing.T, _ *a2aclient.Client) string {
+					got, err := readTree(t, tree, "hello.txt")
+					if err != nil {
+						return err.Error()
+					}
+					return got
+				}
+			},
+		},
+		{
+			name: "memory",
+			workspace: func(*testing.T) (string, func(*testing.T, *a2aclient.Client) string) {
+				return serve.WorkspaceMemory, func(t *testing.T, c *a2aclient.Client) string {
+					return testutil.AllArtifactText(sendWant(t, c, textIn("context-b", "read hello.txt"), a2a.TaskStateCompleted))
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			workspace, seen := tc.workspace(t)
+			sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+			args := []string{"--sandbox", "docker", "--image", image, "--command", "/usr/local/bin/fakeacp", "--egress", "allowlist",
+				"--workspace", workspace, "--workspace-sync", "live", "--listen", "unix://" + sock}
+			if !served {
+				t.Logf("Docker here can't mount a live workspace, so the test checks the refusal: %s", caps.MountProblems[sandbox.MountServed])
+				ready := failedReady(t, bin, args...)
+				if !strings.Contains(ready.Error, "--workspace-sync live") || !strings.Contains(ready.Error, "use --workspace-sync turn") {
+					t.Fatalf("ready line where Docker can't mount a live workspace = %+v, want an error with the hint to use turn sync", ready)
+				}
+				return
+			}
+			if ready := startBinary(t, bin, args...); ready.Workspace != tc.name || ready.WorkspaceSync != serve.SyncLive {
+				t.Fatalf("ready line = %+v, want workspace %s with live sync", ready, tc.name)
+			}
+			c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+			if err != nil {
+				t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+			}
+
+			waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+			during := seen(t, c)
+			done := sendWant(t, c, allow(t, waiting), a2a.TaskStateCompleted)
+
+			if during != "written by fakeacp\n" {
+				t.Fatalf("hello.txt as the host sees it while the turn waits = %q, want the agent's file", during)
+			}
+			if changes := changesOf(t, done); changes != nil {
+				t.Fatalf("changes of a live turn = %+v, want no changes artifact", changes)
+			}
+		})
+	}
+}
+
+// failedReady runs the a2a-run binary bin with args, which must fail to
+// start, and returns its ready line.
+func failedReady(t *testing.T, bin string, args ...string) serve.Ready {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("a2a-run %v exited with 0, want a failure; stdout:\n%s", args, stdout.String())
+	}
+	var ready serve.Ready
+	if err := json.Unmarshal(stdout.Bytes(), &ready); err != nil || ready.Ready {
+		t.Fatalf("ready line = %q, %v, want ready false; stderr:\n%s", stdout.String(), err, stderr.String())
+	}
+	return ready
 }

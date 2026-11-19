@@ -37,7 +37,7 @@ Once the agent is up, `a2a-run` prints one JSON line on stdout. Logs go to stder
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
 | `sandbox` | `docker`, `docker (rootless)` or `local` |
-| `workspace` | `dir` or `memory` |
+| `workspace` | `dir`, `memory` or `url` |
 | `workspace_sync` | `turn` or `live` |
 | `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |
 | `egress` | What decides the agent's connections, with `--sandbox docker`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-run`, and the agent uses Docker's network. The log on stderr says why. |
@@ -115,11 +115,23 @@ On SIGINT or SIGTERM, `a2a-run` fails the tasks in progress, stops the agent pro
 
 - `dir:<path>` is a directory on this machine.
 - `memory` starts empty and is held by `a2a-run`. It is lost at exit, so take the files from the tasks.
+- A URL is a file tree that the host serves with the [workspace protocol](workspace-protocol.md): `unix:///path` for a Unix socket, or `http://host:port` or `https://host:port` with an optional path prefix. The host keeps the files, in memory or wherever it likes.
 
 `--workspace-sync` decides how the agent changes them:
 
 - `turn`, the default, gives each A2A context a private copy of the workspace. Before each turn, the copy gets the changes of the workspace. After the turn, the agent's changes go back to the workspace, and the task gets them as an artifact. Other contexts see the changes from their next turn.
-- `live` lets every context edit a `dir:` workspace in place. A `memory` workspace with `live` sync is planned.
+- `live` lets every context change the workspace in place. Other contexts, and a host that serves the workspace, see each file as soon as the agent closes it, before the turn ends. The task gets no changes artifact. A `dir:` workspace is shared with the sandbox as it is. A `memory` or URL workspace needs `--sandbox docker`, which mounts it in the container.
+
+Serve the workspace from the host and let the agent change it live:
+
+```console
+$ a2a-run --agent opencode --workspace unix:///run/host/fs.sock --workspace-sync live \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-run.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-run.sock","sandbox":"docker (rootless)","workspace":"url","workspace_sync":"live","egress":"policy"}
+```
+
+At start, `a2a-run` checks that the host's file server answers and serves a directory. With `live`, it also checks that Docker here can mount the workspace. Docker Desktop can't yet, and neither can rootful Docker under its default AppArmor profile. When the check fails, `a2a-run` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
 
 With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets. A `dir:` workspace larger than `turn` sync copies fails at start with a hint to use `live`. A workspace that grows past the [limits](limits.md#a2a-run) fails the turn with a status message that says to remove files. The next turns still run, so the agent can remove them.
 
@@ -175,8 +187,8 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--env NAME=value` |  | Variable for the agent: NAME=value, such as DEBUG=1 |
 | `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
 | `--inject-model-key provider=NAME` |  | API key that a2a-run adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
-| `--workspace dir:path` |  | Files of the agent: dir:path for a directory, or memory for files that a2a-run keeps in memory and drops at exit |
-| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent edit a dir: workspace in place |
+| `--workspace source` |  | Files of the agent, a source: dir:path for a directory, memory for files that a2a-run keeps in memory and drops at exit, or the URL of a file server of the host: http://, https:// or unix:///path |
+| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker unless the workspace is a dir: |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-run calls the hooks it advertises |
 | `--contact name=url` |  | Other A2A agent the agent may call, through a2a-run: name=url, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
 | `--contact-auth name=value` |  | Authorization header of the requests to a --contact, which the agent never sees: name=value; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer="Bearer env:REVIEWER_TOKEN" |

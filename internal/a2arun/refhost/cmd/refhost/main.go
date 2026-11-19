@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command refhost serves the reference host, for trying a2a-run --tools
-// and --egress-proxy by hand. One listener serves both:
+// Command refhost serves the reference host, for trying a2a-run --tools,
+// --egress-proxy and --workspace by hand. One listener serves all three:
 //
-//	go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock --deny 'rm *'
+//	go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock --deny 'rm *' --workspace
 //
 // The tools endpoint allows every tool call but the shell commands that
 // match a --deny or --ask glob, in which * matches any run of characters,
 // and logs every message on stderr. The egress proxy intercepts every
 // connection and forwards its requests, refusing private destinations.
+// With --workspace, the listener also serves a file tree in memory with
+// the workspace protocol, and logs each change of it on stderr.
 package main
 
 import (
@@ -35,6 +37,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/refhost"
 )
@@ -47,17 +50,18 @@ func (g *globs) Set(v string) error { *g = append(*g, v); return nil }
 func main() {
 	listen := flag.String("listen", "127.0.0.1:0", "unix:///path or host:port")
 	noHooks := flag.Bool("no-hooks", false, "advertise no hooks")
+	workspace := flag.Bool("workspace", false, "serve a file tree in memory for a2a-run --workspace")
 	var deny, ask globs
 	flag.Var(&deny, "deny", "shell command `glob` that beforeTool denies, repeated")
 	flag.Var(&ask, "ask", "shell command `glob` that beforeTool leaves to the A2A caller, repeated")
 	flag.Parse()
-	if err := run(*listen, !*noHooks, deny, ask); err != nil {
+	if err := run(*listen, !*noHooks, *workspace, deny, ask); err != nil {
 		fmt.Fprintln(os.Stderr, "refhost:", err)
 		os.Exit(1)
 	}
 }
 
-func run(listen string, hooks bool, deny, ask []string) error {
+func run(listen string, hooks, workspace bool, deny, ask []string) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg := refhost.ToolsConfig{
 		Decide: func(p hosttools.BeforeToolParams) hosttools.BeforeToolResult {
@@ -70,7 +74,15 @@ func run(listen string, hooks bool, deny, ask []string) error {
 	if hooks {
 		cfg.Hooks = hosttools.HookSupport{BeforeTool: true, AfterTool: true}
 	}
-	host := refhost.New(refhost.Config{Tools: refhost.NewTools(cfg)})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	hostCfg := refhost.Config{Tools: refhost.NewTools(cfg)}
+	if workspace {
+		tree := fsys.Memory()
+		hostCfg.Workspace = fsys.Handler(tree)
+		go logChanges(ctx, tree, log)
+	}
+	host := refhost.New(hostCfg)
 	network, addr := "tcp", listen
 	if path, ok := strings.CutPrefix(listen, "unix://"); ok {
 		network, addr = "unix", path
@@ -84,9 +96,22 @@ func run(listen string, hooks bool, deny, ask []string) error {
 		shown = "unix://" + addr
 	}
 	fmt.Println(shown)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	return host.Serve(ctx, ln)
+}
+
+// logChanges logs each change of tree until ctx ends.
+func logChanges(ctx context.Context, tree fsys.FS, log *slog.Logger) {
+	cursor := ""
+	for ctx.Err() == nil {
+		changes, next, err := tree.Changes(ctx, cursor)
+		if err != nil && ctx.Err() == nil {
+			log.Warn("reading the changes of the workspace", "error", err)
+		}
+		cursor = next
+		for _, c := range changes {
+			log.Info("workspace changed", "path", c.Path, "removed", c.Removed, "mode", c.Mode, "size", c.Size)
+		}
+	}
 }
 
 // decide denies or asks about the shell commands that match deny or ask,

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"maps"
 	"net"
 	"net/http"
@@ -247,5 +248,48 @@ func TestClientRefusesEntriesOutsideTheDirectory(t *testing.T) {
 	}
 	if _, err := c.ReadDir(context.Background(), "."); !errors.Is(err, fs.ErrInvalid) {
 		t.Fatalf("Client.ReadDir() of an entry out of the tree error = %v, want %v", err, fs.ErrInvalid)
+	}
+}
+
+// closeRecorder is a reader that records whether it was closed.
+type closeRecorder struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return nil
+}
+
+func TestClientWriteLeavesTheReaderToTheCaller(t *testing.T) {
+	t.Parallel()
+	c := serveHTTP(t, fsys.Memory())
+	r := &closeRecorder{Reader: strings.NewReader("data")}
+
+	if _, err := c.Write(context.Background(), "f", r, 0o644, ""); err != nil {
+		t.Fatalf("Client.Write() error = %v", err)
+	}
+
+	if r.closed {
+		t.Fatalf("Client.Write() closed the reader, want it left to the caller")
+	}
+}
+
+func TestClientSpeaksTLSForHTTPS(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewUnstartedServer(fsys.Handler(fsys.Memory()))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	c, err := fsys.Client(srv.URL)
+	if err != nil {
+		t.Fatalf("fsys.Client(%q) error = %v", srv.URL, err)
+	}
+
+	_, err = c.Stat(context.Background(), ".")
+
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("Client.Stat() of a server with an untrusted certificate error = %v, want a certificate error", err)
 	}
 }

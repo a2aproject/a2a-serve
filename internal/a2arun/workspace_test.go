@@ -16,6 +16,11 @@ package a2arun_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"io/fs"
+	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +33,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/approval"
+	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -60,7 +66,7 @@ func sendWant(t *testing.T, c *a2aclient.Client, msg *a2a.Message, want a2a.Task
 		t.Fatalf("Client.SendMessage() = %T, want a task", res)
 	}
 	if task.Status.State != want {
-		t.Fatalf("Client.SendMessage() state = %v, want %v; status %+v", task.Status.State, want, task.Status.Message)
+		t.Fatalf("Client.SendMessage() state = %v, want %v; status %q", task.Status.State, want, statusText(task))
 	}
 	return task
 }
@@ -203,6 +209,85 @@ func TestDirWorkspaceWithLiveSyncChangesTheDirectoryInPlace(t *testing.T) {
 	}
 }
 
+// serveTree serves tree with the workspace protocol on a Unix socket and
+// returns its URL.
+func serveTree(t *testing.T, tree fsys.FS) string {
+	t.Helper()
+	ln, err := net.Listen("unix", filepath.Join(testutil.ShortTempDir(t), "fs.sock"))
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	srv := httptest.NewUnstartedServer(fsys.Handler(tree))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return "unix://" + ln.Addr().String()
+}
+
+// readTree returns the contents of the file p of tree, or the error.
+func readTree(t *testing.T, tree fsys.FS, p string) (string, error) {
+	t.Helper()
+	rc, err := tree.Open(context.Background(), p)
+	if err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(rc)
+	if cerr := rc.Close(); err == nil {
+		err = cerr
+	}
+	return string(data), err
+}
+
+func TestURLWorkspaceWithTurnSyncChangesTheHostsTreeAfterTheTurn(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	if _, err := tree.Write(context.Background(), "host.txt", strings.NewReader("from the host\n"), 0o644, ""); err != nil {
+		t.Fatal(err)
+	}
+	r, c := startWorkspace(t, "--workspace", serveTree(t, tree))
+	if diff := cmp.Diff(serve.Ready{Ready: true, A2A: r.ready.A2A, Sandbox: "local", Workspace: "url", WorkspaceSync: "turn"}, r.ready); diff != "" {
+		t.Fatalf("ready line wrong result (-want +got) diff = %s", diff)
+	}
+
+	read := sendWant(t, c, textIn("context-a", "read host.txt"), a2a.TaskStateCompleted)
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+	_, duringErr := readTree(t, tree, "hello.txt")
+	done := sendWant(t, c, allow(t, waiting), a2a.TaskStateCompleted)
+
+	if got := testutil.AllArtifactText(read); got != "from the host\n" {
+		t.Fatalf("read host.txt = %q, want the host's file", got)
+	}
+	if !errors.Is(duringErr, fs.ErrNotExist) {
+		t.Fatalf("reading hello.txt of the host's tree during the turn error = %v, want %v", duringErr, fs.ErrNotExist)
+	}
+	if got, err := readTree(t, tree, "hello.txt"); err != nil || got != "written by fakeacp\n" {
+		t.Fatalf("reading hello.txt of the host's tree after the turn = %q, %v, want the agent's file", got, err)
+	}
+	want := &changeset{Files: map[string]string{"hello.txt": "written by fakeacp\n"}}
+	if diff := cmp.Diff(want, changesOf(t, done)); diff != "" {
+		t.Fatalf("changes of the turn wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestURLWorkspaceConflictFailsTheTask(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	_, c := startWorkspace(t, "--workspace", serveTree(t, tree))
+
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+	if _, err := tree.Write(context.Background(), "hello.txt", strings.NewReader("the host's\n"), 0o644, ""); err != nil {
+		t.Fatal(err)
+	}
+	failed := sendWant(t, c, allow(t, waiting), a2a.TaskStateFailed)
+
+	if msg := failed.Status.Message; msg == nil || !cmp.Equal([]any{"hello.txt"}, msg.Metadata[a2aserve.ConflictsKey]) {
+		t.Fatalf("failed task status message = %+v, want %s with hello.txt", msg, a2aserve.ConflictsKey)
+	}
+	if got, err := readTree(t, tree, "hello.txt"); err != nil || got != "the host's\n" {
+		t.Fatalf("reading hello.txt of the host's tree after the conflict = %q, %v, want the host's file", got, err)
+	}
+}
+
 func TestTurnSyncConflictFailsTheTask(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -262,4 +347,16 @@ func TestCanceledTaskGetsTheChangesOfItsTurn(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// statusText is the text of the status message of task.
+func statusText(task *a2a.Task) string {
+	if task.Status.Message == nil {
+		return ""
+	}
+	var out []string
+	for _, p := range task.Status.Message.Parts {
+		out = append(out, p.Text())
+	}
+	return strings.Join(out, "")
 }

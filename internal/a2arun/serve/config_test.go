@@ -67,11 +67,14 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "unknown provider", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"mistral=KEY"} }, want: `unknown model provider "mistral"`},
 		{name: "provider twice", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"openai=KEY", "openai=KEY"} }, want: "--inject-model-key names openai twice"},
 		{name: "unset model key", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"openai=MISSING"} }, want: "the variable MISSING is unset or empty"},
-		{name: "no workspace", edit: func(c *serve.Config) { c.Workspace = "" }, want: "no workspace: pass --workspace dir:<path> or --workspace memory"},
-		{name: "unknown workspace kind", edit: func(c *serve.Config) { c.Workspace = "nfs:/x" }, want: `invalid --workspace "nfs:/x": want dir:<path> or memory`},
-		{name: "workspace URL", edit: func(c *serve.Config) { c.Workspace = "unix:///run/fs.sock" }, want: "a workspace that the host serves is planned"},
+		{name: "no workspace", edit: func(c *serve.Config) { c.Workspace = "" }, want: "no workspace: pass --workspace dir:<path>, --workspace memory, or the URL of your file server"},
+		{name: "unknown workspace kind", edit: func(c *serve.Config) { c.Workspace = "nfs:/x" }, want: `invalid --workspace "nfs:/x": want dir:<path>, memory, or an http://, https:// or unix:///path URL`},
+		{name: "workspace URL with user info", edit: func(c *serve.Config) { c.Workspace = "http://user:secret-value@127.0.0.1:1" }, want: "invalid --workspace: the file server URL can't have user info"},
+		{name: "workspace URL on a relative socket", edit: func(c *serve.Config) { c.Workspace = "unix://fs.sock" }, want: "invalid --workspace: want the file server socket as unix:///path/to/socket"},
+		{name: "workspace URL with a query", edit: func(c *serve.Config) { c.Workspace = "http://127.0.0.1:1/?token=secret-value" }, want: "invalid --workspace: the file server URL can't have user info, a query or a fragment"},
 		{name: "unknown workspace sync", edit: func(c *serve.Config) { c.WorkspaceSync = "eager" }, want: `invalid --workspace-sync "eager": want turn or live`},
-		{name: "live memory workspace", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "memory", "live" }, want: "--workspace-sync live needs --workspace dir:<path>"},
+		{name: "live memory workspace with local", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "memory", "live" }, want: "--workspace-sync live with --workspace memory needs --sandbox docker, which mounts the workspace in the sandbox; use --workspace-sync turn"},
+		{name: "live URL workspace with local", edit: func(c *serve.Config) { c.Workspace, c.WorkspaceSync = "http://127.0.0.1:1/secret-value", "live" }, want: "--workspace-sync live with --workspace http://127.0.0.1:1 needs --sandbox docker"},
 		{name: "missing workspace", edit: func(c *serve.Config) { c.Workspace = "dir:" + filepath.Join(dir, "missing") }, want: "no such file or directory"},
 		{name: "workspace that is a file", edit: func(c *serve.Config) { c.Workspace = "dir:" + file }, want: "isn't a directory"},
 		{name: "home directory as the workspace in docker", edit: func(c *serve.Config) { c.Sandbox, c.Workspace = "", "dir:"+home }, want: "holds your home directory"},
@@ -107,6 +110,34 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), env["KEY"]) {
 				t.Fatalf("serve.Start() error = %v, want it without the value of KEY", err)
+			}
+		})
+	}
+}
+
+func TestStartFailsWhenTheWorkspaceServerDoesntAnswer(t *testing.T) {
+	t.Parallel()
+	sock := filepath.Join(testutil.ShortTempDir(t), "missing.sock")
+	tests := []struct {
+		name, workspace, want string
+	}{
+		{name: "socket", workspace: "unix://" + sock, want: "the file server of --workspace unix://" + sock + " doesn't answer"},
+		{name: "secret in the path", workspace: "http://127.0.0.1:1/secret-value", want: "the file server of --workspace http://127.0.0.1:1 doesn't answer"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := serve.Start(context.Background(), serve.Config{Agent: "opencode", Workspace: tc.workspace, Sandbox: serve.SandboxLocal})
+
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("serve.Start() error = %v, want %q", err, tc.want)
+			}
+			if _, ok := errors.AsType[*serve.UsageError](err); ok {
+				t.Fatalf("serve.Start() error = %v, want an error other than a UsageError", err)
+			}
+			if strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("serve.Start() error = %v, want it without the path of the URL", err)
 			}
 		})
 	}

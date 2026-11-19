@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -88,6 +89,9 @@ type Server struct {
 func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	s, err := cfg.resolve(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.workspace.check(ctx); err != nil {
 		return nil, err
 	}
 	stderr := cfg.Stderr
@@ -279,6 +283,9 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	}
 	if !caps.Boundary && set.tools != nil {
 		return nil, "", false, fmt.Errorf("--tools with --sandbox docker needs a sandbox that routes the agent's connections through a2a-run, which Docker here can't: %s; use --sandbox local with an http:// URL", caps.Problem)
+	}
+	if set.workspace.served() && !slices.Contains(caps.Mounts, sandbox.MountServed) {
+		return nil, "", false, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %s; %s", set.workspace.shown, caps.MountProblems[sandbox.MountServed], liveHint)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)
