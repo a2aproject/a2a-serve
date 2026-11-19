@@ -96,6 +96,7 @@ nav:
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
       - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
       - SLIM Network: examples/07-slim-network/index.md
+      - Run a Sandboxed Agent for Your Program: examples/08-a2a-run-host/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
