@@ -127,7 +127,7 @@ func TestWaitReadyFailsWhenServerStops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	err := waitReady(ctx, dir, 0, 0, nil, io.Discard)
+	_, err := waitReady(ctx, dir, 0, 0, nil, io.Discard)
 
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitReady() error = %v, want the error the server stopped with", err)
@@ -225,7 +225,7 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 			defer cancel()
 			var out bytes.Buffer
 
-			err := waitReady(ctx, dir, 0, 42, exitedProcess(), &out)
+			_, err := waitReady(ctx, dir, 0, 42, exitedProcess(), &out)
 
 			ce := clierr.Classify(err)
 			if ce == nil {
@@ -337,16 +337,49 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 	if err := os.WriteFile(dir.LogPath(), []byte(log), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	serveControl(t, dir, &fakeControl{})
+	serveControl(t, dir, &fakeControl{pid: 42})
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	var out bytes.Buffer
 
-	if err := waitReady(ctx, dir, 0, 42, nil, &out); err != nil {
+	if _, err := waitReady(ctx, dir, 0, 42, nil, &out); err != nil {
 		t.Fatalf("waitReady() error = %v", err)
 	}
 	if want := "✓ opencode is running (ACP)\n"; out.String() != want {
 		t.Fatalf("waitReady() output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestWaitReadyWaitsForItsServerWhenAnotherAnswers(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	serveControl(t, dir, &fakeControl{pid: 4242})
+	exited := make(chan struct{})
+	type result struct {
+		st  *controlapi.Status
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		st, err := waitReady(t.Context(), dir, 0, 42, exited, io.Discard)
+		done <- result{st, err}
+	}()
+
+	select {
+	case r := <-done:
+		t.Fatalf("waitReady() = %+v, %v while its server runs, want it to wait for the server to exit", r.st, r.err)
+	case <-time.After(time.Second):
+	}
+	close(exited)
+	r := <-done
+	if r.err != nil {
+		t.Fatalf("waitReady() error = %v", r.err)
+	}
+	if r.st == nil || r.st.PID != 4242 {
+		t.Fatalf("waitReady() = %+v, want the status of the server with pid 4242", r.st)
 	}
 }
 
@@ -374,7 +407,7 @@ func TestWaitReadyKeepsWaitingAfterStopRecordOfAnotherServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	err := waitReady(ctx, dir, 0, 42, nil, io.Discard)
+	_, err := waitReady(ctx, dir, 0, 42, nil, io.Discard)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waitReady() error = %v, want %v", err, context.DeadlineExceeded)
 	}

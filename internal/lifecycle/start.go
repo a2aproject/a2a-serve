@@ -289,10 +289,15 @@ func background(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	} else if pid, exited, err = service.Detach(u); err != nil {
 		return err
 	}
-	if err := waitReady(ctx, dir, offset, pid, exited, out); err != nil {
+	ready, err := waitReady(ctx, dir, offset, pid, exited, out)
+	if err != nil {
 		if asService {
 			return fmt.Errorf("%w\n  the service stays installed; remove it with `a2a-serve stop --uninstall`", err)
 		}
+		return err
+	}
+	if pid != 0 && ready.PID != pid {
+		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", agentdir.RunningLabel(cmp.Or(ready.Name, cfg.Name), ready.PID))
 		return err
 	}
 	msg := "✓ running in the background (a2a-serve logs, a2a-serve stop)\n"
@@ -307,28 +312,34 @@ func background(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 }
 
 // waitReady relays progress lines from the log until the control socket
-// answers or the process dies, which closes exited. The error output of a
-// server that exits is held back and returned, so it is reported once. Only
-// the stop record of the server with pid counts, or any with pid zero.
-func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exited <-chan struct{}, out io.Writer) error {
+// answers or the process dies, which closes exited, and returns the status
+// of the server that answers. While another server answers, it waits for
+// the process with pid to exit. The error output of a server that exits is
+// held back and returned, so it is reported once. Only the stop record of
+// the server with pid counts, or any with pid zero.
+func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exited <-chan struct{}, out io.Writer) (*controlapi.Status, error) {
 	deadline := time.Now().Add(15 * time.Minute)
 	client := controlapi.NewClient(dir)
 	r := relay{out: out, pid: pid}
 	for {
 		next, err := r.read(dir.LogPath(), offset)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		offset = next
 		sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_, statusErr := client.Status(sctx)
+		st, statusErr := client.Status(sctx)
 		cancel()
-		if statusErr == nil {
+		// The server of a concurrent start can answer while this one's
+		// process is still starting. Waiting for it to exit keeps it from
+		// taking over once the other server stops.
+		other := statusErr == nil && pid != 0 && st.PID != pid
+		if statusErr == nil && !other {
 			// Print what the server logged while becoming ready.
 			if _, err := r.read(dir.LogPath(), offset); err != nil {
 				slog.Debug("reading the startup log", "error", err)
 			}
-			return nil
+			return st, nil
 		}
 		if r.stopped || isClosed(exited) {
 			// The server prints its error after the stop record, and it
@@ -343,14 +354,17 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exi
 			if _, err := r.read(dir.LogPath(), offset); err != nil {
 				slog.Debug("reading the log of the exited server", "error", err)
 			}
-			return r.exitError()
+			if other {
+				return st, nil
+			}
+			return nil, r.exitError()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the server did not start in time; see %s", dir.LogPath())
+			return nil, fmt.Errorf("the server did not start in time; see %s", dir.LogPath())
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
