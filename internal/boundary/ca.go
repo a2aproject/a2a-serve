@@ -37,19 +37,23 @@ const (
 	leafLifetime = 30 * 24 * time.Hour
 	// leafRenew is how long before its end a certificate is replaced.
 	leafRenew = 24 * time.Hour
+	// maxLeaves bounds the certificates a CA keeps.
+	maxLeaves = 1024
 )
 
 // CA signs the certificates with which the boundaries of one server answer
-// the containers' TLS connections to the hosts that get headers. Its key
+// the containers' TLS connections to the hosts they intercept. Its key
 // lives in memory only: containers stop with the server, and each start
-// makes a new CA. Its name constraints limit it to those hosts, so that
-// the CA can't vouch for any other host, even to a container that trusts
-// it.
+// makes a new CA. A CA of [NewCA] has name constraints that limit it to
+// its hosts, so that it can't vouch for any other host, even to a
+// container that trusts it.
 type CA struct {
 	cert  *x509.Certificate
 	key   *ecdsa.PrivateKey
 	pem   []byte
 	hosts []string
+	// unconstrained is set for a CA without name constraints.
+	unconstrained bool
 
 	mu     sync.Mutex
 	leaves map[string]*tls.Certificate
@@ -60,6 +64,14 @@ func NewCA(hosts []string) (*CA, error) {
 	if len(hosts) == 0 {
 		return nil, errors.New("a CA needs at least one host")
 	}
+	return newCA(hosts)
+}
+
+// NewUnconstrainedCA returns a CA for any host, for a router that decides
+// which hosts to intercept as connections open.
+func NewUnconstrainedCA() (*CA, error) { return newCA(nil) }
+
+func newCA(hosts []string) (*CA, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -70,17 +82,19 @@ func NewCA(hosts []string) (*CA, error) {
 	}
 	now := time.Now()
 	tmpl := &x509.Certificate{
-		SerialNumber:                serial,
-		Subject:                     pkix.Name{CommonName: "a2a-serve egress CA"},
-		NotBefore:                   now.Add(-time.Hour),
-		NotAfter:                    now.Add(caLifetime),
-		IsCA:                        true,
-		BasicConstraintsValid:       true,
-		MaxPathLenZero:              true,
-		KeyUsage:                    x509.KeyUsageCertSign,
-		PermittedDNSDomainsCritical: true,
-		PermittedDNSDomains:         slices.Clone(hosts),
-		ExcludedIPRanges:            []*net.IPNet{{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, {IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}},
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "a2a-serve egress CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(caLifetime),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		MaxPathLenZero:        true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	if hosts != nil {
+		tmpl.PermittedDNSDomainsCritical = true
+		tmpl.PermittedDNSDomains = slices.Clone(hosts)
+		tmpl.ExcludedIPRanges = []*net.IPNet{{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, {IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -91,7 +105,7 @@ func NewCA(hosts []string) (*CA, error) {
 		return nil, err
 	}
 	return &CA{
-		cert: cert, key: key, hosts: slices.Clone(hosts),
+		cert: cert, key: key, hosts: slices.Clone(hosts), unconstrained: hosts == nil,
 		pem:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
 		leaves: map[string]*tls.Certificate{},
 	}, nil
@@ -101,7 +115,7 @@ func NewCA(hosts []string) (*CA, error) {
 func (c *CA) PEM() []byte { return slices.Clone(c.pem) }
 
 // Covers reports whether the CA can sign the certificate of host.
-func (c *CA) Covers(host string) bool { return slices.Contains(c.hosts, host) }
+func (c *CA) Covers(host string) bool { return c.unconstrained || slices.Contains(c.hosts, host) }
 
 // leaf returns the certificate of host, signing a new one when there is
 // none or it is about to end.
@@ -130,11 +144,15 @@ func (c *CA) leaf(host string) (*tls.Certificate, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
-		DNSNames:     []string{host},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		tmpl.IPAddresses = []net.IP{ip}
+	} else {
+		tmpl.DNSNames = []string{host}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)
 	if err != nil {
@@ -145,6 +163,12 @@ func (c *CA) leaf(host string) (*tls.Certificate, error) {
 		return nil, err
 	}
 	l := &tls.Certificate{Certificate: [][]byte{der, c.cert.Raw}, PrivateKey: key, Leaf: leaf}
+	if len(c.leaves) >= maxLeaves {
+		for h := range c.leaves {
+			delete(c.leaves, h)
+			break
+		}
+	}
 	c.leaves[host] = l
 	return l, nil
 }

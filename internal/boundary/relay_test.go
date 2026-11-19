@@ -45,7 +45,7 @@ func TestRelayReachesTheBoundaryOfItsKey(t *testing.T) {
 			t.Errorf("RelayServer.Close() error = %v", err)
 		}
 	})
-	b, err := New(BoundaryConfig{Policy: func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, Log: slog.New(slog.DiscardHandler)})
+	b, err := New(BoundaryConfig{Router: PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", "127.0.0.1") }, nil), Log: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}

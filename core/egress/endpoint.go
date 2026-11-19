@@ -30,6 +30,7 @@ import (
 type Endpoint struct {
 	b      *Boundary
 	name   string
+	key    string
 	inject []boundary.Injection
 	env    []string
 	allow  []string
@@ -50,11 +51,10 @@ func (e *Endpoint) newBoundary(hostGateway func(ctx context.Context, port uint16
 	var b *boundary.Boundary
 	b, err := boundary.New(boundary.BoundaryConfig{
 		Sandbox:       e.name,
-		Policy:        func() egressrules.Policy { return e.b.rules(e.allow) },
+		Router:        e.router(),
 		HostGateway:   hostGateway,
 		Log:           e.b.log,
 		Blocks:        e.b.blocks,
-		Inject:        e.inject,
 		CA:            e.ca,
 		UpstreamRoots: e.b.deps.roots,
 		Resolver:      e.b.deps.resolver,
@@ -74,6 +74,33 @@ func (e *Endpoint) newBoundary(hostGateway func(ctx context.Context, port uint16
 	}
 	e.boundaries[b] = struct{}{}
 	return b, nil
+}
+
+// router returns the router of e's connections: the policy of its
+// boundary with e's credentials, or the boundary's router with them on
+// top.
+func (e *Endpoint) router() boundary.Router {
+	if e.b.router == nil {
+		return boundary.PolicyRouter(func() egressrules.Policy { return e.b.rules(e.allow) }, e.inject)
+	}
+	// Direct routes to the hosts of the credentials are checked as the
+	// internet mode that allows those hosts.
+	credRules, err := egressrules.NewPolicy(egressrules.ModeInternet, e.allow)
+	if err != nil {
+		credRules = egressrules.Policy{Mode: egressrules.ModeInternet}
+	}
+	return func(ctx context.Context, host string, port uint16) (boundary.Route, error) {
+		r, err := e.b.router.Route(ctx, Flow{Sandbox: e.name, Key: e.key, Host: host, Port: port})
+		if err != nil {
+			return boundary.Route{}, err
+		}
+		for _, inj := range e.inject {
+			if inj.Host == host && inj.Port == port {
+				return r.r.Inject(inj, credRules), nil
+			}
+		}
+		return r.r, nil
+	}
 }
 
 // Serve answers the HTTP CONNECT requests of the connections ln accepts,
@@ -110,7 +137,9 @@ func (e *Endpoint) Serve(ln net.Listener) error {
 func (e *Endpoint) ServeConn(c net.Conn) { e.main.ServeConn(c) }
 
 // CA returns the PEM certificate that the client must trust for the hosts
-// that get credentials, or nil without any.
+// whose TLS the boundary terminates: those of the credentials and, with a
+// [Router], those of its [InterceptHosts], or any host for a router
+// without them. It is nil without such hosts.
 func (e *Endpoint) CA() []byte {
 	if e.ca == nil {
 		return nil

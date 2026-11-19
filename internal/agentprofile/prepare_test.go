@@ -76,6 +76,19 @@ func TestPrepareLocal(t *testing.T) {
 	}
 }
 
+func TestPrepareLocalRefusesEgressRouter(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	profile, err := Lookup("opencode", printCommand(t))
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+	_, err = Prepare(context.Background(), Spec{Profile: profile, Sandbox: SandboxLocal, Mounts: []Mount{{Src: ws, Dst: ws}}, Home: t.TempDir(), Backend: sandboxrt.Local{}, EgressRouter: true})
+	if !errors.Is(err, sandboxrt.ErrNoBoundary) {
+		t.Fatalf("Prepare() with an egress router error = %v, want %v", err, sandboxrt.ErrNoBoundary)
+	}
+}
+
 func TestPrepareLocalChecksCommand(t *testing.T) {
 	t.Parallel()
 	ws := t.TempDir()
@@ -1128,6 +1141,7 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 	tests := []struct {
 		name        string
 		check       string
+		router      bool
 		wantEgress  bool
 		wantProblem string
 		wantErr     string
@@ -1135,6 +1149,8 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 		{name: "check passes", check: "exit 0", wantEgress: true},
 		{name: "launcher can't set up the network", check: sandboxtest.LauncherNoTUN, wantProblem: "the agent's container can't set up its network: no tun"},
 		{name: "daemon error", check: sandboxtest.DaemonError, wantErr: "failed to create task for container: EOF"},
+		{name: "router check passes", check: "exit 0", router: true, wantEgress: true},
+		{name: "router without the network", check: sandboxtest.LauncherNoTUN, router: true, wantErr: "the egress settings can't apply: the agent's container can't set up its network: no tun"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1157,6 +1173,7 @@ func TestPrepareDockerEgressCheck(t *testing.T) {
 						return nil
 					}}, nil
 				},
+				EgressRouter: tc.router,
 			})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

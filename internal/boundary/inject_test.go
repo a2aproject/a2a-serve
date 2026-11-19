@@ -29,6 +29,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +60,10 @@ func injectUpstream(t *testing.T, configure ...func(*http.Server)) (port uint16,
 		t.Fatalf("CA.leaf() error = %v", err)
 	}
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ws" {
+			echoUpgrade(t, w, r)
+			return
+		}
 		if r.URL.Path == "/stream" {
 			w.WriteHeader(http.StatusOK)
 			// The flush can report the stream closed after it sent the
@@ -107,6 +112,34 @@ func injectUpstream(t *testing.T, configure ...func(*http.Server)) (port uint16,
 	return uint16(ap.Port), roots
 }
 
+// echoUpgrade switches the connection of r to the protocol it asks for,
+// answering with the Authorization header it got, and echoes the data.
+func echoUpgrade(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	c, rw, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		t.Errorf("hijacking the connection error = %v", err)
+		return
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Logf("closing the upgraded connection: %v", err)
+		}
+	}()
+	if _, err := fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: %s\r\nX-Authorization: %s\r\n\r\n", r.Header.Get("Upgrade"), r.Header.Get("Authorization")); err != nil {
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		return
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(rw, buf); err != nil {
+		return
+	}
+	if _, err := c.Write(buf); err != nil {
+		t.Logf("echoing on the upgraded connection: %v", err)
+	}
+}
+
 // injectBoundary serves a boundary with inj, and returns a client that
 // reaches it as a container does, trusting its CA.
 func injectBoundary(t *testing.T, inj Injection, roots *x509.CertPool, logs *logRecords, h2 bool) (*Boundary, *http.Client) {
@@ -116,10 +149,9 @@ func injectBoundary(t *testing.T, inj Injection, roots *x509.CertPool, logs *log
 		t.Fatalf("NewCA() error = %v", err)
 	}
 	b, sock := listen(t, BoundaryConfig{
-		Policy:        func() egressrules.Policy { return mustPolicy(t, "", injectHost, "127.0.0.1") },
+		Router:        PolicyRouter(func() egressrules.Policy { return mustPolicy(t, "", injectHost, "127.0.0.1") }, []Injection{inj}),
 		Resolver:      fakeResolver{injectHost: addrs("127.0.0.1")},
 		Log:           slog.New(logs),
-		Inject:        []Injection{inj},
 		CA:            ca,
 		UpstreamRoots: roots,
 	})
@@ -476,20 +508,6 @@ func TestCAConstrainsNames(t *testing.T) {
 	}
 }
 
-func TestNewRefusesInjectionWithoutCA(t *testing.T) {
-	t.Parallel()
-	ca, err := NewCA([]string{"a.test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []*CA{nil, ca} {
-		_, err := New(BoundaryConfig{Policy: func() egressrules.Policy { return egressrules.Policy{} }, Inject: []Injection{{Host: injectHost, Port: 443}}, CA: c})
-		if err == nil {
-			t.Fatalf("New() with a CA that doesn't cover %s error = nil, want an error", injectHost)
-		}
-	}
-}
-
 func TestBoundaryCloseEndsInjectedRequests(t *testing.T) {
 	t.Parallel()
 	port, roots := injectUpstream(t)
@@ -514,4 +532,107 @@ func TestBoundaryCloseEndsInjectedRequests(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("Boundary.Close() didn't return while a request streamed")
 	}
+}
+
+func TestBoundaryInjectForwardsUpgrades(t *testing.T) {
+	t.Parallel()
+	port, roots := injectUpstream(t)
+	inj := Injection{Host: injectHost, Port: port, Header: "Authorization", Value: "Bearer real"}
+	rules := mustPolicy(t, "", injectHost, "127.0.0.1")
+	tests := []struct {
+		name   string
+		router Router
+	}{
+		{name: "policy", router: PolicyRouter(func() egressrules.Policy { return rules }, []Injection{inj})},
+		{name: "credential on a direct route", router: fixedRouter(Direct().Inject(inj, rules))},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ca, err := NewCA([]string{injectHost})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, sock := listen(t, BoundaryConfig{Router: tc.router, Resolver: fakeResolver{injectHost: addrs("127.0.0.1")}, Log: slog.New(slog.DiscardHandler), CA: ca, UpstreamRoots: roots})
+			authority := net.JoinHostPort(injectHost, strconv.Itoa(int(port)))
+			raw, err := dialTunnel(context.Background(), sock, authority)
+			if err != nil {
+				t.Fatalf("CONNECT %s error = %v", authority, err)
+			}
+			trusted := x509.NewCertPool()
+			trusted.AppendCertsFromPEM(ca.PEM())
+			c := tls.Client(raw, &tls.Config{ServerName: injectHost, RootCAs: trusted, NextProtos: []string{"http/1.1"}})
+			defer func() {
+				if err := c.Close(); err != nil {
+					t.Logf("closing the connection: %v", err)
+				}
+			}()
+			if err := c.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fmt.Fprintf(c, "GET /ws HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer placeholder\r\n\r\n", authority); err != nil {
+				t.Fatal(err)
+			}
+			br := bufio.NewReader(c)
+			resp, err := http.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("reading the answer to the upgrade error = %v", err)
+			}
+			if resp.StatusCode != http.StatusSwitchingProtocols || resp.Header.Get("X-Authorization") != "Bearer real" {
+				t.Fatalf("upgrade = %d with Authorization %q upstream, want %d with %q", resp.StatusCode, resp.Header.Get("X-Authorization"), http.StatusSwitchingProtocols, "Bearer real")
+			}
+			if _, err := io.WriteString(c, "ping"); err != nil {
+				t.Fatal(err)
+			}
+			got := make([]byte, 4)
+			if _, err := io.ReadFull(br, got); err != nil || string(got) != "ping" {
+				t.Fatalf("upgraded connection echoed %q, %v, want %q", got, err, "ping")
+			}
+		})
+	}
+}
+
+func TestBoundaryChecksParallelDials(t *testing.T) {
+	t.Parallel()
+	port, roots := injectUpstream(t)
+	inj := Injection{Host: injectHost, Port: port, Header: "Authorization", Value: "Bearer real"}
+	ca, err := NewCA([]string{injectHost})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sock := listen(t, BoundaryConfig{
+		Router:        fixedRouter(Direct().Inject(inj, mustPolicy(t, "", injectHost, "127.0.0.1"))),
+		Resolver:      fakeResolver{injectHost: addrs("127.0.0.1")},
+		Log:           slog.New(slog.DiscardHandler),
+		CA:            ca,
+		UpstreamRoots: roots,
+	})
+	trusted := x509.NewCertPool()
+	trusted.AppendCertsFromPEM(ca.PEM())
+	tr := &http.Transport{
+		DialContext:       func(ctx context.Context, _, addr string) (net.Conn, error) { return dialTunnel(ctx, sock, addr) },
+		TLSClientConfig:   &tls.Config{RootCAs: trusted},
+		ForceAttemptHTTP2: true,
+		MaxConnsPerHost:   1,
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	url := "https://" + net.JoinHostPort(injectHost, strconv.Itoa(int(port))) + "/"
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			resp, err := client.Get(url)
+			if err != nil {
+				t.Errorf("Client.Get() error = %v", err)
+				return
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Errorf("closing the body error = %v", err)
+			}
+			if resp.StatusCode != http.StatusOK || resp.Proto != "HTTP/2.0" {
+				t.Errorf("Client.Get() = %d %s, want 200 over HTTP/2", resp.StatusCode, resp.Proto)
+			}
+		})
+	}
+	wg.Wait()
 }

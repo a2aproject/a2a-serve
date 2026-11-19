@@ -30,13 +30,16 @@ type Egress struct {
 	Allow []string
 	// Inject are the headers the boundary adds.
 	Inject []InjectRule
+	// Router is set when a router of the embedder decides the connections.
+	Router bool
 }
 
 // Strict reports whether the containers don't start without the egress
-// boundary: with the allowlist mode, or with secrets that the boundary adds
-// to requests, which would otherwise be lost or exposed.
+// boundary: with the allowlist mode, with secrets that the boundary adds
+// to requests, which would otherwise be lost or exposed, or with a router,
+// whose decisions would otherwise not apply.
 func (e Egress) Strict() bool {
-	return e.Mode == egressrules.ModeAllowlist || len(e.Inject) > 0
+	return e.Mode == egressrules.ModeAllowlist || len(e.Inject) > 0 || e.Router
 }
 
 // EgressDecision is whether an agent's containers get the egress boundary.

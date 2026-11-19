@@ -76,7 +76,7 @@ type BoundaryRules struct {
 // named name with rules.
 func (e *Boundaries) Opener(name string, rules BoundaryRules) OpenEgress {
 	return e.OpenerOf(func(gateway func(ctx context.Context, port uint16) (netip.AddrPort, bool)) (*boundary.Boundary, error) {
-		return boundary.New(boundary.BoundaryConfig{Sandbox: name, Policy: rules.Policy, HostGateway: gateway, Blocks: e.blocks, Inject: rules.Inject, CA: rules.CA})
+		return boundary.New(boundary.BoundaryConfig{Sandbox: name, Router: boundary.PolicyRouter(rules.Policy, rules.Inject), HostGateway: gateway, Blocks: e.blocks, CA: rules.CA})
 	})
 }
 

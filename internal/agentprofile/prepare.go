@@ -122,6 +122,9 @@ type Spec struct {
 	// container trusts.
 	Inject   []InjectRule
 	EgressCA []byte
+	// EgressRouter is set when a router of the embedder decides the
+	// connections, so that a container doesn't start without the boundary.
+	EgressRouter bool
 }
 
 // Prepared is a harness ready to start in its sandbox. Start refuses to
@@ -372,7 +375,11 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if ws := d.Warnings(eg); len(ws) > 0 {
 		warnings = append(warnings, EgressWarnings(ws))
 	}
-	what += "; egress " + cmp.Or(spec.EgressMode, egressrules.ModeInternet) + " through the server"
+	if spec.EgressRouter {
+		what += "; egress routed through the server"
+	} else {
+		what += "; egress " + cmp.Or(spec.EgressMode, egressrules.ModeInternet) + " through the server"
+	}
 	if info.Relay {
 		what += " (egress container)"
 	}
@@ -406,7 +413,7 @@ func serverSocket(spec Spec) []sandboxrt.Socket {
 
 // egress returns the settings of spec that decide its egress.
 func (spec Spec) egress() Egress {
-	return Egress{Sandbox: spec.Sandbox, Mode: spec.EgressMode, Allow: spec.EgressAllow, Inject: spec.Inject}
+	return Egress{Sandbox: spec.Sandbox, Mode: spec.EgressMode, Allow: spec.EgressAllow, Inject: spec.Inject, Router: spec.EgressRouter}
 }
 
 // ContainerHome is the home directory of the harness in the container.
@@ -492,6 +499,9 @@ func cliEnv(env []string) []string {
 }
 
 func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
+	if spec.EgressRouter {
+		return nil, fmt.Errorf("%w: the agent runs without a sandbox, and its egress has a router", sandboxrt.ErrNoBoundary)
+	}
 	if len(spec.Inject) > 0 {
 		return nil, &EgressError{Egress: spec.egress(), Local: true}
 	}

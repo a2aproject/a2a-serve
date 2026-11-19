@@ -67,7 +67,7 @@ A few checks run on every pull request. Follow these tips to pass them:
 The code has two sides. The core in [`core/`](core/) holds the public packages, which other projects can import. Each is a working object that is useful on its own:
 
 - `core/a2aserve` serves a coding agent as an A2A agent, with one agent process per key. It describes the agents it can serve, the workspace each process gets and the tool rules, and runs the processes in Docker unless it gets another sandbox runtime. Its engine is `internal/agentrun`.
-- `core/egress` decides the connections of a client by policy and adds credentials to its requests.
+- `core/egress` decides the connections of a client by policy, or by a router of the embedder, and adds credentials to its requests.
 - `core/sandbox` runs a command in isolation, with its network through an egress endpoint.
 - `core/approval` is the A2A wire format of the agent's questions and their answers, for the clients of an agent.
 
