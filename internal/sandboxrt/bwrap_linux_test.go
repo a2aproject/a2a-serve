@@ -39,7 +39,7 @@ func TestBwrapArgs(t *testing.T) {
 	head := func(network string, extra ...string) []string {
 		args := []string{"--unshare-all", "--die-with-parent", "--new-session"}
 		if network == "boundary" {
-			args = append(args, "--uid", "0", "--gid", "0", "--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP")
+			args = append(args, "--as-pid-1", "--uid", "0", "--gid", "0", "--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP")
 		}
 		args = append(args, extra...)
 		if network == "host" {

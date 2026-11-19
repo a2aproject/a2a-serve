@@ -66,7 +66,7 @@ The launcher mounts the tree with FUSE:
 1. `docker run` adds `--device /dev/fuse` and the `SYS_ADMIN` capability.
 1. The launcher mounts FUSE at the workspace path before it drops its capabilities. It keeps serving the mount after it drops them, and sends each operation over the fs socket.
 1. The agent inherits no capability and no file of the launcher, so it can't answer the mount's calls or unmount it.
-1. Docker relaxes its seccomp profile for a container with `SYS_ADMIN`, so the launcher installs its own filter before it starts the agent. The filter refuses new namespaces, mounts, keyrings and bpf, as Docker's default profile does.
+1. Docker relaxes its seccomp profile for a container with `SYS_ADMIN`, so the launcher installs its own filter before it starts the agent. The filter refuses new namespaces, mounts, keyrings and bpf, as Docker's default profile does, and ptrace and the other calls that read or change another process.
 
 The agent can reach the fs socket directly. The server applies the masks and the read-only setting there too, follows no symlink, and refuses symlinks that lead into masked paths.
 
@@ -95,7 +95,7 @@ The agent sees:
 - Private `/tmp`, `/var/tmp` and `/run`, `/proc`, and a minimal `/dev`.
 - The workspace and mounts, its home at `/home/agent`, and the directories of its command and the `a2a` CLI, read-only. Hidden paths appear empty, as in a container.
 
-With the egress boundary, the launcher starts first, as root of the sandbox's user namespace, which is the user who started the sandbox. It gets `/dev/net/tun`, the `NET_ADMIN` and `SETPCAP` capabilities, and, with a live workspace, `/dev/fuse` and `SYS_ADMIN`. It sets up the network as in a container, mounts the live workspace, drops every capability, and installs the seccomp filter of live workspaces, which refuses new namespaces and mounts. Then it starts the agent. The network namespace has only loopback and the TUN device, so every connection goes through the boundary. Where the launcher can't set this up, the sandbox doesn't start. It never falls back to the host's network.
+With the egress boundary, the launcher starts first, as root of the sandbox's user namespace, which is the user who started the sandbox. It gets `/dev/net/tun`, the `NET_ADMIN` and `SETPCAP` capabilities, and, with a live workspace, `/dev/fuse` and `SYS_ADMIN`. It runs as PID 1 of the sandbox, sets up the network as in a container, mounts the live workspace, drops every capability, and installs the seccomp filter of live workspaces, which refuses new namespaces, mounts and ptrace. Then it starts the agent, so every process of the agent has the filter. The network namespace has only loopback and the TUN device, so every connection goes through the boundary. Where the launcher can't set this up, the sandbox doesn't start. It never falls back to the host's network.
 
 Without an egress endpoint, or with an unrestricted policy, the sandbox has only loopback and doesn't start the launcher. In Go, `BubblewrapOptions.HostNetwork` shares the host's network in that case. The agent then reaches every service of the host on loopback and on abstract Unix sockets, such as the X11 display, which can read and send keystrokes. Bubblewrap applies no memory, CPU or process limits.
 

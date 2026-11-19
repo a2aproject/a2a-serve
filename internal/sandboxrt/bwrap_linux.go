@@ -513,7 +513,9 @@ func (r *bwrapRun) args(check bool) []string {
 		// which is the user who runs it, with what building the network
 		// and mounting the live workspaces take, and drops it all before
 		// the command starts.
-		args = append(args, "--uid", "0", "--gid", "0", "--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP")
+		// It runs as PID 1, so that no process of the sandbox is without its
+		// seccomp filter.
+		args = append(args, "--as-pid-1", "--uid", "0", "--gid", "0", "--cap-add", "CAP_NET_ADMIN", "--cap-add", "CAP_SETPCAP")
 		if len(r.served) > 0 {
 			args = append(args, "--cap-add", "CAP_SYS_ADMIN")
 		}

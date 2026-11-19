@@ -68,10 +68,10 @@ type BubblewrapOptions struct {
 // With an Egress endpoint, the sandbox's network has only loopback and the
 // egress boundary, and Create fails with an error that wraps ErrNoBoundary
 // where the boundary can't work, such as without /dev/net/tun. The
-// launcher, which runs first in the sandbox, sets up the network, mounts
+// launcher, which runs as PID 1 of the sandbox, sets up the network, mounts
 // the [Served] trees with FUSE, drops every capability and installs a
-// seccomp filter that refuses new namespaces and mounts, and then runs the
-// command as the user who started the sandbox. Without an Egress endpoint,
+// seccomp filter that refuses new namespaces, mounts and ptrace, and then
+// runs the command as the user who started the sandbox. Without an Egress endpoint,
 // or with an unrestricted policy, the sandbox has only loopback, or the
 // network of this machine with HostNetwork, and Served mounts fail with an
 // [UnsupportedMountError].

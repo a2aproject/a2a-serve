@@ -79,7 +79,7 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 			"write:/scratch/new.txt", "write:/empty/new.txt", "write:/home/agent/new.txt", "env:HOME", "env:SSL_CERT_FILE",
 			"read:/etc/shadow", "ls:/root", "ls:" + userHome, "unix:/run/a2a/api.sock",
 			"dial:allowed.test:80", "dial:refused.test:80", "dial:127.0.0.1:" + server, "dial:1.1.1.1:80",
-			"caps:", "unshare:user", "userns:" + probe,
+			"caps:", "unshare:user", "userns:" + probe, "ptrace:1", "ptrace:child", "cmdline:1",
 		}},
 		Mounts: []sandbox.Mount{
 			{Dst: "/data", Src: sandbox.HostDir(ro), ReadOnly: true},
@@ -115,6 +115,9 @@ func TestBubblewrapRunsCommandBehindEgress(t *testing.T) {
 		"caps: " + noCaps,
 		"unshare:user EPERM",
 		"userns:" + probe + " EPERM",
+		"ptrace:1 EPERM",
+		"ptrace:child EPERM",
+		"cmdline:1 /run/a2a-init",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
