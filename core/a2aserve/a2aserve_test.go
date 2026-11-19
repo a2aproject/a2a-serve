@@ -234,6 +234,19 @@ func keyedAgent(t *testing.T) *a2aserve.Agent {
 }
 
 // running returns the keys of the processes of a that run.
+// stopIdleWithin calls StopIdle until it stops the process of key, fails,
+// or d passes.
+func stopIdleWithin(a *a2aserve.Agent, key string, d time.Duration) (bool, error) {
+	deadline := time.Now().Add(d)
+	for {
+		stopped, err := a.StopIdle(key)
+		if stopped || err != nil || time.Now().After(deadline) {
+			return stopped, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func running(a *a2aserve.Agent) []string {
 	var out []string
 	for _, p := range a.Processes() {
@@ -291,7 +304,8 @@ func TestStopIdleStopsAnIdleProcess(t *testing.T) {
 	a := keyedAgent(t)
 	send(t, client(t, a), "a-1", "pid")
 
-	stopped, err := a.StopIdle("a")
+	// The turn ends a moment after the client got its reply.
+	stopped, err := stopIdleWithin(a, "a", 10*time.Second)
 
 	if err != nil || !stopped {
 		t.Fatalf("Agent.StopIdle() = %v, %v, want true, nil", stopped, err)
@@ -318,7 +332,7 @@ func TestUnansweredQuestionFailsTheTaskInTheStore(t *testing.T) {
 	callers := keyedCallers{envs: map[string]a2aserve.Environment{"a": environment(t, "users")}}
 	a := newAgent(t, a2aserve.Config{
 		Callers: callers,
-		Pools:   map[string]a2aserve.Pool{"users": {QuestionTimeout: 100 * time.Millisecond}},
+		Pools:   map[string]a2aserve.Pool{"users": {QuestionTimeout: 2 * time.Second}},
 		A2A:     a2aserve.A2A{TaskStore: store},
 	})
 
