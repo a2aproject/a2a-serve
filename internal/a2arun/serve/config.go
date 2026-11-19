@@ -67,6 +67,9 @@ type Config struct {
 	// Egress is the egress mode; "" when unset, which is internet.
 	Egress      string
 	EgressAllow []string
+	// EgressProxy is the URL of the proxy that decides every connection
+	// of the Docker sandbox, in place of Egress, EgressAllow and ModelKeys.
+	EgressProxy string
 	// Env are NAME=value pairs the agent gets.
 	Env []string
 	// Secrets are the names of variables of this process that the agent
@@ -113,6 +116,7 @@ type settings struct {
 	model        string
 	sandbox      string
 	policy       egress.Policy
+	egressProxy  string
 	env          []string
 	credentials  []egress.Credential
 	workspace    workspace
@@ -147,11 +151,17 @@ func (cfg Config) resolve() (settings, error) {
 	if s.profile, err = resolveProfile(cfg, s.sandbox); err != nil {
 		return settings{}, err
 	}
+	if s.egressProxy, err = resolveEgressProxy(cfg); err != nil {
+		return settings{}, err
+	}
 	if s.policy, err = resolvePolicy(cfg, s.sandbox); err != nil {
 		return settings{}, err
 	}
 	if s.env, err = resolveEnv(cfg); err != nil {
 		return settings{}, err
+	}
+	if s.egressProxy != "" {
+		s.env = append(placeholderKeys(s.env), s.env...)
 	}
 	if s.credentials, err = resolveModelKeys(cfg); err != nil {
 		return settings{}, err
@@ -178,7 +188,7 @@ func resolveSandbox(cfg Config) (string, error) {
 		return SandboxDocker, nil
 	case SandboxLocal:
 		var docker []string
-		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--image": cfg.Image != ""} {
+		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--egress-proxy": cfg.EgressProxy != "", "--image": cfg.Image != ""} {
 			if set {
 				docker = append(docker, flag)
 			}

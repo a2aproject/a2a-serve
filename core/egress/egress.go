@@ -16,7 +16,7 @@
 // credentials to its requests for chosen hosts. The client reaches it as
 // an HTTP CONNECT proxy, and sees placeholders in place of the
 // credentials. A [Policy] decides by rules; a [Router] decides each
-// connection in code.
+// connection in code, and a [ProxyRouter] asks an HTTP proxy.
 package egress
 
 import (

@@ -169,6 +169,10 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Contexts kept | 1000. Past that, or past 256 MB of tasks, `a2a-run` forgets the contexts whose tasks all ended, least recently changed first. |
 | Tasks kept for one context | 100. Past that, `a2a-run` forgets the oldest tasks that ended. |
 | Requests at once | 1024, including open streams |
+| Egress proxy decision | The connection fails with 502 when the proxy doesn't connect and answer CONNECT within 10 seconds, or its answer head exceeds 16 KB |
+| Egress proxy refusal | `a2a-run` reads 4 KB of the body and shows the agent the first 256 characters on one line |
+| Egress proxy answer to an intercepted request | The head must arrive within 10 minutes and fit in 64 KB. The sandbox's own limits on intercepted requests also apply. |
+| Idle connections to the egress proxy | 32, each closed after 90 seconds unused |
 
 ## Logs
 
