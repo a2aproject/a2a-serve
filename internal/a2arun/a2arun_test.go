@@ -170,7 +170,7 @@ func TestServesEachContextInAProcessOfItsOwn(t *testing.T) {
 	t.Parallel()
 	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
 	r := start(t, "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--listen", "unix://"+sock)
-	if diff := cmp.Diff(serve.Ready{Ready: true, A2A: "unix://" + sock, Sandbox: "local", Workspace: "dir"}, r.ready); diff != "" {
+	if diff := cmp.Diff(serve.Ready{Ready: true, A2A: "unix://" + sock, Sandbox: "local", Workspace: "dir", WorkspaceSync: "turn"}, r.ready); diff != "" {
 		t.Fatalf("ready line wrong result (-want +got) diff = %s", diff)
 	}
 	hc := unixClient(sock)

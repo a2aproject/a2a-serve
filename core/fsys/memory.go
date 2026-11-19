@@ -36,9 +36,26 @@ var (
 	errNotFile = errors.New("not a regular file")
 )
 
+// MemoryLimits bound a tree in memory. Zero leaves a limit off.
+type MemoryLimits struct {
+	// MaxBytes bounds the contents of the regular files.
+	MaxBytes int64
+	// MaxEntries bounds the entries besides the root.
+	MaxEntries int
+}
+
 // Memory returns an empty tree in memory. Its feed keeps the last 10000
 // changes. The tree doesn't bound the files it holds.
 func Memory() FS { return newMemory(defaultMaxChanges) }
+
+// MemoryWithLimits returns an empty tree in memory, as [Memory] does, which
+// refuses a change that takes it past limits with an error that wraps
+// [ErrFull].
+func MemoryWithLimits(limits MemoryLimits) FS {
+	m := newMemory(defaultMaxChanges)
+	m.limits = limits
+	return m
+}
 
 func newMemory(maxChanges int) *memory {
 	return &memory{
@@ -48,11 +65,15 @@ func newMemory(maxChanges int) *memory {
 }
 
 type memory struct {
-	log *changeLog
+	log    *changeLog
+	limits MemoryLimits
 
 	mu    sync.Mutex
 	nodes map[string]*memNode
 	seq   uint64
+	// bytes and entries are what the tree holds, as limits count them.
+	bytes   int64
+	entries int
 }
 
 // memNode is an entry. Its data is never changed in place, so a reader
@@ -79,6 +100,12 @@ func (m *memory) versionLocked() string {
 
 // putLocked puts n at p, under its existing parent, and returns its info.
 func (m *memory) putLocked(p string, n *memNode) Info {
+	if old, ok := m.nodes[p]; ok {
+		m.bytes -= int64(len(old.data))
+	} else {
+		m.entries++
+	}
+	m.bytes += int64(len(n.data))
 	n.mod = time.Now()
 	n.version = m.versionLocked()
 	m.nodes[p] = n
@@ -101,6 +128,28 @@ func (m *memory) mkdirsLocked(op, dir string) ([]Info, error) {
 	return append(created, m.putLocked(dir, &memNode{mode: fs.ModeDir | 0o755, children: map[string]bool{}})), nil
 }
 
+// missingLocked counts the directories of dir that don't exist.
+func (m *memory) missingLocked(dir string) int {
+	n := 0
+	for ; dir != "."; dir = path.Dir(dir) {
+		if _, ok := m.nodes[dir]; ok {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// fitLocked fails with an error that wraps ErrFull if the tree can't take
+// size more bytes and entries more entries.
+func (m *memory) fitLocked(op, p string, size int64, entries int) error {
+	if m.limits.MaxBytes > 0 && size > 0 && m.bytes+size > m.limits.MaxBytes ||
+		m.limits.MaxEntries > 0 && entries > 0 && m.entries+entries > m.limits.MaxEntries {
+		return &fs.PathError{Op: op, Path: p, Err: fmt.Errorf("%w: %d bytes and %d entries at most", ErrFull, m.limits.MaxBytes, m.limits.MaxEntries)}
+	}
+	return nil
+}
+
 // treeLocked returns p and the paths under it, parents first.
 func (m *memory) treeLocked(p string) []string {
 	out := []string{p}
@@ -117,6 +166,8 @@ func (m *memory) treeLocked(p string) []string {
 func (m *memory) removeLocked(p string) []Info {
 	var out []Info
 	for _, q := range slices.Backward(m.treeLocked(p)) {
+		m.bytes -= int64(len(m.nodes[q].data))
+		m.entries--
 		delete(m.nodes, q)
 		out = append(out, Info{Path: q, Removed: true})
 	}
@@ -176,6 +227,9 @@ func (m *memory) Write(ctx context.Context, p string, r io.Reader, mode fs.FileM
 	if err := checkEntry("write", p); err != nil {
 		return Info{}, err
 	}
+	if m.limits.MaxBytes > 0 {
+		r = io.LimitReader(r, m.limits.MaxBytes+1)
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return Info{}, &fs.PathError{Op: "write", Path: p, Err: err}
@@ -188,6 +242,15 @@ func (m *memory) Write(ctx context.Context, p string, r io.Reader, mode fs.FileM
 		return Info{}, &fs.PathError{Op: "write", Path: p, Err: errIsDir}
 	case ifVersion == IfMissing && exists, ifVersion != "" && ifVersion != IfMissing && (!exists || n.version != ifVersion):
 		return Info{}, &fs.PathError{Op: "write", Path: p, Err: ErrConflict}
+	}
+	grow, added := int64(len(data)), m.missingLocked(path.Dir(p))
+	if exists {
+		grow -= int64(len(n.data))
+	} else {
+		added++
+	}
+	if err := m.fitLocked("write", p, grow, added); err != nil {
+		return Info{}, err
 	}
 	changes, err := m.mkdirsLocked("write", path.Dir(p))
 	if err != nil {
@@ -210,6 +273,9 @@ func (m *memory) Mkdir(ctx context.Context, p string, mode fs.FileMode) error {
 		}
 		return &fs.PathError{Op: "mkdir", Path: p, Err: fs.ErrExist}
 	}
+	if err := m.fitLocked("mkdir", p, 0, m.missingLocked(path.Dir(p))+1); err != nil {
+		return err
+	}
 	changes, err := m.mkdirsLocked("mkdir", path.Dir(p))
 	if err != nil {
 		return err
@@ -230,6 +296,9 @@ func (m *memory) Symlink(ctx context.Context, target, p string) error {
 	defer m.mu.Unlock()
 	if _, ok := m.nodes[p]; ok {
 		return &fs.PathError{Op: "symlink", Path: p, Err: fs.ErrExist}
+	}
+	if err := m.fitLocked("symlink", p, 0, m.missingLocked(path.Dir(p))+1); err != nil {
+		return err
 	}
 	changes, err := m.mkdirsLocked("symlink", path.Dir(p))
 	if err != nil {
@@ -258,6 +327,13 @@ func (m *memory) Rename(ctx context.Context, from, to string) error {
 	}
 	if strings.HasPrefix(to, from+"/") {
 		return &fs.PathError{Op: "rename", Path: to, Err: fmt.Errorf("%w: inside %s", fs.ErrInvalid, from)}
+	}
+	added := m.missingLocked(path.Dir(to))
+	if _, ok := m.nodes[to]; ok {
+		added--
+	}
+	if err := m.fitLocked("rename", to, 0, added); err != nil {
+		return err
 	}
 	var changes []Info
 	if dst, ok := m.nodes[to]; ok {

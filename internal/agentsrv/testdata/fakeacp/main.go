@@ -47,6 +47,7 @@
 //	ls <dir>         replies with the entries of dir
 //	env <name>       replies with the variable name and its value, or unset
 //	write <file>     writes file and replies whether it could
+//	writeask <file>  writes file, then a permission request like ask
 //	rename <a> <b>   renames a to b and replies whether it could
 //	fetch <url>      sends GET url and replies with the status and the body
 //	read <file>      replies with the content of file
@@ -769,6 +770,19 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		} else {
 			a.chunk(sid, "write ok")
 		}
+		end("end_turn")
+	case "writeask":
+		if err := os.WriteFile(arg, []byte("written by fakeacp\n"), 0o644); err != nil {
+			a.chunk(sid, "write error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		option, ok := a.askPush(sid, "t2")
+		if !ok {
+			end("cancelled")
+			return
+		}
+		a.chunk(sid, "write ok, pushed ("+option+").")
 		end("end_turn")
 	case "read":
 		if data, err := os.ReadFile(arg); err != nil {

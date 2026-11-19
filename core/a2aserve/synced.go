@@ -76,6 +76,14 @@ type TurnSyncOptions struct {
 	// takes the default: 1 GiB and 200000 entries.
 	MaxBytes   int64
 	MaxEntries int
+	// Synced, if set, gets what the sync after a turn of key, or Release,
+	// wrote to the tree, when it wrote anything: each entry it created or
+	// replaced, as the tree describes it after the write, and each path
+	// it removed, with Removed set. After a turn, it runs before the end
+	// of the turn, also one whose sync failed or had conflicts, and ctx is
+	// the context of the turn; Release has a context of its own. No other
+	// sync of key runs until it returns.
+	Synced func(ctx context.Context, key string, changes []fsys.Info)
 }
 
 const (
@@ -103,6 +111,11 @@ const (
 // after the sync. A change of the directory between turns, such as by a
 // process the agent left running, goes back at the end of the next turn.
 // The turns of the process run one at a time, as [Attachment] describes.
+//
+// When the tree's changes would take the directory past the limits of
+// opts, a turn runs without them, so that the agent can remove files, and
+// fails with [ErrWorkspaceTooLarge]; the next turn tries again. A tree
+// that refuses a write with [fsys.ErrFull] gets the agent's removals first.
 //
 // The sync skips the agent directories (.a2a) at any depth. It doesn't
 // write back the agent's configuration files and .mcp.json at the root,
@@ -145,6 +158,8 @@ func (s *syncedWorkspace) attachIn(ctx context.Context, key, stateDir string) (A
 		return Attachment{}, fmt.Errorf("a2aserve: waiting for the release of the synced directory of key %q: %w", key, err)
 	}
 	st := &syncState{
+		key:       key,
+		synced:    s.opts.Synced,
 		tree:      s.tree,
 		dir:       filepath.Join(root, name),
 		stateFile: filepath.Join(root, name+".json"),
@@ -201,6 +216,8 @@ type syncLimits struct {
 
 // syncState keeps the directory of one process in step with the tree.
 type syncState struct {
+	key            string
+	synced         func(ctx context.Context, key string, changes []fsys.Info)
 	tree, local    fsys.FS
 	dir, stateFile string
 	limits         syncLimits
@@ -212,6 +229,15 @@ type syncState struct {
 	// counts those past maxConflicts.
 	conflicts []string
 	omitted   int
+	// written is what the last sync out wrote to the tree.
+	written []fsys.Info
+	// localBytes and localEntries are the size of the directory at the
+	// last walk.
+	localBytes   int64
+	localEntries int
+	// skipped is why the last sync in left the tree's changes out, for
+	// the end of the turn to report.
+	skipped error
 }
 
 // syncBase is what both sides had at the last sync, stored in the state
@@ -281,13 +307,24 @@ func (st *syncState) afterTurn(ctx context.Context) error {
 	defer st.mu.Unlock()
 	var err error
 	if !st.released {
-		err = st.syncOut(ctx)
+		err = errors.Join(st.syncOut(ctx), st.skipped)
+		st.skipped = nil
+		st.report(ctx)
 	}
 	if len(st.conflicts) > 0 {
 		err = errors.Join(err, &SyncConflictError{Paths: st.conflicts, Omitted: st.omitted})
 		st.conflicts, st.omitted = nil, 0
 	}
 	return err
+}
+
+// report passes what the last sync out wrote to Synced.
+func (st *syncState) report(ctx context.Context) {
+	written := st.written
+	st.written = nil
+	if st.synced != nil && len(written) > 0 {
+		st.synced(ctx, st.key, written)
+	}
 }
 
 // release writes the last changes back and removes the directory and its
@@ -302,10 +339,12 @@ func (st *syncState) release() error {
 	st.released = true
 	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
 	defer cancel()
-	if err := st.syncOut(ctx); err != nil {
+	err := st.syncOut(ctx)
+	st.report(ctx)
+	if err != nil {
 		return fmt.Errorf("writing the changes of %s back: %w", st.dir, err)
 	}
-	err := errors.Join(os.RemoveAll(st.dir), os.Remove(st.stateFile))
+	err = errors.Join(os.RemoveAll(st.dir), os.Remove(st.stateFile))
 	if len(st.conflicts) > 0 {
 		err = errors.Join(err, &SyncConflictError{Paths: st.conflicts, Omitted: st.omitted})
 		st.conflicts, st.omitted = nil, 0
@@ -343,9 +382,21 @@ func changesNow(ctx context.Context, tree fsys.FS, cursor string) ([]fsys.Info, 
 func (st *syncState) syncIn(ctx context.Context) error {
 	changes, next, err := changesNow(ctx, st.tree, st.base.Cursor)
 	if errors.Is(err, fsys.ErrResync) {
-		return st.resync(ctx, next)
+		err = st.resync(ctx, next)
+		if errors.Is(err, ErrWorkspaceTooLarge) {
+			st.skipped, err = err, nil
+		}
+		return err
 	}
 	if err != nil {
+		return err
+	}
+	// Past the limits, the turn runs without the tree's changes, so that
+	// the agent can remove files, and its end reports them.
+	if over, err := st.overLimits(ctx, changes); err != nil || over {
+		if over {
+			st.skipped = fmt.Errorf("%w: the workspace's changes would take the agent's directory past %d entries or %d bytes, so the agent worked without them", ErrWorkspaceTooLarge, st.limits.entries, st.limits.bytes)
+		}
 		return err
 	}
 	// Removals go first, children before parents, then the rest, parents
@@ -379,6 +430,53 @@ func (st *syncState) syncIn(ctx context.Context) error {
 	return st.save()
 }
 
+// overLimits reports whether writing changes into the directory would take
+// it past the limits.
+func (st *syncState) overLimits(ctx context.Context, changes []fsys.Info) (bool, error) {
+	size, entries := st.localBytes, st.localEntries
+	for _, c := range changes {
+		if skipped(c.Path) {
+			continue
+		}
+		l, err := st.local.Stat(ctx, c.Path)
+		there := err == nil
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		if there && l.Mode.IsRegular() {
+			size -= l.Size
+		}
+		switch {
+		case c.Removed && there:
+			entries--
+		case c.Removed:
+		case !there:
+			entries++
+			fallthrough
+		default:
+			if c.Mode.IsRegular() {
+				size += c.Size
+			}
+		}
+	}
+	return size > st.limits.bytes || entries > st.limits.entries, nil
+}
+
+// walkLocal walks the directory and keeps its size.
+func (st *syncState) walkLocal(ctx context.Context) (map[string]fsys.Info, error) {
+	local, err := walk(ctx, st.local, st.limits)
+	if err != nil {
+		return nil, err
+	}
+	st.localBytes, st.localEntries = 0, len(local)
+	for _, l := range local {
+		if l.Mode.IsRegular() {
+			st.localBytes += l.Size
+		}
+	}
+	return local, nil
+}
+
 // resync makes the directory match the whole tree, and continues from
 // cursor.
 func (st *syncState) resync(ctx context.Context, cursor string) error {
@@ -386,7 +484,7 @@ func (st *syncState) resync(ctx context.Context, cursor string) error {
 	if err != nil {
 		return err
 	}
-	local, err := walk(ctx, st.local, st.limits)
+	local, err := st.walkLocal(ctx)
 	if err != nil {
 		return err
 	}
@@ -416,6 +514,9 @@ func (st *syncState) resync(ctx context.Context, cursor string) error {
 		}
 	}
 	st.base.Cursor = cursor
+	if _, err := st.walkLocal(ctx); err != nil {
+		return err
+	}
 	return st.save()
 }
 
@@ -544,50 +645,80 @@ func (st *syncState) treeChangedUnder(ctx context.Context, p string) (bool, erro
 
 // syncOut writes the directory's changes to the tree.
 func (st *syncState) syncOut(ctx context.Context) error {
-	local, err := walk(ctx, st.local, st.limits)
+	st.written = nil
+	local, err := st.walkLocal(ctx)
 	if err != nil {
 		return err
 	}
+	lost, err := st.pushChanges(ctx, local)
+	// The removals can make room in a full tree for the rest.
+	if errors.Is(err, fsys.ErrFull) {
+		if rerr := st.pushRemovals(ctx, local, lost); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		lost, err = st.pushChanges(ctx, local)
+	}
+	if err != nil {
+		return err
+	}
+	if err := st.pushRemovals(ctx, local, lost); err != nil {
+		return err
+	}
+	return st.save()
+}
+
+// pushChanges writes the entries of the directory that changed since the
+// last sync to the tree, and returns the paths whose tree entry it took
+// instead.
+func (st *syncState) pushChanges(ctx context.Context, local map[string]fsys.Info) ([]string, error) {
 	placeholders := placeholderDirs(local)
 	var lost []string
-	under := func(p string) bool {
-		return slices.ContainsFunc(lost, func(q string) bool { return strings.HasPrefix(p, q+"/") })
-	}
 	for _, p := range slices.Sorted(maps.Keys(local)) {
 		l := local[p]
 		b, ok := st.base.Entries[p]
 		switch {
-		case skippedOut(p), ok && version(l) == b.Local, !ok && placeholders[p], under(p):
+		case skippedOut(p), ok && version(l) == b.Local, !ok && placeholders[p], under(lost, p):
 			continue
 		}
 		gone, err := st.removedAncestor(ctx, p)
 		if err != nil {
-			return err
+			return lost, err
 		}
 		if gone != "" {
 			if err := st.takeTree(ctx, gone); err != nil {
-				return err
+				return lost, err
 			}
 			lost = append(lost, gone)
 			continue
 		}
 		pushed, err := st.push(ctx, l, b, ok)
 		if err != nil {
-			return err
+			return lost, err
 		}
 		if !pushed {
 			lost = append(lost, p)
 		}
 	}
+	return lost, nil
+}
+
+// pushRemovals removes from the tree the entries of the last sync that the
+// directory no longer has, except under lost.
+func (st *syncState) pushRemovals(ctx context.Context, local map[string]fsys.Info, lost []string) error {
 	for _, p := range slices.Backward(slices.Sorted(maps.Keys(st.base.Entries))) {
-		if _, there := local[p]; there || skippedOut(p) || under(p) {
+		if _, there := local[p]; there || skippedOut(p) || under(lost, p) {
 			continue
 		}
 		if err := st.pushRemoved(ctx, p); err != nil {
 			return err
 		}
 	}
-	return st.save()
+	return nil
+}
+
+// under reports whether p is under one of dirs.
+func under(dirs []string, p string) bool {
+	return slices.ContainsFunc(dirs, func(q string) bool { return strings.HasPrefix(p, q+"/") })
 }
 
 // removedAncestor returns the nearest directory above p that the last sync
@@ -652,6 +783,7 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 		}
 		if err == nil {
 			st.base.Entries[p] = syncEntry{Tree: version(info), Local: version(l)}
+			st.written = append(st.written, info)
 			return true, nil
 		}
 	case l.Mode&fs.ModeSymlink != 0:
@@ -666,6 +798,7 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 		return false, err
 	}
 	st.base.Entries[p] = syncEntry{Tree: version(cur), Local: version(l)}
+	st.written = append(st.written, cur)
 	return true, nil
 }
 
@@ -696,6 +829,7 @@ func (st *syncState) pushRemoved(ctx context.Context, p string) error {
 		return err
 	}
 	st.forget(p)
+	st.written = append(st.written, fsys.Info{Path: p, Removed: true})
 	return nil
 }
 

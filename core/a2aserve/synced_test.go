@@ -355,6 +355,199 @@ func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
 	}
 }
 
+// syncedChange is what a test compares of a change that Synced reports.
+type syncedChange struct {
+	Path    string
+	Mode    fs.FileMode
+	Removed bool
+}
+
+func TestTurnSyncedReportsWhatTheTurnWrote(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	put(t, tree, "keep.txt", "keep", 0o644)
+	put(t, tree, "old.txt", "old", 0o644)
+	put(t, tree, "conflict.txt", "base", 0o644)
+	type report struct {
+		key     string
+		value   any
+		changes []syncedChange
+	}
+	var reports []report
+	type ctxKey struct{}
+	opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(ctx context.Context, key string, changes []fsys.Info) {
+		r := report{key: key, value: ctx.Value(ctxKey{})}
+		for _, c := range changes {
+			r.changes = append(r.changes, syncedChange{Path: c.Path, Mode: c.Mode, Removed: c.Removed})
+		}
+		reports = append(reports, r)
+	}}
+	att, err := a2aserve.TurnSynced(tree, opts).Attach(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	local := fsys.Dir(att.Dir)
+	ctx := context.WithValue(context.Background(), ctxKey{}, "turn 1")
+
+	if err := att.BeforeTurn(ctx); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	put(t, local, "new/run.sh", "#!/bin/sh", 0o755)
+	remove(t, local, "old.txt")
+	put(t, local, "conflict.txt", "mine", 0o644)
+	put(t, local, "opencode.json", "{}", 0o644)
+	put(t, tree, "conflict.txt", "theirs", 0o644)
+	if _, ok := errors.AsType[*a2aserve.SyncConflictError](att.AfterTurn(ctx)); !ok {
+		t.Fatalf("AfterTurn() error, want a SyncConflictError")
+	}
+	quiet := context.WithValue(context.Background(), ctxKey{}, "turn 2")
+	if err := att.BeforeTurn(quiet); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	if err := att.AfterTurn(quiet); err != nil {
+		t.Fatalf("AfterTurn() error = %v", err)
+	}
+
+	want := []report{{key: "a", value: "turn 1", changes: []syncedChange{
+		{Path: "new", Mode: fs.ModeDir | 0o755},
+		{Path: "new/run.sh", Mode: 0o755},
+		{Path: "old.txt", Removed: true},
+	}}}
+	if diff := cmp.Diff(want, reports, cmp.AllowUnexported(report{})); diff != "" {
+		t.Fatalf("Synced() reports wrong result (-want +got) diff = %s", diff)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
+func TestTurnSyncedReportsWhatReleaseWrote(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	var got []syncedChange
+	opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(_ context.Context, key string, changes []fsys.Info) {
+		for _, c := range changes {
+			got = append(got, syncedChange{Path: key + ":" + c.Path, Mode: c.Mode, Removed: c.Removed})
+		}
+	}}
+	att, err := a2aserve.TurnSynced(tree, opts).Attach(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	put(t, fsys.Dir(att.Dir), "late.txt", "after the turn", 0o644)
+
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]syncedChange{{Path: "a:late.txt", Mode: 0o644}}, got); diff != "" {
+		t.Fatalf("Synced() of Release wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestTurnSyncedRunsATurnPastItsLimitsAndRecovers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		// treeBytes bounds the tree; zero leaves it unbounded.
+		treeBytes int64
+		// grow takes the workspace past the sync's limit of 10 bytes, or
+		// fills the tree, and shrink takes it back.
+		grow, shrink func(t *testing.T, tree, local fsys.FS)
+		wantErr      error
+		// wantSkipped is set when the turn runs without the tree's change.
+		wantSkipped string
+	}{
+		{
+			name:        "tree grows between turns",
+			grow:        func(t *testing.T, tree, _ fsys.FS) { put(t, tree, "big.txt", "0123456789", 0o644) },
+			shrink:      func(t *testing.T, tree, _ fsys.FS) { remove(t, tree, "big.txt") },
+			wantErr:     a2aserve.ErrWorkspaceTooLarge,
+			wantSkipped: "big.txt",
+		},
+		{
+			name:    "agent fills the directory",
+			grow:    func(t *testing.T, _, local fsys.FS) { put(t, local, "big.txt", "0123456789", 0o644) },
+			shrink:  func(t *testing.T, _, local fsys.FS) { remove(t, local, "big.txt") },
+			wantErr: a2aserve.ErrWorkspaceTooLarge,
+		},
+		{
+			name:      "agent fills the tree",
+			treeBytes: 6,
+			grow: func(t *testing.T, _, local fsys.FS) {
+				put(t, local, "new.txt", "01234", 0o644)
+			},
+			shrink:  func(t *testing.T, _, local fsys.FS) { remove(t, local, "new.txt") },
+			wantErr: fsys.ErrFull,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.MemoryWithLimits(fsys.MemoryLimits{MaxBytes: tc.treeBytes})
+			put(t, tree, "keep.txt", "keep", 0o644)
+			opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), MaxBytes: 10}
+			att, err := a2aserve.TurnSynced(tree, opts).Attach(ctx, "a")
+			if err != nil {
+				t.Fatalf("TurnSynced().Attach() error = %v", err)
+			}
+			local := fsys.Dir(att.Dir)
+
+			tc.grow(t, tree, local)
+			if err := att.BeforeTurn(ctx); err != nil {
+				t.Fatalf("BeforeTurn() past the limits error = %v, want nil so that the agent can remove files", err)
+			}
+			if tc.wantSkipped != "" {
+				if _, err := local.Stat(ctx, tc.wantSkipped); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("Stat(%q) of the directory past the limits error = %v, want %v", tc.wantSkipped, err, fs.ErrNotExist)
+				}
+			}
+			if err := att.AfterTurn(ctx); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("AfterTurn() past the limits error = %v, want %v", err, tc.wantErr)
+			}
+			tc.shrink(t, tree, local)
+			if err := att.BeforeTurn(ctx); err != nil {
+				t.Fatalf("BeforeTurn() back within the limits error = %v", err)
+			}
+			if err := att.AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() back within the limits error = %v, want nil", err)
+			}
+
+			if diff := cmp.Diff(snapshot(t, tree), snapshot(t, local)); diff != "" {
+				t.Fatalf("directory after the recovery wrong entries (-tree +directory) diff = %s", diff)
+			}
+			if err := att.Release(); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTurnSyncedRemovesBeforeItWritesToAFullTree(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tree := fsys.MemoryWithLimits(fsys.MemoryLimits{MaxBytes: 6})
+	put(t, tree, "old.txt", "0123", 0o644)
+	att, local := attachSynced(t, tree, t.TempDir(), "a")
+	if err := att.BeforeTurn(ctx); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	remove(t, local, "old.txt")
+	put(t, local, "new.txt", "01234", 0o644)
+
+	if err := att.AfterTurn(ctx); err != nil {
+		t.Fatalf("AfterTurn() error = %v, want nil", err)
+	}
+
+	if diff := cmp.Diff(map[string]string{"new.txt": "-rw-r--r-- 01234"}, snapshot(t, tree)); diff != "" {
+		t.Fatalf("tree after the turn wrong entries (-want +got) diff = %s", diff)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
 func TestTurnSyncedReleaseWritesBackAndRemovesTheDirectory(t *testing.T) {
 	t.Parallel()
 	tree, root := fsys.Memory(), t.TempDir()
