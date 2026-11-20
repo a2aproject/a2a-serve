@@ -553,7 +553,24 @@ func (c *Config) CheckHarness(name string) error {
 	if c.Harness == "" || c.Harness == name {
 		return nil
 	}
-	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --agent %s`", c.Harness, name)}
+	hint := fmt.Sprintf("this agent runs %s; switch with `a2a-serve config set --agent %s`", c.Harness, name)
+	var commands []string
+	for _, field := range []struct {
+		name string
+		set  bool
+	}{
+		{"command", len(c.Command) > 0},
+		{"model", c.Model != ""},
+		{"image", c.Image != ""},
+	} {
+		if field.set {
+			commands = append(commands, "`a2a-serve config unset "+field.name+"`")
+		}
+	}
+	if len(commands) > 0 {
+		hint += "; to remove the previous agent's overrides, run " + strings.Join(commands, ", ")
+	}
+	return &SettingsError{Err: errors.New(hint)}
 }
 
 // CheckOwnerChat refuses an owner chat on a messenger the agent doesn't have.
