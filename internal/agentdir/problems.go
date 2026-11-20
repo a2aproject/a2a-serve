@@ -32,7 +32,7 @@ type FieldError struct {
 	// Desc describes an entry that Entry can't name, such as a card skill
 	// without an id.
 	Desc string
-	// Reason says why the entry is invalid, such as "want docker or local".
+	// Reason says why the entry is invalid, such as "want docker, bwrap or local".
 	Reason string
 	inFile bool
 }

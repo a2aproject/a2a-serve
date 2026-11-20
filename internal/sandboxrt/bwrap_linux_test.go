@@ -231,6 +231,22 @@ func TestSystemViewLeavesOutHomes(t *testing.T) {
 	}
 }
 
+func TestBwrapProfileFix(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if got := bwrapProfileFix(dir); got != "" {
+		t.Fatalf("bwrapProfileFix() without profiles = %q, want none", got)
+	}
+	profile := filepath.Join(dir, "bwrap-userns-restrict")
+	if err := os.WriteFile(profile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := "the AppArmor profiles " + profile + " can strip the capabilities in bwrap's user namespaces: unload them with sudo apparmor_parser -R " + profile
+	if got := bwrapProfileFix(dir); got != want {
+		t.Fatalf("bwrapProfileFix() = %q, want %q", got, want)
+	}
+}
+
 func TestUserNamespaceFix(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
@@ -241,8 +257,8 @@ func TestUserNamespaceFix(t *testing.T) {
 		"no restriction": {wantFix: "allow unprivileged user namespaces"},
 		"apparmor": {
 			sysctls:     map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "1\n"},
-			wantFix:     "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
-			wantNetwork: "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+			wantFix:     "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot",
+			wantNetwork: "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot",
 		},
 		"apparmor off": {sysctls: map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "0\n"}, wantFix: "allow unprivileged user namespaces"},
 		"debian clone sysctl": {

@@ -435,8 +435,8 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Sandbox }, func(s *Settings) *string { return &s.Sandbox }),
 		flag:   "sandbox", path: "sandbox", scope: scopeAgent, section: SectionSandbox,
-		usage:  "Where the agent runs: docker (default) or local",
-		values: []string{SandboxDocker, SandboxLocal},
+		usage:  "Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation",
+		values: sandboxes,
 		def:    SandboxDocker,
 	},
 	{
@@ -452,7 +452,7 @@ var fields = []field{
 	{
 		access: strs(func(c *Config) *[]string { return &c.AllowBroadMounts }, func(s *Settings) *[]string { return &s.AllowBroadMounts }),
 		flag:   "allow-broad-mount", path: "allowBroadMounts", scope: scopeOwner, section: SectionWorkspace, key: identity, parse: parsePath,
-		usage: "Let the Docker sandbox mount a `path` that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it",
+		usage: "Let the sandbox mount a `path` that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it",
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Secrets }, func(s *Settings) *[]string { return &s.Secrets }),
@@ -645,7 +645,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Egress.Mode }, func(s *Settings) *string { return &s.Egress }),
 		flag:   "egress", path: "egress.mode", scope: scopeOwner, section: SectionSandbox,
-		usage:  "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet)",
+		usage:  "Where the sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (the network of Docker, or with --sandbox bwrap of this machine, the LAN and the tailnet included) (default internet)",
 		values: egressrules.Modes,
 		def:    egressrules.ModeInternet,
 	},
@@ -653,19 +653,19 @@ var fields = []field{
 		access: strs(func(c *Config) *[]string { return &c.Egress.Allow }, func(s *Settings) *[]string { return &s.EgressAllow }),
 		flag:   "egress-allow", path: "egress.allow", scope: scopeOwner, live: true, section: SectionSandbox, split: true,
 		key: identity, parse: parseEgressRule,
-		usage: "Host the Docker sandbox may also reach, private ones included: a `rule` such as nas.lan, *.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port",
+		usage: "Host the sandbox may also reach, private ones included: a `rule` such as nas.lan, *.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port",
 	},
 	{
 		access: injectRules(false),
 		flag:   InjectHeaderSetting, path: "inject", scope: scopeOwner, section: SectionSandbox,
 		key: injectKey(false), merge: mergeInject(false),
-		usage: "Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: `host=Name: value`, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host",
+		usage: "Header the server adds to the sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: `host=Name: value`, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host",
 	},
 	{
 		access: injectRules(true),
 		flag:   InjectModelKeySetting, path: "inject", scope: scopeOwner, section: SectionSandbox,
 		key: injectKey(true), merge: mergeInject(true),
-		usage:  "API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of " + strings.Join(egressrules.ProviderNames(), ", ") + " and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider",
+		usage:  "API key the server adds to the sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of " + strings.Join(egressrules.ProviderNames(), ", ") + " and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider",
 		values: injectProviderValues(),
 	},
 	{

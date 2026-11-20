@@ -57,6 +57,10 @@ func TestDecideEgress(t *testing.T) {
 		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
 		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
 		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *sandboxrt.EgressEnv) { e.Launcher = noLauncher })},
+		{name: "bwrap", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap}, env: linux, boundary: true},
+		{name: "bwrap without a TUN device", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap}, env: with(func(e *sandboxrt.EgressEnv) { e.TUN = fail }), warning: "the bubblewrap sandbox can't route the agent's connections through the server: no tun. The agent doesn't start, so that it can't reach this machine's network and its services on loopback. Fix that, or run a2a-serve config set --sandbox docker"},
+		{name: "bwrap off Linux", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap}, env: with(func(e *sandboxrt.EgressEnv) { e.GOOS = "darwin" }), warning: "the bubblewrap sandbox can't route the agent's connections through the server: bubblewrap runs only on Linux"},
+		{name: "bwrap unrestricted", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap, Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *sandboxrt.EgressEnv) { e.TUN = fail })},
 		{name: "local", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal}, env: linux},
 		{name: "local with rules", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "--egress-allow has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with `a2a-serve config unset egress-allow`"},
 		{name: "local with a mode", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, warning: "--egress has no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the setting with `a2a-serve config unset egress`"},
@@ -116,6 +120,8 @@ func TestDecideEgressProbesOnlyForTheBoundary(t *testing.T) {
 		{name: "allowlist", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, wantProbe: true},
 		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}},
 		{name: "local", cfg: agentdir.Config{Sandbox: agentprofile.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}},
+		{name: "bwrap", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap}, wantProbe: true},
+		{name: "bwrap unrestricted", cfg: agentdir.Config{Sandbox: agentprofile.SandboxBwrap, Egress: agentdir.EgressConfig{Mode: "unrestricted"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

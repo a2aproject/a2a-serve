@@ -44,7 +44,8 @@ var harnessName = os.Getenv("E2E_HARNESS")
 // image the server pulls by default.
 var harnessImage string
 
-// sandbox is where the agents run: local, or docker with E2E_SANDBOX=docker.
+// sandbox is where the agents run: local, docker with E2E_SANDBOX=docker,
+// or bwrap with E2E_SANDBOX=bwrap.
 // The harness tests need Docker, so it defaults to docker with E2E_HARNESS.
 var sandbox = cmp.Or(os.Getenv("E2E_SANDBOX"), defaultSandbox())
 

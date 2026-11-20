@@ -69,7 +69,7 @@ $ a2a-serve status
 
 Rules apply at the next start. [Sandbox rules](sandbox.md#rules-for-several-callers) decide which callers' containers get the key. With `--egress allowlist`, a rule also allows its host.
 
-The rules need the Docker sandbox with the default network rules. `config set` refuses them with `--sandbox local` and `--egress unrestricted`.
+The rules need the Docker or bubblewrap sandbox with the default network rules. `config set` refuses them with `--sandbox local` and `--egress unrestricted`.
 
 What the rules don't protect:
 

@@ -69,9 +69,12 @@ func Review(r *Recipe, d agentdir.Dir, cfg *agentdir.Config, shownWorkspace stri
 		agent += ", image " + cfg.Image
 	}
 	add("agent", Item{Text: agent, Warn: len(cfg.Command) > 0 && local})
-	if local {
+	switch {
+	case local:
 		add("sandbox", Item{Text: "local: no isolation, with your permissions", Warn: true})
-	} else {
+	case cfg.Sandbox == agentdir.SandboxBwrap:
+		add("sandbox", Item{Text: agentdir.SandboxBwrap})
+	default:
 		add("sandbox", Item{Text: agentdir.SandboxDocker})
 	}
 	add("workspace", Item{Text: shownWorkspace + ", read-write"})

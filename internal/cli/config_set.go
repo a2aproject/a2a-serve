@@ -84,7 +84,7 @@ alters who may call the agent, it prints who may call afterwards.
 	}
 	flags.register(cmd, agentdir.AgentFlag|agentdir.CoreFlags|agentdir.OperationalFlags)
 	cmd.SetUsageFunc(sectionedUsage)
-	hideImageForLocalSandbox(cmd, sf.agentDir)
+	hideImageWithoutDocker(cmd, sf.agentDir)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, restartUsage)

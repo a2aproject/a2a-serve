@@ -382,6 +382,8 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 		{name: "no backend", spec: Spec{Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
 		{name: "local backend for docker", spec: Spec{Backend: sandboxrt.Local{}, Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
 		{name: "docker backend for local", spec: Spec{Sandbox: SandboxLocal, Backend: sandboxrt.NewDocker(sandboxrt.DockerConfig{EnvDir: t.TempDir()}), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the local sandbox"},
+		{name: "docker backend for bwrap", spec: Spec{Sandbox: SandboxBwrap, Backend: sandboxrt.NewDocker(sandboxrt.DockerConfig{EnvDir: t.TempDir()}), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the bwrap sandbox"},
+		{name: "bwrap backend for docker", spec: Spec{Backend: sandboxrt.NewBubblewrap(sandboxrt.BubblewrapConfig{}), Mounts: []Mount{{Src: ws, Dst: ws}}}, wantErr: "no backend for the docker sandbox"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

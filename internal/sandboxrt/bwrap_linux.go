@@ -99,7 +99,7 @@ func appArmorFix(proc string) string {
 	if sysctl(proc, "kernel/apparmor_restrict_unprivileged_userns") != "1" {
 		return ""
 	}
-	return "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+	return "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot"
 }
 
 // userNamespaceFix returns how to let bwrap make user namespaces on the
@@ -118,12 +118,24 @@ func userNamespaceFix(proc string) string {
 }
 
 // withAppArmorFix returns reason with how to lift the AppArmor restriction
-// of user namespaces, where it applies.
+// of user namespaces, or of the profiles of bwrap, where it applies.
 func withAppArmorFix(reason string) string {
-	if fix := appArmorFix("/proc"); fix != "" {
+	if fix := cmp.Or(appArmorFix("/proc"), bwrapProfileFix("/etc/apparmor.d")); fix != "" {
 		return reason + "; " + fix
 	}
 	return reason
+}
+
+// bwrapProfileFix returns how to unload the AppArmor profiles of bwrap in
+// dir, or "" where it has none. Ubuntu's profile lets bwrap make user
+// namespaces even with the sysctl restriction lifted, and strips the
+// capabilities in them.
+func bwrapProfileFix(dir string) string {
+	profiles, err := filepath.Glob(filepath.Join(dir, "*bwrap*"))
+	if err != nil || len(profiles) == 0 {
+		return ""
+	}
+	return "the AppArmor profiles " + strings.Join(profiles, ", ") + " can strip the capabilities in bwrap's user namespaces: unload them with sudo apparmor_parser -R " + strings.Join(profiles, " ")
 }
 
 // Probe implements [Backend]: bwrap makes a sandbox, and whether the

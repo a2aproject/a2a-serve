@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 func TestPairedUserCantReachOwnerTasks(t *testing.T) {
@@ -176,8 +177,21 @@ func (a *agent) agentsOf(task *a2a.Task) (url, socket string) {
 		t.Fatalf("a2a send agents = %q, want the agents URL, the socket and the hostname", text)
 	}
 	url, socket, host := fields[0], fields[1], fields[2]
-	if sandbox != "docker" {
+	switch sandbox {
+	case "local":
 		return url, socket
+	case "bwrap":
+		// The sandbox mounts the socket directory of the owner's process,
+		// the only one in the agent's socket directory.
+		d, err := agentdir.Open(a.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found, err := filepath.Glob(filepath.Join(d.HarnessSocketDir(), "*", filepath.Base(socket)))
+		if err != nil || len(found) != 1 {
+			t.Fatalf("finding the socket of the owner's process = %v, %v, want one", found, err)
+		}
+		return url, found[0]
 	}
 	// The hostname of a container is its ID, and its socket directory is a
 	// mount of the process's own directory on the host.

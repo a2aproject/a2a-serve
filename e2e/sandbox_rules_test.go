@@ -38,7 +38,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		"the pairing anna: read-only workspace, secrets KEY (from GUEST)",
 		"other members: shared workspace, secrets KEY, GUEST",
 	}
-	if sandbox != "docker" {
+	if sandbox == "local" {
 		wantStatus = []string{"storage rules don't apply"}
 	}
 	for _, want := range wantStatus {
@@ -91,7 +91,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 
 func TestSandboxStorageModes(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner, anna, ben, cy := newUser(t), newUser(t), newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
 	anna.pairJoin(coder.url, coder.invite("anna", "--storage", "read-only"))

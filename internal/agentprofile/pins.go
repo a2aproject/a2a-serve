@@ -103,11 +103,11 @@ func (p *Pins) checkLocked(dir string) error {
 	return fmt.Errorf("%s was replaced after the server first used it; the agent may have renamed it through a writable mount, so check it and restart the server", dir)
 }
 
-// PrepareHome makes the home of spec a real directory and pins it. With
-// Docker, it first refuses paths that the agent could have redirected, as
+// PrepareHome makes the home of spec a real directory and pins it. In a
+// sandbox, it first refuses paths that the agent could have redirected, as
 // [Prepared.Start] does. Call it before writing into the home.
 func PrepareHome(spec Spec) error {
-	if spec.Sandbox == "" || spec.Sandbox == SandboxDocker {
+	if spec.Sandbox != SandboxLocal {
 		if err := checkPaths(spec); err != nil {
 			return err
 		}

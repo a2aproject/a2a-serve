@@ -23,7 +23,7 @@ import (
 
 // Egress are the settings that decide the egress of an agent's containers.
 type Egress struct {
-	// Sandbox is SandboxDocker or SandboxLocal.
+	// Sandbox is SandboxDocker, SandboxBwrap or SandboxLocal.
 	Sandbox string
 	// Mode is an egress mode, and Allow its allow rules.
 	Mode  string
@@ -36,10 +36,12 @@ type Egress struct {
 
 // Strict reports whether the containers don't start without the egress
 // boundary: with the allowlist mode, with secrets that the boundary adds
-// to requests, which would otherwise be lost or exposed, or with a router,
-// whose decisions would otherwise not apply.
+// to requests, which would otherwise be lost or exposed, with a router,
+// whose decisions would otherwise not apply, or in bubblewrap unless the
+// mode is unrestricted, since its fallback would be the host's network.
 func (e Egress) Strict() bool {
-	return e.Mode == egressrules.ModeAllowlist || len(e.Inject) > 0 || e.Router
+	bwrap := e.Sandbox == SandboxBwrap && e.Mode != egressrules.ModeUnrestricted
+	return e.Mode == egressrules.ModeAllowlist || len(e.Inject) > 0 || e.Router || bwrap
 }
 
 // EgressDecision is whether an agent's containers get the egress boundary.
@@ -70,6 +72,9 @@ func DecideEgress(e Egress, probe func() sandboxrt.Capabilities) EgressDecision 
 	}
 	noRules := e.Mode == egressrules.ModeAllowlist && len(e.Allow) == 0 && len(e.Inject) == 0
 	caps := probe()
+	if e.Sandbox == SandboxBwrap && caps.EgressRelay {
+		return EgressDecision{Problem: "bubblewrap runs only on Linux"}
+	}
 	if caps.EgressRelay {
 		d := EgressDecision{Boundary: true, Relay: true, NoAllowRules: noRules}
 		if missing, ok := errors.AsType[*sandboxrt.MissingRelayImage](caps.RelayImage); ok {

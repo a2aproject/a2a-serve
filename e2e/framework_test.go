@@ -48,8 +48,8 @@ type user struct {
 
 func newUser(t *testing.T) *user {
 	t.Helper()
-	if _, marked := sandboxTests.Load(topName(t)); sandbox == "docker" && !marked {
-		t.Skip("doesn't depend on the sandbox; mark it with dependsOnSandbox to run it with E2E_SANDBOX=docker")
+	if _, marked := sandboxTests.Load(topName(t)); sandbox != "local" && !marked {
+		t.Skip("doesn't depend on the sandbox; mark it with dependsOnSandbox to run it with E2E_SANDBOX=" + sandbox)
 	}
 	home := testutil.ShortTempDir(t)
 	runtimeDir := filepath.Join(home, "run")
@@ -250,8 +250,11 @@ func (a *agent) start(kind string, flags ...string) {
 }
 
 func sandboxFlags() []string {
-	if sandbox == "docker" {
+	switch sandbox {
+	case "docker":
 		return []string{"--sandbox", "docker", "--image", fakeacpImage, "--command", "/usr/local/bin/fakeacp"}
+	case "bwrap":
+		return []string{"--sandbox", "bwrap", "--command", filepath.Join(binDir, "fakeacp")}
 	}
 	return []string{"--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp")}
 }
@@ -262,8 +265,8 @@ var sandboxTests sync.Map
 
 // dependsOnSandbox marks a test of what the sandbox changes: how the agent
 // process starts, crashes and restarts, what it sees, and how it reaches the
-// server. Only marked tests run with E2E_SANDBOX=docker; call it before
-// newUser.
+// server. Only marked tests run with E2E_SANDBOX=docker or bwrap; call it
+// before newUser.
 func dependsOnSandbox(t *testing.T) {
 	sandboxTests.Store(topName(t), true)
 }
@@ -273,8 +276,18 @@ func topName(t *testing.T) string {
 	return name
 }
 
-// requireDocker marks a test of the docker sandbox, and skips it when the
-// agents run locally.
+// requireSandbox marks a test of what a sandbox hides and routes, and
+// skips it when the agents run locally.
+func requireSandbox(t *testing.T) {
+	t.Helper()
+	dependsOnSandbox(t)
+	if sandbox == "local" {
+		t.Skip("needs E2E_SANDBOX=docker or bwrap")
+	}
+}
+
+// requireDocker marks a test of the docker sandbox, and skips it unless the
+// agents run in Docker.
 func requireDocker(t *testing.T) {
 	t.Helper()
 	dependsOnSandbox(t)

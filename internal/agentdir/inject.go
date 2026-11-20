@@ -220,7 +220,7 @@ func (c *Config) validateInject() []error {
 	}
 	switch {
 	case c.Sandbox == SandboxLocal:
-		errs = append(errs, fmt.Errorf("--%s needs the Docker sandbox: with --sandbox local, the agent can read the secrets in .a2a/state/secrets; use --sandbox docker, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
+		errs = append(errs, fmt.Errorf("--%s needs the Docker or bubblewrap sandbox: with --sandbox local, the agent can read the secrets in .a2a/state/secrets; use --sandbox docker, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
 	case c.Egress.Mode == egressrules.ModeUnrestricted:
 		errs = append(errs, fmt.Errorf("--%s needs the server to see the sandbox's connections, which --egress unrestricted turns off; use --egress internet, or remove the rules with `a2a-serve config unset %s`", InjectSetting(c.Inject[0]), InjectSetting(c.Inject[0])))
 	}

@@ -734,7 +734,13 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			a.fail(m.ID, err.Error())
 			return
 		}
-		a.chunk(sid, fmt.Sprintf("pid %s/%d", host, os.Getpid()))
+		// Sandboxes with a PID namespace of their own, such as bubblewrap,
+		// can give two processes the same PID on one host.
+		ns, err := os.Readlink("/proc/self/ns/pid")
+		if err != nil {
+			ns = "-"
+		}
+		a.chunk(sid, fmt.Sprintf("pid %s/%s/%d", host, ns, os.Getpid()))
 		end("end_turn")
 	case "agents":
 		host, err := os.Hostname()

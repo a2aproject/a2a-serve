@@ -34,32 +34,32 @@ func (m *runMode) addRunFlags(f *pflag.FlagSet) {
 	setSection(f, sectionRun, "detach", "service", "quiet")
 }
 
-// hideImageForLocalSandbox hides --image from the help of cmd when the
-// sandbox is local, given with --sandbox or saved in the agent of dir.
-func hideImageForLocalSandbox(cmd *cobra.Command, dir func() (agentdir.Dir, error)) {
+// hideImageWithoutDocker hides --image from the help of cmd when the
+// sandbox runs no image, given with --sandbox or saved in the agent of dir.
+func hideImageWithoutDocker(cmd *cobra.Command, dir func() (agentdir.Dir, error)) {
 	help := cmd.HelpFunc()
 	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
-		if sandboxIsLocal(c, dir) {
+		if !sandboxIsDocker(c, dir) {
 			c.Flags().Lookup("image").Hidden = true
 		}
 		help(c, args)
 	})
 }
 
-func sandboxIsLocal(c *cobra.Command, dir func() (agentdir.Dir, error)) bool {
+func sandboxIsDocker(c *cobra.Command, dir func() (agentdir.Dir, error)) bool {
 	if v := c.Flags().Lookup("sandbox").Value.String(); v != "" {
-		return v == agentdir.SandboxLocal
+		return v == agentdir.SandboxDocker
 	}
 	d, err := dir()
 	if err != nil || !d.Exists() {
-		return false
+		return true
 	}
 	conf, err := d.ReadConfig()
 	if err != nil {
 		slog.Debug("reading the config for help", "error", err)
-		return false
+		return true
 	}
-	return conf.Sandbox == agentdir.SandboxLocal
+	return conf.Sandbox == "" || conf.Sandbox == agentdir.SandboxDocker
 }
 
 func newStartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {

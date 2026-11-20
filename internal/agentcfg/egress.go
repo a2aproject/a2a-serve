@@ -25,8 +25,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
-// UnrestrictedEffect says what a sandbox without the egress boundary reaches.
-const UnrestrictedEffect = "the agent reaches every network this machine reaches, the LAN and the tailnet included"
+// UnrestrictedEffect says what a sandbox without the egress boundary reaches,
+// and BwrapUnrestrictedEffect what the bubblewrap sandbox reaches then.
+const (
+	UnrestrictedEffect      = "the agent reaches every network this machine reaches, the LAN and the tailnet included"
+	BwrapUnrestrictedEffect = "the agent has this machine's network, with the LAN, the tailnet and the services of this machine on loopback"
+)
 
 // EgressDecision is whether an agent's containers get the egress boundary.
 type EgressDecision struct {
@@ -81,12 +85,20 @@ func egressIgnored(w *agentprofile.EgressIgnoredWarning) string {
 // or reach the network as the settings ask, for why.
 func egressProblem(e agentprofile.Egress, why string) string {
 	switch {
+	case e.Sandbox == agentprofile.SandboxBwrap:
+		return noBwrapBoundary(why)
 	case e.Mode == egressrules.ModeAllowlist:
 		return noAllowlist(why)
 	case len(e.Inject) > 0:
 		return noInject(e.Inject, why)
 	}
 	return NoBoundary(why)
+}
+
+// noBwrapBoundary says why the bubblewrap sandbox can't start: without the
+// boundary, it would have this machine's network, with its loopback.
+func noBwrapBoundary(why string) string {
+	return "the bubblewrap sandbox can't route the agent's connections through the server: " + why + ". The agent doesn't start, so that it can't reach this machine's network and its services on loopback. Fix that, or run a2a-serve config set --sandbox docker"
 }
 
 // noInject says why a container whose secrets the boundary adds can't

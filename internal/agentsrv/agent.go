@@ -167,10 +167,16 @@ func (s *Server) newAgent(ctx context.Context, opts Options) error {
 	return nil
 }
 
-// sandboxRuntime returns the runtime of the sandbox setting of cfg.
+// sandboxRuntime returns the runtime of the sandbox setting of cfg. The
+// bubblewrap sandbox runs the agent and the a2a CLI of this machine, and
+// has this machine's network only where the egress mode is unrestricted,
+// since it doesn't start without the boundary otherwise.
 func sandboxRuntime(cfg *agentdir.Config, opts Options) sandbox.Runtime {
-	if cfg.Sandbox == agentprofile.SandboxLocal {
+	switch cfg.Sandbox {
+	case agentprofile.SandboxLocal:
 		return sandbox.Local()
+	case agentprofile.SandboxBwrap:
+		return sandbox.Bubblewrap(sandbox.BubblewrapOptions{Programs: []string{a2acli.Binary}, HostNetwork: true})
 	}
 	progress := opts.ImageProgress
 	if progress == nil {

@@ -33,6 +33,9 @@ func NewBubblewrap(BubblewrapConfig) *Bubblewrap { return &Bubblewrap{} }
 
 var errNoBubblewrap = &BubblewrapError{Problem: "runs only on Linux", Fix: "use the Docker sandbox", Err: errors.ErrUnsupported}
 
+// CheckBubblewrap fails on this system.
+func CheckBubblewrap(context.Context) error { return errNoBubblewrap }
+
 // Probe implements [Backend].
 func (*Bubblewrap) Probe(context.Context) (Capabilities, error) {
 	return Capabilities{}, errNoBubblewrap

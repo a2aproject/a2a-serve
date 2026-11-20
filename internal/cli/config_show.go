@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
 	"strconv"
 	"strings"
@@ -153,7 +154,7 @@ func renderConfig(v *agentctl.View, all bool, hint string) string {
 	}
 	line("mounts", strings.Join(mounts, ", "), "mount")
 	sandbox := withDefault(c.Sandbox, def.Sandbox)
-	if img := withDefault(c.Image, def.Image); img != "" && (c.Image != "" || sandbox != agentdir.SandboxLocal) {
+	if img := withDefault(c.Image, def.Image); img != "" && (c.Image != "" || cmp.Or(c.Sandbox, def.Sandbox) == agentdir.SandboxDocker) {
 		sandbox = fmt.Sprintf("%-23s image %s", sandbox, img)
 	}
 	line("sandbox", sandbox, "sandbox", "image")

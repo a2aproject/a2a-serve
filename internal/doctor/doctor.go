@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,8 @@ func (r Result) Apply() (string, error) {
 type Env struct {
 	// Home is the home directory of the a2a CLI config.
 	Home string
+	// GOOS is the system the server runs on.
+	GOOS string
 	// Credentials holds the owner token of this machine.
 	Credentials *credstore.Store
 	LookupEnv   func(string) (string, bool)
@@ -108,6 +111,10 @@ type Env struct {
 	CheckLauncher func(exe string) (string, error)
 	// CheckTUN checks the host's TUN device, as [sandboxrt.CheckTUN] does.
 	CheckTUN func() error
+	// ProbeBubblewrap checks that bubblewrap makes sandboxes, and whether
+	// the egress boundary works in them, as [sandboxrt.Bubblewrap.Probe]
+	// does. Optional: without it the bubblewrap checks are skipped.
+	ProbeBubblewrap func(ctx context.Context) (sandboxrt.Capabilities, error)
 	// CheckInternetRoute checks that this host routes to the internet, as
 	// [boundary.CheckInternetRoute] does.
 	CheckInternetRoute func() error
@@ -140,6 +147,7 @@ func System() (Env, error) {
 	}
 	return Env{
 		Home:               home,
+		GOOS:               runtime.GOOS,
 		Credentials:        credstore.At(home),
 		LookupEnv:          os.LookupEnv,
 		LookPath:           exec.LookPath,
@@ -147,6 +155,7 @@ func System() (Env, error) {
 		DirWritable:        dirWritable,
 		CheckLauncher:      sandboxrt.CheckLauncher,
 		CheckTUN:           sandboxrt.CheckTUN,
+		ProbeBubblewrap:    sandboxrt.NewBubblewrap(sandboxrt.BubblewrapConfig{}).Probe,
 		CheckInternetRoute: boundary.CheckInternetRoute,
 		Run:                runCommand,
 		HTTP:               &http.Client{Timeout: 5 * time.Second},
