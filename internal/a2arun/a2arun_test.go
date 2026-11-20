@@ -39,6 +39,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2arun"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/serve"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentrun"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -285,5 +287,98 @@ func TestMainPrintsPluginInfo(t *testing.T) {
 	want := `{"name":"run","version":"1.2.3","description":"Serve a coding agent in a sandbox over A2A"}` + "\n"
 	if code != 0 || stdout.String() != want {
 		t.Fatalf("a2arun.Main(info) = %d with stdout %q, want 0 and %q", code, stdout.String(), want)
+	}
+}
+
+func TestStopFailsTheTasksOfWaitingCallers(t *testing.T) {
+	t.Parallel()
+	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+	r := start(t, "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--listen", "unix://"+sock)
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	stall := func(contextID string) *a2a.SendMessageRequest {
+		msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("stall"))
+		msg.ContextID = contextID
+		return &a2a.SendMessageRequest{Message: msg}
+	}
+	type result struct {
+		status *a2a.TaskStatus
+		err    error
+	}
+	blocking := make(chan result, 1)
+	go func() {
+		res, err := c.SendMessage(ctx, stall("blocking"))
+		if err != nil {
+			blocking <- result{err: err}
+			return
+		}
+		task, ok := res.(*a2a.Task)
+		if !ok {
+			blocking <- result{err: fmt.Errorf("got %T, want a task", res)}
+			return
+		}
+		blocking <- result{status: &task.Status}
+	}()
+	working := make(chan struct{})
+	streaming := make(chan result, 1)
+	go func() {
+		var last result
+		for ev, err := range c.SendStreamingMessage(ctx, stall("streaming")) {
+			if err != nil {
+				last = result{err: err}
+				break
+			}
+			if s, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
+				last = result{status: &s.Status}
+				if s.Status.State == a2a.TaskStateWorking && working != nil {
+					close(working)
+					working = nil
+				}
+			}
+		}
+		streaming <- last
+	}()
+	select {
+	case <-working:
+	case <-ctx.Done():
+		t.Fatal("Client.SendStreamingMessage(stall) sent no working status")
+	}
+	waitWorking(t, c, 2)
+
+	if code, _ := r.stop(t); code != 0 {
+		t.Fatalf("a2arun.Main() = %d, want 0; stderr:\n%s", code, r.stderr)
+	}
+
+	for name, ch := range map[string]chan result{"Client.SendMessage(stall)": blocking, "Client.SendStreamingMessage(stall)": streaming} {
+		got := <-ch
+		if got.err != nil {
+			t.Fatalf("%s error = %v, want a failed task", name, got.err)
+		}
+		if got.status.State != a2a.TaskStateFailed || a2atext.Message(got.status.Message) != agentrun.StoppedMessage {
+			t.Fatalf("%s last status = %v %q, want %v %q", name, got.status.State, a2atext.Message(got.status.Message), a2a.TaskStateFailed, agentrun.StoppedMessage)
+		}
+	}
+}
+
+// waitWorking waits until n tasks are working.
+func waitWorking(t *testing.T, c *a2aclient.Client, n int) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp, err := c.ListTasks(context.Background(), &a2a.ListTasksRequest{Status: a2a.TaskStateWorking})
+		if err != nil {
+			t.Fatalf("Client.ListTasks() error = %v", err)
+		}
+		if len(resp.Tasks) >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Client.ListTasks() = %d working tasks, want %d", len(resp.Tasks), n)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

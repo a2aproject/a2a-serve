@@ -77,15 +77,18 @@ type Server struct {
 	contacts *contacts
 	ln       net.Listener
 	http     *http.Server
-	served   chan error
+	// cancelRequests ends the requests that Close didn't see finish.
+	cancelRequests context.CancelFunc
+	served         chan error
 	// temp are the temporary directories that Close removes.
 	temp  []string
 	ready Ready
 }
 
 // Start checks cfg, starts the agent and serves it on the address of
-// cfg.Listen. The agent's turns end when ctx does. Errors of the flags are
-// [UsageError]s.
+// cfg.Listen. The agent's turns end when ctx does; the requests last until
+// Close, so that their callers get the end of the tasks. Errors of the
+// flags are [UsageError]s.
 func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	s, err := cfg.resolve(ctx)
 	if err != nil {
@@ -187,7 +190,9 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 	}
 	name, version := s.profile.Name(), cfg.Version
 	card := func(baseURL string) *a2a.AgentCard { return agentCard(name, version, baseURL) }
-	srv.http = httpserver.New(ctx, routes(srv.agent.Handler(), card, s.listen.network == "tcp"))
+	reqCtx, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	srv.cancelRequests = cancelRequests
+	srv.http = httpserver.New(reqCtx, routes(srv.agent.Handler(), card, s.listen.network == "tcp"))
 	go func() {
 		err := srv.http.Serve(srv.ln)
 		if errors.Is(err, http.ErrServerClosed) {
@@ -214,8 +219,10 @@ func (s *Server) Ready() Ready { return s.ready }
 // stopped it.
 func (s *Server) Done() <-chan error { return s.served }
 
-// Close stops serving and stops the agent processes, whose tasks fail. It
-// removes the Unix socket and the temporary directories.
+// Close stops accepting requests and stops the agent processes, whose
+// tasks fail. It waits within ctx for the requests to send the callers the
+// end of their tasks, then ends the rest. It removes the Unix socket and
+// the temporary directories.
 func (s *Server) Close(ctx context.Context) error {
 	s.contacts.stop()
 	shutdown := make(chan error, 1)
@@ -224,6 +231,7 @@ func (s *Server) Close(ctx context.Context) error {
 	if serr := <-shutdown; serr != nil {
 		err = errors.Join(err, serr, s.http.Close())
 	}
+	s.cancelRequests()
 	s.agent, s.ln = nil, nil
 	return errors.Join(err, s.closeTools(ctx), s.release())
 }
