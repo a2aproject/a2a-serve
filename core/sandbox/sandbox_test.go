@@ -560,7 +560,7 @@ func TestLauncherUnderGVisor(t *testing.T) {
 // without ambient capabilities leave out CapAmb.
 func noCapabilities(sets string) bool {
 	bounding := false
-	for _, set := range strings.Fields(sets) {
+	for set := range strings.FieldsSeq(sets) {
 		name, v, _ := strings.Cut(set, "=")
 		if strings.Trim(v, "0") != "" {
 			return false
