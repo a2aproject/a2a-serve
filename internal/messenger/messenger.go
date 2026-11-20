@@ -67,6 +67,14 @@ type Linker interface {
 	Linked(ctx context.Context, in Inbound) error
 }
 
+// StrangerReplies is a messenger that limits the replies to senders who
+// aren't linked, because each reply costs it, as an email does.
+type StrangerReplies interface {
+	// AllowStrangerReply reports whether the server may reply to the sender
+	// identity, and counts the reply if it may.
+	AllowStrangerReply(identity string) bool
+}
+
 // Validate checks the credentials of ch if it is a [Validator].
 func Validate(ctx context.Context, ch Messenger) error {
 	if v, ok := ch.(Validator); ok {
