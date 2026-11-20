@@ -15,11 +15,14 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"net"
 	"net/http"
@@ -27,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +51,9 @@ import (
 )
 
 const testSecret = "a2a-serve-slim-provider-test-secret"
+
+// reconnectWithin is how soon agents answer again after their node restarts.
+const reconnectWithin = 30 * time.Second
 
 var (
 	providerBin string
@@ -134,9 +141,9 @@ func ctx(t *testing.T) context.Context {
 	return c
 }
 
-func start(t *testing.T) *host.Process {
+func start(t *testing.T, onHealth func(netprovider.Health)) *host.Process {
 	t.Helper()
-	p, err := host.Start(host.Config{Path: providerBin, RunDir: runDir(t), Env: host.Environ(os.Environ()), Stderr: testWriter{t}})
+	p, err := host.Start(host.Config{Path: providerBin, RunDir: runDir(t), Env: host.Environ(os.Environ()), Stderr: testWriter{t}, OnHealth: onHealth})
 	if err != nil {
 		t.Fatalf("host.Start() error = %v", err)
 	}
@@ -149,18 +156,20 @@ func start(t *testing.T) *host.Process {
 }
 
 // agent is a provider process with a fake a2a-serve behind it: an echo
-// agent that records who calls it.
+// agent that records who calls it and the health its provider reports.
 type agent struct {
 	p  *host.Process
 	ep *host.Endpoints
 
 	mu      sync.Mutex
 	callers map[netprovider.Caller]bool
+	health  []string
 }
 
 func join(t *testing.T, network, name string) *agent {
 	t.Helper()
-	a := &agent{p: start(t), callers: map[netprovider.Caller]bool{}}
+	a := &agent{callers: map[netprovider.Caller]bool{}}
+	a.p = start(t, a.recordHealth)
 	res, err := a.p.Join(ctx(t), netprovider.JoinRequest{Agent: name, URL: network, Token: testSecret, StateDir: t.TempDir(), Private: true})
 	if err != nil {
 		t.Fatalf("Process.Join() error = %v", err)
@@ -215,6 +224,18 @@ func (a *agent) serveEcho(t *testing.T, name string) {
 			t.Errorf("Server.Close() error = %v", err)
 		}
 	})
+}
+
+func (a *agent) recordHealth(h netprovider.Health) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.health = append(a.health, h.State)
+}
+
+func (a *agent) healthStates() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.health)
 }
 
 func (a *agent) seenCallers() map[netprovider.Caller]bool {
@@ -450,7 +471,7 @@ func TestJoinErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tt.req.StateDir = t.TempDir()
-			_, err := start(t).Join(ctx(t), tt.req)
+			_, err := start(t, nil).Join(ctx(t), tt.req)
 			if err == nil || !strings.Contains(err.Error(), tt.wantText) {
 				t.Fatalf("Process.Join() error = %v, want one that says %q", err, tt.wantText)
 			}
@@ -471,4 +492,231 @@ func TestConformance(t *testing.T) {
 		t.Logf("no SLIM node at %s (%v); skipping the network checks", endpoint, err)
 	}
 	conformance.Run(t, cfg)
+}
+
+// nodeConfig is the configuration of a SLIM node that serves plain-text
+// gRPC on port. Rootless Docker forwards a port of its host network to the
+// host only when the node listens on all addresses.
+const nodeConfig = `runtime:
+  n_cores: 0
+  drain_timeout: 1s
+services:
+  slim/0:
+    node_id: slim-restart-test
+    dataplane:
+      servers:
+        - endpoint: "0.0.0.0:%d"
+          tls:
+            insecure: true
+      clients: []
+`
+
+// startNode runs a SLIM node in a Docker container of its own, and returns
+// its port and the container's name. The container uses the host's
+// network, so the node keeps its port when the container restarts.
+func startNode(t *testing.T) (int, string) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("no docker on PATH")
+	}
+	image := os.Getenv("SLIM_IMAGE")
+	if image == "" {
+		image = "ghcr.io/agntcy/slim:3.4.6"
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("Listener.Close() error = %v", err)
+	}
+	container := "a2a-serve-slim-test-" + namespace(t)
+	docker(t, nil, "create", "--name", container, "--network", "host", image, "/slim", "--config", "/slim-node.yaml")
+	t.Cleanup(func() {
+		if out, err := exec.Command("docker", "rm", "-f", container).CombinedOutput(); err != nil {
+			t.Errorf("docker rm %s error = %v: %s", container, err, out)
+		}
+	})
+	// The node runs as a user that can't read a bind mount of the test's
+	// files, so the configuration goes into the container as a file it owns.
+	docker(t, configArchive(t, fmt.Sprintf(nodeConfig, port)), "cp", "-", container+":/")
+	docker(t, nil, "start", container)
+	waitListening(t, container, port)
+	return port, container
+}
+
+func docker(t *testing.T, stdin io.Reader, args ...string) {
+	t.Helper()
+	cmd := exec.Command("docker", args...)
+	cmd.Stdin = stdin
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("docker %s error = %v: %s", strings.Join(args, " "), err, out)
+	}
+}
+
+// configArchive returns a tar archive with the node's configuration, owned
+// by the user the SLIM image runs as.
+func configArchive(t *testing.T, cfg string) io.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "slim-node.yaml", Mode: 0o644, Size: int64(len(cfg)), Uid: 65532, Gid: 65532}); err != nil {
+		t.Fatalf("Writer.WriteHeader() error = %v", err)
+	}
+	if _, err := tw.Write([]byte(cfg)); err != nil {
+		t.Fatalf("Writer.Write() error = %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("Writer.Close() error = %v", err)
+	}
+	return &buf
+}
+
+func waitListening(t *testing.T, container string, port int) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		if err == nil {
+			if err := conn.Close(); err != nil {
+				t.Fatalf("Conn.Close() error = %v", err)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			logs, _ := exec.Command("docker", "logs", container).CombinedOutput()
+			t.Fatalf("the SLIM node didn't listen on port %d: %v\n%s", port, err, logs)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// forwardPort forwards the connections to a port of its own to port, as
+// Docker forwards a published port: it takes connections while nothing
+// listens on port, and closes them. The SLIM library stops reconnecting
+// after such a connection, as it does when the node of example 7 restarts.
+func forwardPort(t *testing.T, port int) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		conns = map[net.Conn]bool{}
+	)
+	track := func(c net.Conn) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if conns == nil {
+			return false
+		}
+		conns[c] = true
+		return true
+	}
+	closeConn := func(c net.Conn) {
+		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("Conn.Close() error = %v", err)
+		}
+	}
+	relay := func(dst, src net.Conn, done chan<- struct{}) {
+		if _, err := io.Copy(dst, src); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Logf("forwarding to port %d: %v", port, err)
+		}
+		done <- struct{}{}
+	}
+	wg.Go(func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if !track(c) {
+				closeConn(c)
+				return
+			}
+			wg.Go(func() {
+				defer closeConn(c)
+				b, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+				if err != nil || !track(b) {
+					return
+				}
+				defer closeConn(b)
+				done := make(chan struct{}, 2)
+				go relay(b, c, done)
+				go relay(c, b, done)
+				<-done
+			})
+		}
+	})
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("Listener.Close() error = %v", err)
+		}
+		mu.Lock()
+		for c := range conns {
+			closeConn(c)
+		}
+		conns = nil
+		mu.Unlock()
+		wg.Wait()
+	})
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// sendWithin sends text to the agent at u until a call succeeds or within
+// passes.
+func sendWithin(t *testing.T, client *http.Client, u, text string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		err := sendOnce(t, client, u, text)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("calling %s within %v: %v", u, within, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func sendOnce(t *testing.T, client *http.Client, u, text string) error {
+	t.Helper()
+	c, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	tr := a2aclient.NewJSONRPCTransport(u, client)
+	defer destroy(tr)
+	res, err := tr.SendMessage(c, nil, message(text))
+	if err != nil {
+		return err
+	}
+	if got, want := resultText(t, res), "echo: "+text; got != want {
+		return fmt.Errorf("reply %q, want %q", got, want)
+	}
+	return nil
+}
+
+func TestAgentsCallEachOtherAfterNodeRestart(t *testing.T) {
+	t.Parallel()
+	port, container := startNode(t)
+	ns := namespace(t)
+	network := fmt.Sprintf("http://127.0.0.1:%d?namespace=%s&peers=reviewer,coder", forwardPort(t, port), ns)
+	coder := join(t, network, "coder")
+	reviewer := join(t, network, "reviewer")
+	coderURL := "http://slim.local/a2a/" + ns + "/coder"
+	client := &http.Client{Transport: reviewer.p.Transport(), Timeout: time.Minute}
+	sendWithin(t, client, coderURL, "before", 0)
+
+	docker(t, nil, "restart", "-t", "1", container)
+	sendWithin(t, client, coderURL, "after", reconnectWithin)
+
+	want := []string{netprovider.HealthDisconnected, netprovider.HealthOK}
+	for _, a := range []*agent{coder, reviewer} {
+		if diff := cmp.Diff(want, a.healthStates()); diff != "" {
+			t.Fatalf("health states wrong result (-want +got) diff = %s", diff)
+		}
+	}
 }

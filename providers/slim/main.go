@@ -30,5 +30,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "netprovider-slim: %v\n", err)
 		os.Exit(1)
 	}
-	netprovider.Main(func(h *netprovider.Host) netprovider.Provider { return newProvider(h) })
+	netprovider.Main(func(h *netprovider.Host) netprovider.Provider { return newProvider(h, openNode) })
 }

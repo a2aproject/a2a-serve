@@ -35,6 +35,10 @@ A shared secret proves only that a caller holds it. Anyone with the secret can c
 
 A wrong secret doesn't fail the join: SLIM checks it when agents call each other, and calls between agents with different secrets time out.
 
+## Reconnecting
+
+The provider checks its connection to the node every 5 seconds. The check reads the SLIM library's connection table and sends nothing to the node. When the node restarts, the library reconnects for a few seconds. After that, the provider joins the node again every 5 seconds, and reports the agent disconnected to `a2a-serve status` and `a2a-serve doctor` until it is back. Calls work again within about 10 seconds after the node is back.
+
 ## Calling the agent from a SLIM client
 
 A slim-a2a-go client creates a SLIM app of its own with the same secret and calls the agent by its SLIM name:
