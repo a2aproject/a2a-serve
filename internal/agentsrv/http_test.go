@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -751,7 +752,9 @@ func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
 	const timeout = time.Second
 	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.IdleTimeout = timeout }})
 	token := ts.pair("anna", auth.RoleMember)
-	task := send(t, ts.client(token), userText("big 8000000", "", ""))
+	c := ts.client(token)
+	task := sendAsync(t, c, userText("big 8000000", "", ""))
+	waitListed(t, c, task.ID, a2a.TaskStateCompleted)
 	conn := dialRaw(t, ts.localURL())
 	if err := conn.(*net.TCPConn).SetReadBuffer(4 << 10); err != nil {
 		t.Fatal(err)
@@ -772,6 +775,33 @@ func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("reading GetTask of a large task %s after the idle timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
+	}
+}
+
+// waitListed polls the task list until task id reaches state. The list
+// leaves out artifacts and history, so a large task doesn't stall the
+// responses past a short idle timeout of the server.
+func waitListed(t *testing.T, c *a2aclient.Client, id a2a.TaskID, state a2a.TaskState) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var last a2a.TaskState
+	for {
+		list, err := c.ListTasks(context.Background(), &a2a.ListTasksRequest{HistoryLength: new(0)})
+		if err != nil {
+			t.Fatalf("ListTasks() error = %v", err)
+		}
+		for _, task := range list.Tasks {
+			if task.ID == id {
+				last = task.Status.State
+			}
+		}
+		if last == state {
+			return
+		}
+		if last.Terminal() || time.Now().After(deadline) {
+			t.Fatalf("task %s state = %s, want %s", id, last, state)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
