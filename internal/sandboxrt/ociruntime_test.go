@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -121,15 +122,7 @@ func TestDockerProbeChecksRuntime(t *testing.T) {
 		{name: "runsc with host sockets", runtimes: withHostUDS, runtime: "runsc", wantServed: "gVisor's FUSE"},
 		{name: "runsc with an egress container", runtimes: withHostUDS, runtime: "runsc", relay: true, wantBoundary: "doesn't work with the runtime runsc", wantServed: "gVisor's FUSE"},
 	}
-	if err := CheckTUN(); err != nil {
-		t.Skip(err)
-	}
-	launcher := filepath.Join(t.TempDir(), "launcher")
-	build := exec.Command("go", "build", "-o", launcher, "./testdata/launcher")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build ./testdata/launcher error = %v\n%s", err, out)
-	}
+	launcher := buildStaticLauncher(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sandboxtest.FakeDocker(t, runtimesDocker(tc.runtimes))
@@ -160,6 +153,48 @@ func TestDockerProbeChecksRuntime(t *testing.T) {
 				t.Fatalf("Docker.Probe() served problem = %v, want %q", c.Served, tc.wantServed)
 			}
 		})
+	}
+}
+
+// buildStaticLauncher builds the launcher of the tests as releases build
+// it, or skips the test on a host without a TUN device.
+func buildStaticLauncher(t *testing.T) string {
+	t.Helper()
+	if err := CheckTUN(); err != nil {
+		t.Skip(err)
+	}
+	launcher := filepath.Join(t.TempDir(), "launcher")
+	build := exec.Command("go", "build", "-o", launcher, "./testdata/launcher")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build ./testdata/launcher error = %v\n%s", err, out)
+	}
+	return launcher
+}
+
+func TestDockerPrepareUnderGVisorFailsWhereTheBoundaryCantWork(t *testing.T) {
+	launcher := buildStaticLauncher(t)
+	sandboxtest.FakeDocker(t, `case "$1 $2 $3" in
+"info --format {{json .Runtimes}}") echo '{"runsc":{"runtimeType":"io.containerd.runsc.v1"}}' ;;
+"info --format "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect "*) echo "`+runtime.GOARCH+` null" ;;
+"rm "*) ;;
+"run --name "*) echo "a2a-init: setting up the sandbox's network: connecting to the egress socket: connection refused" >&2; exit 121 ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`)
+	t.Setenv(EnvForceRelay, "")
+	dir := t.TempDir()
+	_, err := NewDocker(DockerConfig{EnvDir: t.TempDir(), Launcher: func() string { return launcher }, Runtime: "runsc"}).Prepare(context.Background(), Spec{
+		Name:    "a2a-test",
+		Image:   "img:1",
+		Command: Command{Path: "agent"},
+		Network: Network{Recheck: true, Boundary: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
+			return EgressEndpoint{Socket: filepath.Join(dir, "egress.sock"), Close: func() error { return nil }}, nil
+		}},
+	})
+	if err == nil || errors.Is(err, ErrNoBoundary) || !strings.Contains(err.Error(), "gVisor") || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("Docker.Prepare() under gVisor error = %v, want the launcher's reason without %v, so that the start doesn't fall back", err, ErrNoBoundary)
 	}
 }
 

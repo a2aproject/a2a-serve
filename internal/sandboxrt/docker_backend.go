@@ -154,9 +154,25 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(spec.Served) > 0 && rt.gVisor() {
+	if !rt.gVisor() {
+		return d.prepare(ctx, spec, rootless, rt)
+	}
+	if len(spec.Served) > 0 {
 		return nil, &ServedMountError{Dst: spec.Served[0].Dst, Reason: errGVisorServed.Error()}
 	}
+	// gVisor hardens the sandbox, so a container that can't set up its
+	// network fails to start, and doesn't fall back to runsc's own network.
+	spec.Network.Recheck = false
+	sb, err := d.prepare(ctx, spec, rootless, rt)
+	if errors.Is(err, ErrNoBoundary) {
+		return nil, fmt.Errorf("the gVisor container can't route its connections through the egress boundary: %s", err)
+	}
+	return sb, err
+}
+
+// prepare is [Docker.Prepare] on rootless Docker or not, with the OCI
+// runtime rt.
+func (d *Docker) prepare(ctx context.Context, spec Spec, rootless bool, rt ociRuntime) (Sandbox, error) {
 	if len(spec.Served) > 0 {
 		if err := checkServed(ctx, spec, d.cfg.ServedAppArmor); err != nil {
 			return nil, err

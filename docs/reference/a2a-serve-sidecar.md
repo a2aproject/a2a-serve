@@ -36,7 +36,7 @@ Once the agent is up, `a2a-serve-sidecar` prints one JSON line on stdout. Logs g
 | --- | --- |
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
-| `sandbox` | `docker`, `docker (rootless)`, `gvisor`, `bwrap` or `local` |
+| `sandbox` | `docker`, `docker (rootless)`, `gvisor`, `gvisor (rootless)`, `bwrap` or `local` |
 | `workspace` | `dir`, `memory` or `url` |
 | `workspace_sync` | `turn` or `live` |
 | `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |

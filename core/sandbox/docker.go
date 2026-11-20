@@ -57,8 +57,10 @@ type DockerOptions struct {
 	// --runtime takes it, such as runsc for gVisor. Probe and Create fail
 	// when Docker doesn't have it. Empty is Docker's default. Under gVisor,
 	// runsc must run with --host-uds=open, so that the containers reach
-	// their egress endpoint, and [Served] mounts are refused, since
-	// gVisor's FUSE can't map files into memory, which git needs.
+	// their egress endpoint; where they can't, Create fails, and the
+	// containers never get runsc's own network. [Served] mounts are
+	// refused there, since gVisor's FUSE can't map files into memory,
+	// which git needs.
 	Runtime string
 }
 

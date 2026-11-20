@@ -91,7 +91,9 @@ func Launch(cfg LaunchConfig) (int, error) {
 		if err := confine(); err != nil {
 			return 0, &MountError{Dst: cfg.Mounts[0].Dst, Err: err}
 		}
-	case cfg.Confine:
+	case cfg.Confine, underGVisor():
+		// runsc ignores the container's seccomp profile unless it runs
+		// with --oci-seccomp, so nothing else refuses new namespaces there.
 		if err := confine(); err != nil {
 			return 0, &SetupError{Err: err}
 		}

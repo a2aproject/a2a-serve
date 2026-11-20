@@ -114,7 +114,7 @@ $ sudo runsc install -- --host-uds=open
 $ sudo systemctl restart docker
 ```
 
-Without it, the sandbox doesn't start, and the error names the flag. Live workspaces don't work under gVisor, and Docker Desktop's egress container doesn't work with another runtime yet. Verified with rootful Docker on Linux.
+Without it, the sandbox doesn't start, and the error names the flag. The container never falls back to gVisor's own network. gVisor ignores Docker's seccomp profile by default, so the launcher installs the filter of live workspaces, which refuses new namespaces, mounts and ptrace. Live workspaces don't work under gVisor, and Docker Desktop's egress container doesn't work with another runtime yet. Verified with rootful Docker on Linux.
 
 ## Platform-provided Sandboxes
 

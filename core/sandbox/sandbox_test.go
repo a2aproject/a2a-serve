@@ -291,6 +291,7 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 		Command: sandbox.Command{Path: "/probe", Args: []string{
 			"read:/data/hello.txt", "write:/data/new.txt", "ls:/data/private", "write:/scratch/new.txt", "read:/scratch/new.txt", "write:/empty/new.txt",
 			"dial:" + net.JoinHostPort("host.docker.internal", allowed), "dial:" + net.JoinHostPort("host.docker.internal", other),
+			"caps:", "unshare:user",
 		}},
 		Mounts: []sandbox.Mount{{Dst: "/data", Src: sandbox.HostDir(data), ReadOnly: true}, {Dst: "/scratch", Src: sandbox.Tmpfs()}, {Dst: "/empty", Src: sandbox.Tmpfs(), ReadOnly: true}},
 		Hide:   []string{filepath.Join(data, "private")},
@@ -299,6 +300,11 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 		Stderr: &stderr,
 	})
 	got := strings.Split(strings.TrimSpace(run(t, sb)), "\n")
+	for i, line := range got {
+		if sets, ok := strings.CutPrefix(line, "caps: "); ok && noCapabilities(sets) {
+			got[i] = "caps: none"
+		}
+	}
 	want := []string{
 		"read:/data/hello.txt hello",
 		"write:/data/new.txt error",
@@ -308,6 +314,8 @@ func TestDockerRunsCommandBehindEgress(t *testing.T) {
 		"write:/empty/new.txt error",
 		"dial:" + net.JoinHostPort("host.docker.internal", allowed) + " ok",
 		"dial:" + net.JoinHostPort("host.docker.internal", other) + " refused",
+		"caps: none",
+		"unshare:user EPERM",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Sandbox.Start() output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
@@ -457,19 +465,23 @@ func checkServedRefused(t *testing.T, rt sandbox.Runtime, image string, caps san
 	}
 }
 
-// TestLauncherUnderGVisor runs the launcher's check under runsc do, which
-// needs --host-uds=open to reach the egress socket.
+// TestLauncherUnderGVisor runs the launcher under runsc do, which needs
+// --host-uds=open to reach the egress socket, and an agent as uid 0, which
+// gets no capability and can't make namespaces.
 func TestLauncherUnderGVisor(t *testing.T) {
 	t.Parallel()
 	runsc := os.Getenv(sandboxtest.EnvRunsc)
 	if runsc == "" {
 		sandboxtest.Skip(t, "needs a runsc binary in %s", sandboxtest.EnvRunsc)
 	}
-	launcher := filepath.Join(t.TempDir(), "launcher")
-	build := exec.Command("go", "build", "-o", launcher, "./testdata/launcher")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build ./testdata/launcher error = %v\n%s", err, out)
+	dir := t.TempDir()
+	launcher, probe := filepath.Join(dir, "launcher"), filepath.Join(dir, "probe")
+	for _, b := range []struct{ out, pkg string }{{launcher, "./testdata/launcher"}, {probe, "../../internal/sandboxrt/testdata/probe"}} {
+		build := exec.Command("go", "build", "-o", b.out, b.pkg)
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
+		}
 	}
 	sock := filepath.Join(testutil.ShortTempDir(t), "egress.sock")
 	ln, err := net.Listen("unix", sock)
@@ -495,20 +507,28 @@ func TestLauncherUnderGVisor(t *testing.T) {
 	tests := []struct {
 		name       string
 		flags      []string
+		init       []string
 		wantCode   int
+		wantStdout []string
 		wantStderr string
 	}{
-		{name: "host sockets open", flags: []string{"--host-uds=open"}},
-		{name: "host sockets refused", wantCode: 121, wantStderr: "unless runsc runs with --host-uds=open"},
+		{name: "check with host sockets open", flags: []string{"--host-uds=open"}, init: []string{"--check", sock, "0", "0"}},
+		{name: "check with host sockets refused", init: []string{"--check", sock, "0", "0"}, wantCode: 121, wantStderr: "unless runsc runs with --host-uds=open"},
+		{
+			name:       "agent as root",
+			flags:      []string{"--host-uds=open"},
+			init:       []string{sock, "0", "0", probe, "caps:", "unshare:user", "userns:" + probe},
+			wantStdout: []string{"caps: none", "unshare:user EPERM", "userns:" + probe + " EPERM"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			args := append([]string{"--root", t.TempDir(), "--rootless", "--network=none", "--ignore-cgroups"}, tc.flags...)
-			args = append(args, "do", launcher, "sandbox-init", "--check", "--confine", sock, "0", "0")
+			args = append(append(args, "do", launcher, "sandbox-init"), tc.init...)
 			cmd := exec.Command(runsc, args...)
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			err := cmd.Run()
 			code := 0
 			if ee, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -519,8 +539,35 @@ func TestLauncherUnderGVisor(t *testing.T) {
 			if code != tc.wantCode || !strings.Contains(stderr.String(), tc.wantStderr) {
 				t.Fatalf("runsc do launcher exit = %d, stderr %q, want %d and %q", code, stderr.String(), tc.wantCode, tc.wantStderr)
 			}
+			var got []string
+			if out := strings.TrimSpace(stdout.String()); out != "" {
+				got = strings.Split(out, "\n")
+			}
+			for i, line := range got {
+				if sets, ok := strings.CutPrefix(line, "caps: "); ok && noCapabilities(sets) {
+					got[i] = "caps: none"
+				}
+			}
+			if diff := cmp.Diff(tc.wantStdout, got); diff != "" {
+				t.Fatalf("runsc do launcher output wrong result (-want +got) diff = %s\nstderr: %s", diff, stderr.String())
+			}
 		})
 	}
+}
+
+// noCapabilities reports whether sets, the capability sets that the probe
+// prints, list the bounding set and are all empty. Releases of gVisor
+// without ambient capabilities leave out CapAmb.
+func noCapabilities(sets string) bool {
+	bounding := false
+	for _, set := range strings.Fields(sets) {
+		name, v, _ := strings.Cut(set, "=")
+		if strings.Trim(v, "0") != "" {
+			return false
+		}
+		bounding = bounding || name == "CapBnd"
+	}
+	return bounding
 }
 
 // dockerRuntime returns the Docker runtime with a launcher built from this
