@@ -92,7 +92,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
 | `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
-| `--sandbox string` |  | Where the agent runs: docker (default) or local |
+| `--sandbox string` |  | Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
 
 **Network flags**
 
@@ -186,7 +186,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
 | `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
-| `--sandbox string` |  | Where the agent runs: docker (default) or local |
+| `--sandbox string` |  | Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
 
 **Network flags**
 
@@ -352,7 +352,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
 | `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
-| `--sandbox string` |  | Where the agent runs: docker (default) or local |
+| `--sandbox string` |  | Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
 
 **Network flags**
 

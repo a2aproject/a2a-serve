@@ -45,7 +45,8 @@ func TestValidate(t *testing.T) {
 		{name: "acp without a command", modify: func(c *Config) { c.Harness = "acp" }, wantErr: "agent acp needs a command"},
 		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown agent "gemini"`},
 		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
-		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
+		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm": want docker, bwrap or local`},
+		{name: "bwrap sandbox", modify: func(c *Config) { c.Sandbox = SandboxBwrap }},
 		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, a network URL such as https://relay.example.com, or none`},
 		{name: "removed lan", modify: func(c *Config) { c.Network.Private = "lan" }, wantErr: `invalid --private "lan": lan was removed`},
 		{name: "private none in the file", modify: func(c *Config) { c.Network.Private = "none" }, wantErr: `invalid --private "none": remove the key from config.yaml for no network`},
@@ -321,6 +322,7 @@ func TestCheckConfigBroadMounts(t *testing.T) {
 		{name: "home allowed", root: project, cfg: Config{Workspace: home, AllowBroadMounts: []string{home}}},
 		{name: "another path allowed", root: project, cfg: Config{Workspace: "/", AllowBroadMounts: []string{home}}, wantErr: "--allow-broad-mount /"},
 		{name: "local sandbox", root: home, cfg: Config{Sandbox: SandboxLocal}},
+		{name: "bwrap sandbox in home", root: home, cfg: Config{Sandbox: SandboxBwrap}, wantErr: "the workspace " + home + " includes your home directory"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -339,6 +341,30 @@ func TestCheckConfigBroadMounts(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("CheckConfig() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckSandboxOS(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		sandbox string
+		goos    string
+		wantErr string
+	}{
+		{name: "bwrap on linux", sandbox: SandboxBwrap, goos: "linux"},
+		{name: "bwrap on macOS", sandbox: SandboxBwrap, goos: "darwin", wantErr: `invalid --sandbox "bwrap": bubblewrap runs only on Linux; use docker or local`},
+		{name: "docker on macOS", sandbox: SandboxDocker, goos: "darwin"},
+		{name: "default on windows", goos: "windows"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkSandboxOS(tc.sandbox, tc.goos)
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr) {
+				t.Fatalf("checkSandboxOS(%q, %q) error = %v, want %q", tc.sandbox, tc.goos, err, tc.wantErr)
 			}
 		})
 	}

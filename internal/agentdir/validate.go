@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,9 +47,13 @@ var Harnesses = []string{"claude", "opencode"}
 // which no harness may take.
 var ReservedHarnesses = []string{"echo", "proxy", "script"}
 
+// sandboxes are the values of the sandbox setting.
+var sandboxes = []string{SandboxDocker, SandboxBwrap, SandboxLocal}
+
 // Values of the enum settings.
 const (
 	SandboxDocker    = "docker"
+	SandboxBwrap     = "bwrap"
 	SandboxLocal     = "local"
 	NetworkTailscale = "tailscale"
 	NetworkNone      = "none"
@@ -123,8 +128,8 @@ func (c *Config) Validate() error {
 			invalid(flag, v, "want %s, a network URL such as https://relay.example.com, or none", NetworkTailscale)
 		}
 	}
-	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
-		invalid("sandbox", c.Sandbox, "want docker or local")
+	if c.Sandbox != "" && !slices.Contains(sandboxes, c.Sandbox) {
+		invalid("sandbox", c.Sandbox, "want docker, bwrap or local")
 	}
 	if c.Egress.Mode != "" && !slices.Contains(egressrules.Modes, c.Egress.Mode) {
 		invalid("egress", c.Egress.Mode, "want %s", strings.Join(egressrules.Modes, ", "))
@@ -418,10 +423,13 @@ func (d Dir) MachineProblems(cfg *Config, secrets Secrets) error {
 }
 
 // checkMachine is the part of [Dir.CheckConfig] that depends on the
-// machine: the mounts and the stored secrets. badMounts says whether to
-// report mount specs that don't parse.
+// machine: the sandbox, the mounts and the stored secrets. badMounts says
+// whether to report mount specs that don't parse.
 func (d Dir) checkMachine(cfg *Config, secrets Secrets, badMounts bool) error {
 	var errs []error
+	if err := checkSandboxOS(cfg.Sandbox, runtime.GOOS); err != nil {
+		errs = append(errs, err)
+	}
 	mounts, err := d.Mounts(cfg)
 	if err != nil {
 		if badMounts {
@@ -499,6 +507,15 @@ func (c *Config) ContainerEnvErrors(secrets Secrets) []error {
 		}
 	}
 	return errs
+}
+
+// checkSandboxOS refuses a sandbox that the system goos can't run: the
+// bubblewrap sandbox runs only on Linux.
+func checkSandboxOS(sandbox, goos string) error {
+	if sandbox != SandboxBwrap || goos == "linux" {
+		return nil
+	}
+	return &FieldError{Flag: "sandbox", Entry: sandbox, Reason: "bubblewrap runs only on Linux; use docker or local"}
 }
 
 // checkBroadMount refuses a mount of src that exposes the user's home

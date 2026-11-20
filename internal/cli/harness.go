@@ -126,7 +126,7 @@ workspace unless --allow-broad-mount names it.
 	addYesFlag(f, &yes)
 	setSection(f, sectionRun, "dir", "yes")
 	cmd.SetUsageFunc(sectionedUsage)
-	hideImageForLocalSandbox(cmd, func() (agentdir.Dir, error) { return harnessDir(sf.dir) })
+	hideImageWithoutDocker(cmd, func() (agentdir.Dir, error) { return harnessDir(sf.dir) })
 	return cmd
 }
 

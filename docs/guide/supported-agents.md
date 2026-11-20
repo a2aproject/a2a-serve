@@ -14,5 +14,6 @@ The server runs opencode, Claude Code or any other ACP agent, on Linux and macOS
 | --- | --- |
 | Linux (amd64, arm64) with Docker, rootful or rootless | Supported. `--service` installs a systemd user unit. |
 | macOS (Apple silicon, Intel) with Docker Desktop | Supported. `--service` installs a launchd agent. |
-| Linux and macOS without Docker | `--sandbox local` only: the agent runs on the host with no isolation. |
+| Linux without Docker | `--sandbox bwrap` runs the agent installed on this machine with [bubblewrap](sandbox.md#without-docker-on-linux). `--sandbox local` runs it on the host with no isolation. |
+| macOS without Docker | `--sandbox local` only: the agent runs on the host with no isolation. |
 | Windows | Not supported. Releases include no Windows binaries. |

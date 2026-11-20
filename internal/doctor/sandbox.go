@@ -17,6 +17,7 @@ package doctor
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -40,14 +41,17 @@ const (
 // config can't be read.
 func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config, online bool) []Result {
 	var results []Result
-	if cfg != nil && cfg.Sandbox == agentdir.SandboxLocal {
+	switch {
+	case cfg != nil && cfg.Sandbox == agentdir.SandboxLocal:
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
 		if w := agentcfg.DecideEgress(cfg, egressEnv(ctx, env, cfg).Probe).Warning; w != "" {
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
-	} else {
+	case cfg != nil && cfg.Sandbox == agentdir.SandboxBwrap:
+		results = append(results, bwrapChecks(ctx, env, *dir, cfg)...)
+	default:
 		local := useLocalSandbox
 		if dir == nil {
 			local = startLocalSandbox
@@ -137,6 +141,8 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 	return r, true
 }
 
+// checkHarnessCommand checks that this machine has the command of the
+// agent, which the local and the bubblewrap sandboxes run.
 func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
 	profile, err := agentcfg.Profile(cfg)
 	if err != nil {
@@ -148,11 +154,60 @@ func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Resul
 		return Result{
 			ID:      "harness-command",
 			Status:  StatusFail,
-			Message: name + " not on PATH (sandbox local)",
+			Message: fmt.Sprintf("%s not on PATH (sandbox %s)", name, cfg.Sandbox),
 			Fix:     "install " + name + ", or a2a-serve config set --sandbox docker",
 		}, true
 	}
-	return Result{ID: "harness-command", Status: StatusOK, Message: fmt.Sprintf("%s at %s (sandbox local)", name, path)}, true
+	return Result{ID: "harness-command", Status: StatusOK, Message: fmt.Sprintf("%s at %s (sandbox %s)", name, path, cfg.Sandbox)}, true
+}
+
+// bwrapChecks checks that bubblewrap makes sandboxes, that this machine has
+// the agent's command, and that the sandbox's connections go through the
+// server, without which the agent doesn't start.
+func bwrapChecks(ctx context.Context, env Env, dir agentdir.Dir, cfg *agentdir.Config) []Result {
+	if env.ProbeBubblewrap == nil {
+		return nil
+	}
+	results := []Result{{ID: "bwrap", Status: StatusOK, Message: "bubblewrap makes sandboxes"}}
+	caps, err := env.ProbeBubblewrap(ctx)
+	if err != nil {
+		results[0] = bwrapFailure(err)
+		return results
+	}
+	if r, ok := checkHarnessCommand(env, dir, cfg); ok {
+		results = append(results, r)
+	}
+	r := Result{ID: "egress", Status: StatusOK, Message: "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egressrules.ModeInternet) + ")"}
+	d := agentcfg.DecideEgress(cfg, func() sandboxrt.Capabilities { return caps })
+	switch {
+	case cfg.Egress.Mode == egressrules.ModeUnrestricted:
+		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+agentcfg.BwrapUnrestrictedEffect
+		r.Fix = "a2a-serve config unset egress --restart"
+	case d.Problem != "":
+		r.Status, r.Message = StatusFail, d.Warning
+	case d.Warning != "":
+		r.Status, r.Message = StatusWarn, d.Warning
+	}
+	return append(results, r)
+}
+
+// bwrapFailure is the result of bubblewrap that can't make sandboxes.
+func bwrapFailure(err error) Result {
+	r := Result{ID: "bwrap", Status: StatusFail, Message: err.Error(), Fix: "a2a-serve config set --sandbox docker"}
+	e, ok := errors.AsType[*sandboxrt.BubblewrapError](err)
+	if !ok || errors.Is(err, errors.ErrUnsupported) {
+		return r
+	}
+	r.Message = "bwrap " + e.Problem
+	if e.Err != nil {
+		r.Detail = firstLine(e.Err.Error())
+	}
+	sep := ", or "
+	if !strings.Contains(e.Fix, " or ") {
+		sep = " or "
+	}
+	r.Fix = e.Fix + sep + r.Fix
+	return r
 }
 
 func firstLine(s string) string {
@@ -214,7 +269,7 @@ func lookupEnv(env Env, name string) string {
 // imageArch returns the CPU architecture of the agent's image, or "" when
 // docker doesn't have it.
 func imageArch(ctx context.Context, env Env, cfg *agentdir.Config) string {
-	if cfg.Sandbox == agentdir.SandboxLocal {
+	if cfg.Sandbox != "" && cfg.Sandbox != agentdir.SandboxDocker {
 		return ""
 	}
 	profile, err := agentcfg.Profile(cfg)

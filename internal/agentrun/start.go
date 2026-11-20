@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/boundary"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 )
 
@@ -57,6 +58,7 @@ func (r *Runner) startMain(ctx context.Context) (exec a2asrv.AgentExecutor, clos
 		return nil, nil, err
 	}
 	r.pruneEnvFiles()
+	r.pruneBwrapFiles()
 	h, err := r.prepare(ctx, r.rt.imageProgress(r.cfg.Stderr), r.cfg.Stderr, "", r.cfg.Main)
 	if err != nil {
 		return nil, nil, err
@@ -113,6 +115,28 @@ func (r *Runner) envFilesDir() string {
 		return filepath.Join(r.rt.info.StateDir, "env")
 	}
 	return filepath.Join(r.stateDir, "run", "env")
+}
+
+// bwrapDir holds the files of bubblewrap sandboxes: in the state directory
+// of the bubblewrap runtime, if it has one.
+func (r *Runner) bwrapDir() string {
+	if r.rt.info.StateDir != "" {
+		return filepath.Join(r.rt.info.StateDir, "bwrap")
+	}
+	return filepath.Join(r.stateDir, "run", "bwrap")
+}
+
+// pruneBwrapFiles removes the files of bubblewrap sandboxes that an earlier
+// run left behind, such as after a crash, before any sandbox starts. The
+// state directory of a runtime may be shared with other runners, so only
+// the runner's own directory is pruned.
+func (r *Runner) pruneBwrapFiles() {
+	if r.rt.kind != agentprofile.SandboxBwrap || r.rt.info.StateDir != "" {
+		return
+	}
+	if err := fsutil.RemoveAll(r.bwrapDir()); err != nil {
+		r.log().Warn("removing the files of bubblewrap sandboxes left by an earlier run", "error", err)
+	}
 }
 
 // egressDir holds the sockets of the egress boundaries of containers: in
@@ -297,7 +321,7 @@ func (r *Runner) prepare(ctx context.Context, imageProgress, stderr io.Writer, k
 	if err := agentprofile.PrepareHome(agentprofile.Spec{Sandbox: r.rt.kind, Mounts: r.homeMounts(env), Hidden: env.Hide, Home: env.Home, Pins: spec.Pins}); err != nil {
 		return nil, err
 	}
-	if r.rt.kind == agentprofile.SandboxDocker {
+	if r.rt.isolated() {
 		spec.LockHome = proc.LockHome
 		if spec.PolicyDir, err = r.policies.write(r.cfg.Profile, r.askCommands(), spec.LockHome, r.mcpServerNames()); err != nil {
 			return nil, err

@@ -114,7 +114,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
 | `--memory string` |  | Container memory limit of at least 6m, such as 4g or 512m (default 4g) |
 | `--pids int` |  | Container process limit (default 512) |
-| `--sandbox string` |  | Where the agent runs: docker (default) or local |
+| `--sandbox string` |  | Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
 
 **Network flags**
 

@@ -35,6 +35,8 @@ func init() {
 			return sandboxrt.RuntimeInfo{Local: true}, true
 		case *docker:
 			return sandboxrt.RuntimeInfo{Launcher: rt.opts.Launcher, Progress: rt.opts.Progress, StateDir: rt.opts.StateDir, ServedAppArmor: rt.opts.ServedAppArmor, Runtime: rt.opts.Runtime}, true
+		case *bubblewrap:
+			return sandboxrt.RuntimeInfo{Bubblewrap: true, Launcher: rt.opts.Launcher, StateDir: rt.opts.StateDir, Programs: rt.opts.Programs, HostNetwork: rt.opts.HostNetwork}, true
 		}
 		return sandboxrt.RuntimeInfo{}, false
 	})

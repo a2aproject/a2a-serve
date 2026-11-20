@@ -36,6 +36,7 @@ import (
 // Sandboxes a harness can run in.
 const (
 	SandboxDocker = "docker"
+	SandboxBwrap  = "bwrap"
 	SandboxLocal  = "local"
 )
 
@@ -57,8 +58,8 @@ const CLITimeout = 5 * time.Minute
 // Spec describes a harness to run for an agent.
 type Spec struct {
 	Profile Profile
-	// Sandbox is SandboxDocker (the default) or SandboxLocal, and Backend
-	// the backend that runs it.
+	// Sandbox is SandboxDocker (the default), SandboxBwrap or SandboxLocal,
+	// and Backend the backend that runs it.
 	Sandbox string
 	Backend sandboxrt.Backend
 	// Base is the sandbox that Prepare completes: its name, image, limits,
@@ -112,7 +113,8 @@ type Spec struct {
 	// Empty when the harness doesn't reach the server.
 	Server sandboxrt.Socket
 	// CLI is the host path of the a2a binary put first on the PATH of a
-	// local harness. A harness in Docker uses the a2a of its image.
+	// local harness. A harness in Docker uses the a2a of its image, and one
+	// in bubblewrap the a2a that its backend finds on this machine.
 	CLI string
 	// EgressMode is the egress setting. Unless it is unrestricted, a
 	// container gets no network but the boundary OpenEgress opens, where
@@ -172,8 +174,8 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if ws := spec.Mounts[0]; ws.Dst != ws.Src {
 		return nil, &WorkspacePathError{Src: ws.Src, Dst: ws.Dst}
 	}
-	if spec.Sandbox != "" && spec.Sandbox != SandboxDocker && spec.Sandbox != SandboxLocal {
-		return nil, fmt.Errorf("unknown sandbox %q: want docker or local", spec.Sandbox)
+	if spec.Sandbox != "" && spec.Sandbox != SandboxDocker && spec.Sandbox != SandboxBwrap && spec.Sandbox != SandboxLocal {
+		return nil, fmt.Errorf("unknown sandbox %q: want docker, bwrap or local", spec.Sandbox)
 	}
 	if err := PrepareHome(spec); err != nil {
 		return nil, err
@@ -196,20 +198,37 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err := spec.Profile.Bootstrap(ws); err != nil {
 		return nil, fmt.Errorf("bootstrapping %s: %w", spec.Profile.Name(), err)
 	}
-	if _, local := spec.Backend.(sandboxrt.Local); spec.Backend == nil || local != (spec.Sandbox == SandboxLocal) {
+	if !backendRuns(spec.Backend, cmp.Or(spec.Sandbox, SandboxDocker)) {
 		return nil, fmt.Errorf("no backend for the %s sandbox", cmp.Or(spec.Sandbox, SandboxDocker))
 	}
 	var p *Prepared
 	if spec.Sandbox == SandboxLocal {
 		p, err = prepareLocal(ctx, spec, ws)
 	} else {
-		p, err = prepareDocker(ctx, spec, ws)
+		p, err = prepareSandbox(ctx, spec, ws)
 	}
 	if err != nil {
 		return nil, err
 	}
 	p.Warnings = append(warnings, p.Warnings...)
 	return p, nil
+}
+
+// backendRuns reports whether b can be the backend of the sandbox kind:
+// the local backend runs only the local sandbox, and the Docker and
+// bubblewrap backends only their own.
+func backendRuns(b sandboxrt.Backend, kind string) bool {
+	switch b.(type) {
+	case nil:
+		return false
+	case sandboxrt.Local:
+		return kind == SandboxLocal
+	case *sandboxrt.Docker:
+		return kind == SandboxDocker
+	case *sandboxrt.Bubblewrap:
+		return kind == SandboxBwrap
+	}
+	return kind != SandboxLocal
 }
 
 // maxNestedScan bounds the directories that a search of the mounts for
@@ -269,14 +288,20 @@ func agentRoots(a2a []string) []string {
 	return roots
 }
 
-func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
+// prepareSandbox prepares the harness of spec in a container, or in
+// bubblewrap, which runs the harness of this machine and has no image.
+// Both mount Home as the harness home, and hide and mask the same paths.
+func prepareSandbox(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
 	// A local harness has the user's home, where a2a-serve doesn't write.
 	if err := LinkSkills(spec.Profile, ws); err != nil {
 		return nil, fmt.Errorf("linking project skills: %w", err)
 	}
 	sb := spec.Base
 	var err error
-	if sb.Image, sb.Build, err = imageOf(spec.Base.Image, spec.Profile); err != nil {
+	bwrap := spec.Sandbox == SandboxBwrap
+	if bwrap {
+		sb.Image = ""
+	} else if sb.Image, sb.Build, err = imageOf(spec.Base.Image, spec.Profile); err != nil {
 		return nil, err
 	}
 	sb.Command = profileCommand(spec, ws)
@@ -338,8 +363,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		return nil, &sandboxrt.ServedMountError{Dst: spec.Served[0].Dst, Reason: "a live workspace needs the egress boundary, whose launcher mounts it, and the egress mode is " + egressrules.ModeUnrestricted}
 	}
 	// A container with a live workspace has no fallback without the
-	// boundary, which it needs.
-	strict := eg.Strict() || served
+	// boundary, which it needs. Bubblewrap has none either: its fallback
+	// would be the host's network, with the host's loopback services.
+	strict := eg.Strict() || served || bwrap
 	warnings := slices.Clone(cm.warnings)
 	// The agent's container gets Docker's own network when the boundary
 	// can't work on this host, unless the config needs the boundary. Such a
@@ -360,12 +386,15 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			err := &EgressError{Egress: Egress{Sandbox: spec.Sandbox, Inject: spec.Inject}, Reason: "the agent's container has no egress boundary"}
 			return nil, errors.Join(err, open.Close(ctx))
 		}
+		if bwrap && spec.EgressMode == egressrules.ModeUnrestricted {
+			what += "; egress unrestricted, with this machine's network"
+		}
 		return &Prepared{Sandbox: open, Summary: what, Warnings: warnings}, nil
 	}
 	sb.Network = sandboxrt.Network{Boundary: spec.OpenEgress, CA: spec.EgressCA, Recheck: !strict}
 	p, err := spec.Backend.Prepare(ctx, sb)
 	if errors.Is(err, sandboxrt.ErrNoBoundary) {
-		reason := noBoundaryReason(err)
+		reason := noBoundaryReason(err, bwrap)
 		if served {
 			return nil, &sandboxrt.ServedMountError{Dst: spec.Served[0].Dst, Reason: "a live workspace needs the egress boundary, whose launcher mounts it: " + reason}
 		}
@@ -406,9 +435,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 }
 
 // noBoundaryReason says why the boundary of err, which wraps
-// [sandboxrt.ErrNoBoundary], can't work.
-func noBoundaryReason(err error) string {
-	if _, ok := errors.AsType[*sandboxrt.EgressSetupError](err); ok {
+// [sandboxrt.ErrNoBoundary], can't work. The errors of bubblewrap name it.
+func noBoundaryReason(err error, bwrap bool) string {
+	if _, ok := errors.AsType[*sandboxrt.EgressSetupError](err); ok && !bwrap {
 		return "the agent's container can't set up its network: " + err.Error()
 	}
 	return err.Error()

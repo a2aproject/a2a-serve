@@ -20,15 +20,20 @@ import "io"
 // public core/sandbox package to run its backend directly, with the
 // features that the public Spec leaves out.
 type RuntimeInfo struct {
-	// Local is set for the runtime of the host, and unset for Docker.
-	Local bool
-	// Launcher is the launcher that Docker containers with an egress
-	// boundary run, or "" for a copy of this binary.
+	// Local is set for the runtime of the host, and Bubblewrap for the
+	// one of bubblewrap. Both are unset for Docker.
+	Local, Bubblewrap bool
+	// Launcher is the launcher that sandboxes with an egress boundary run,
+	// or "" for a copy of this binary.
 	Launcher string
+	// Programs and HostNetwork are the BubblewrapConfig of bubblewrap.
+	Programs    []string
+	HostNetwork bool
 	// Progress receives the output of pulling an image, or nil.
 	Progress io.Writer
-	// StateDir keeps the env files of the containers in env, and the
-	// sockets of their egress boundaries in egress, or is "".
+	// StateDir keeps the env files of the containers in env, the files of
+	// bubblewrap sandboxes in bwrap, and the sockets of their egress
+	// boundaries in egress, or is "".
 	StateDir string
 	// ServedAppArmor is the AppArmor profile of Docker containers with
 	// live workspaces, or "" for Docker's default.

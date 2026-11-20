@@ -626,7 +626,7 @@ func (r *Runner) Bridge() Bridge { return Bridge{Socket: r.main.socket, URL: r.l
 // after the tool rules changed. Agents that reload their policy apply them
 // in open sessions too.
 func (r *Runner) WritePolicies() error {
-	if r.rt.kind != agentprofile.SandboxDocker {
+	if !r.rt.isolated() {
 		return nil
 	}
 	for _, lockHome := range []bool{false, true} {

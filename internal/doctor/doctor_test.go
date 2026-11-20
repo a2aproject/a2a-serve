@@ -41,6 +41,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/netinstall"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
@@ -62,6 +63,10 @@ type fakeMachine struct {
 	launcher, tun error
 	// route is why this host has no route to the internet.
 	route error
+	// bwrap is what the probe of bubblewrap finds, and bwrapErr why
+	// bubblewrap can't make sandboxes.
+	bwrap    sandboxrt.Capabilities
+	bwrapErr error
 	// writable is the directories that the user can write to.
 	writable map[string]bool
 }
@@ -117,6 +122,9 @@ func (m *fakeMachine) Env() Env {
 		DirWritable:        func(dir string) bool { return m.writable[dir] },
 		CheckTUN:           func() error { return m.tun },
 		CheckInternetRoute: func() error { return m.route },
+		ProbeBubblewrap: func(context.Context) (sandboxrt.Capabilities, error) {
+			return m.bwrap, m.bwrapErr
+		},
 		CheckLauncher: func(exe string) (string, error) {
 			if m.launcher != nil {
 				return "", m.launcher
@@ -782,6 +790,22 @@ func TestAgentChecks(t *testing.T) {
 				m.outputs["docker image inspect --format {{.Id}} "+agentprofile.LocalImage("opencode")] = "sha256:1"
 			},
 			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "bwrap sandbox",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxBwrap},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"bwrap", StatusOK}, {"harness-command", StatusOK}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "bwrap sandbox without user namespaces",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxBwrap},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "can't make a sandbox on this machine", Fix: "allow unprivileged user namespaces"}
+			},
+			want: []check{{"bwrap", StatusFail}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name: "local sandbox without the harness command",

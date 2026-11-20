@@ -435,8 +435,8 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Sandbox }, func(s *Settings) *string { return &s.Sandbox }),
 		flag:   "sandbox", path: "sandbox", scope: scopeAgent, section: SectionSandbox,
-		usage:  "Where the agent runs: docker (default) or local",
-		values: []string{SandboxDocker, SandboxLocal},
+		usage:  "Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation",
+		values: sandboxes,
 		def:    SandboxDocker,
 	},
 	{

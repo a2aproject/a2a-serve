@@ -29,7 +29,7 @@ import (
 // core/sandbox, which it gives the features the public Spec leaves out, or
 // any other runtime through the public interface.
 type sandboxRuntime struct {
-	// kind is agentprofile.SandboxDocker or agentprofile.SandboxLocal, or
+	// kind is agentprofile.SandboxDocker, SandboxBwrap or SandboxLocal, or
 	// "" for a custom runtime.
 	kind    string
 	info    sandboxrt.RuntimeInfo
@@ -47,21 +47,33 @@ func runtimeOf(rt sandbox.Runtime) (sandboxRuntime, error) {
 		return sandboxRuntime{custom: rt}, nil
 	case info.Local:
 		return sandboxRuntime{kind: agentprofile.SandboxLocal, info: info, backend: sandboxrt.Local{}}, nil
+	case info.Bubblewrap:
+		return sandboxRuntime{kind: agentprofile.SandboxBwrap, info: info}, nil
 	}
 	return sandboxRuntime{kind: agentprofile.SandboxDocker, info: info}, nil
 }
 
 // init sets up the Docker backend, whose env files are in the env files
+// directory of r, or the bubblewrap backend, whose files are in its
 // directory of r.
 func (rt *sandboxRuntime) init(r *Runner) {
-	if rt.kind != agentprofile.SandboxDocker {
-		return
-	}
 	launcher := r.boundaries.Launcher
 	if rt.info.Launcher != "" {
 		launcher = func() string { return rt.info.Launcher }
 	}
-	rt.backend = sandboxrt.NewDocker(sandboxrt.DockerConfig{EnvDir: r.envFilesDir(), Launcher: launcher, ServedAppArmor: rt.info.ServedAppArmor, Runtime: rt.info.Runtime})
+	switch rt.kind {
+	case agentprofile.SandboxDocker:
+		rt.backend = sandboxrt.NewDocker(sandboxrt.DockerConfig{EnvDir: r.envFilesDir(), Launcher: launcher, ServedAppArmor: rt.info.ServedAppArmor, Runtime: rt.info.Runtime})
+	case agentprofile.SandboxBwrap:
+		rt.backend = sandboxrt.NewBubblewrap(sandboxrt.BubblewrapConfig{Dir: r.bwrapDir(), Launcher: launcher, Programs: rt.info.Programs, HostNetwork: rt.info.HostNetwork})
+	}
+}
+
+// isolated reports whether the runtime gives the agent a filesystem of its
+// own, which shows the masks, the policy and the home of the agent: Docker
+// and bubblewrap.
+func (rt sandboxRuntime) isolated() bool {
+	return rt.kind == agentprofile.SandboxDocker || rt.kind == agentprofile.SandboxBwrap
 }
 
 // imageProgress returns where the main process reports fetching its image.

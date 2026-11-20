@@ -25,7 +25,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
@@ -58,7 +57,7 @@ func (r *Runner) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	// The agent reads its policy when the session starts, so the policy
 	// follows the rules and gets the MCP servers added since the agent
 	// process started.
-	if r.rt.kind == agentprofile.SandboxDocker {
+	if r.rt.isolated() {
 		if _, err := r.policies.write(r.cfg.Profile, r.askCommands(), key != "", names); err != nil {
 			return a2aacp.SessionParams{}, err
 		}

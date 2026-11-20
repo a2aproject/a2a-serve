@@ -21,7 +21,8 @@
 //	go test -tags e2e ./e2e/...
 //
 // Set E2E_A2A_CLI to the path of an a2a binary to skip installing the CLI,
-// and E2E_SANDBOX=docker to run the agents in Docker. E2E_HARNESS=opencode
+// and E2E_SANDBOX=docker to run the agents in Docker, or E2E_SANDBOX=bwrap
+// to run them with bubblewrap. E2E_HARNESS=opencode
 // runs the harness tests, which drive the real opencode image against a
 // scripted model.
 package e2e

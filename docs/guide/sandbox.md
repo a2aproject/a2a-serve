@@ -15,7 +15,20 @@ The image comes from `ghcr.io/a2aproject`. `--image` uses another one.
 
 `--sandbox local` runs the agent on the host, as you, with no isolation. Use it only when you trust the agent and everyone who can call it.
 
-A bubblewrap sandbox, which runs the agent installed on this machine without Docker, is planned for a2a-serve. [a2a-serve-sidecar](../reference/a2a-serve-sidecar.md#sandbox) has it as `--sandbox bwrap`.
+## Without Docker on Linux
+
+`--sandbox bwrap` runs the agent and the `a2a` CLI installed on this machine with [bubblewrap](https://github.com/containers/bubblewrap). It sees the same workspace, mounts, masks and home as a container, and its connections go through the server:
+
+```console
+$ a2a-serve config set --sandbox bwrap --restart
+$ a2a-serve doctor
+Sandbox
+  ✓ bubblewrap makes sandboxes
+  ✓ opencode at /usr/local/bin/opencode (sandbox bwrap)
+  ✓ the sandbox connects only through the server (--egress internet)
+```
+
+It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `doctor` says how to fix a missing one. An agent that needs other files of your home directory, such as one that npm installed under a version manager, doesn't start. Bubblewrap applies no memory, CPU or process limits.
 
 ## What each caller's container gets
 
@@ -129,6 +142,6 @@ The sandbox has TCP only, apart from DNS. For tools that need UDP, `--egress unr
 
 ### Where it applies
 
-Network rules work with Docker, rootless Docker and Docker Desktop. Where the server can't route the sandbox's connections, such as with some Podman setups, the sandbox keeps Docker's own network, and `start`, `status` and `doctor` say why. `--egress allowlist` then doesn't start the agent. `--sandbox local` has no network rules.
+Network rules work with Docker, rootless Docker, Docker Desktop and bubblewrap. Where the server can't route the sandbox's connections, such as with some Podman setups, the sandbox keeps Docker's own network, and `start`, `status` and `doctor` say why. `--egress allowlist` then doesn't start the agent, and neither does `--sandbox bwrap`. With `--egress unrestricted`, the bubblewrap sandbox has this machine's network, with its services on loopback. `--sandbox local` has no network rules.
 
 [Security](../advanced/security.md#the-sandbox) lists what the sandbox doesn't protect yet.

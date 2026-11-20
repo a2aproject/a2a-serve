@@ -66,6 +66,7 @@ func typedErrors(err error) []error {
 	add(asType[*agentprofile.AppearedError](err))
 	add(asType[*agentprofile.EgressError](err))
 	add(asType[*sandboxrt.DockerError](err))
+	add(asType[*sandboxrt.BubblewrapError](err))
 	add(asType[*MissingSecretError](err))
 	add(asType[*CopyError](err))
 	add(asType[*InjectRuleError](err))
@@ -84,8 +85,12 @@ func asType[T error](err error) (error, bool) {
 // changed since the agent started.
 const restartHint = "; restart this agent with `a2a-serve restart`"
 
-// localOrDoctor follows the problems of docker.
-const localOrDoctor = "run a2a-serve config set --sandbox local, or run a2a-serve doctor"
+// localOrDoctor follows the problems of docker, and dockerOrDoctor those
+// of bubblewrap.
+const (
+	localOrDoctor  = "run a2a-serve config set --sandbox local, or run a2a-serve doctor"
+	dockerOrDoctor = "run a2a-serve config set --sandbox docker, or run a2a-serve doctor"
+)
 
 // MissingSecretHint says how to store the secret name that the agent gets
 // but that has no value.
@@ -128,6 +133,16 @@ func Warning(err error) string {
 			texts[i] = Warning(w)
 		}
 		return strings.Join(texts, "; ")
+	case *sandboxrt.BubblewrapError:
+		sep := " or "
+		if strings.Contains(e.Fix, " or ") {
+			sep = ", or "
+		}
+		s := "bwrap " + e.Problem + "; " + e.Fix + sep + dockerOrDoctor
+		if e.Err != nil {
+			s += ": " + e.Err.Error()
+		}
+		return s
 	case *sandboxrt.DockerError:
 		sep := " or "
 		if strings.Contains(e.Fix, " or ") {

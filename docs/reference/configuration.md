@@ -9,7 +9,7 @@ name: coder
 description: Writes and reviews the Go services of this repository.
 agent: opencode
 command: [opencode, acp, --print-logs] # optional: replaces the profile's command
-sandbox: docker                  # or local
+sandbox: docker                  # or bwrap, or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace
 model: openrouter/~google/gemini-flash-latest  # optional: the agent's own model id

@@ -1,6 +1,6 @@
 # Runs the end-to-end tests of the core user journeys in ./e2e: a2a-serve,
 # the pinned a2a CLI and the scripted fakeacp agent as separate processes,
-# with the agents on the host and in Docker.
+# with the agents on the host, in Docker and in bubblewrap.
 name: E2E
 
 on:
@@ -43,6 +43,28 @@ jobs:
     - name: E2E
       env:
         E2E_SANDBOX: docker
+      run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
+
+  # Runs the tests marked with dependsOnSandbox with bubblewrap.
+  e2e-bwrap:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    # Ubuntu restricts unprivileged user namespaces with AppArmor, which
+    # also strips the capabilities that the launcher takes in them.
+    - name: Install bubblewrap
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends bubblewrap
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    - name: E2E
+      env:
+        E2E_SANDBOX: bwrap
       run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
 
   # Runs the example READMEs as demo scenarios with fakeacp, so that a change
