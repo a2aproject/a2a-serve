@@ -162,6 +162,48 @@ func TestChangesGoOutBeforeTheFinalEventOfTheirTask(t *testing.T) {
 	}
 }
 
+func TestChangesLeaveOutTheGitDirectory(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		changes   []string
+		wantFiles []string
+	}{
+		{name: "only git internals", changes: []string{".git/opencode", ".git/objects/ab/cdef"}},
+		{name: "git internals and a file", changes: []string{".git/opencode", "main.go", "sub/.git/HEAD"}, wantFiles: []string{"main.go"}},
+		{name: "a file named like the git directory", changes: []string{".gitignore"}, wantFiles: []string{".gitignore"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.Memory()
+			store := newMemory(defaultMemoryLimits, time.Now)
+			c := newChangesets(tree, defaultChangesLimits, store, slog.New(slog.DiscardHandler))
+			var changes []fsys.Info
+			for _, p := range tc.changes {
+				changes = append(changes, write(t, tree, p, "x", 0o644))
+			}
+			ctx := context.WithValue(context.Background(), taskKey{}, a2a.TaskID("task-1"))
+
+			c.synced(ctx, "ctx", changes)
+
+			art := store.takeArtifact("task-1")
+			var got []string
+			if art != nil {
+				for _, p := range art.Parts[1:] {
+					got = append(got, p.Filename)
+				}
+			}
+			if diff := cmp.Diff(tc.wantFiles, got); diff != "" {
+				t.Fatalf("changesets.synced() artifact files wrong result (-want +got) diff = %s", diff)
+			}
+			if len(tc.wantFiles) == 0 && art != nil {
+				t.Fatalf("changesets.synced() artifact = %v, want none", art.Name)
+			}
+		})
+	}
+}
+
 func TestChangesWithoutATurnAreLogged(t *testing.T) {
 	t.Parallel()
 	tree := fsys.Memory()

@@ -174,7 +174,7 @@ After a turn with `turn` sync that changed files, the task gets an artifact name
   `removed` lists the paths the agent removed, and is always there. The other fields appear only when they have entries. `omitted` lists the changed files whose content the artifact leaves out, with the reason: `file-too-large`, `total-too-large`, `changed-since-sync` when the workspace changed the file again after the sync, or `unreadable` when the file was gone or unreadable after the sync. `unlisted` counts the changes past the number of paths the artifact lists.
 - Each further part is a file part with the content of a file that the agent created or changed. Its `filename` is the path in the workspace, and its metadata `mode` has the permission bits, such as `0755`.
 
-Paths are relative to the workspace root and use `/`. New empty directories aren't listed. A turn that changed nothing gets no artifact. See [limits](limits.md#a2a-run) for the sizes.
+Paths are relative to the workspace root and use `/`. New empty directories and the contents of `.git` directories aren't listed, though they sync. A turn that changed nothing else gets no artifact. See [limits](limits.md#a2a-run) for the sizes.
 
 A completed or failed task sends the artifact before its final status, so a stream shows it. A task whose final status comes before the sync, such as a canceled one, or one that failed for a question with no answer or because `a2a-run` stopped, gets the artifact added afterwards. Read it with `GetTask`.
 
