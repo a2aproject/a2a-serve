@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -142,7 +143,7 @@ func TestPrepareBwrapSandbox(t *testing.T) {
 	if diff := cmp.Diff(wantMounts, mounts); diff != "" {
 		t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
 	}
-	if !containsMount(got.Mounts, sandboxrt.Mount{Src: filepath.Join(home, ".claude", "settings.json"), Dst: filepath.Join(ContainerHome, ".claude", "settings.json"), ReadOnly: true}) {
+	if !slices.Contains(got.Mounts, sandboxrt.Mount{Src: filepath.Join(home, ".claude", "settings.json"), Dst: filepath.Join(ContainerHome, ".claude", "settings.json"), ReadOnly: true}) {
 		t.Fatalf("Prepare() mounts = %+v, want the home's settings read-only", got.Mounts)
 	}
 	wantMasks := []sandboxrt.Mask{
@@ -158,15 +159,6 @@ func TestPrepareBwrapSandbox(t *testing.T) {
 	if !p.Egress || !strings.Contains(p.Summary, "egress internet through the server") {
 		t.Fatalf("Prepare() = egress %v, summary %q, want the egress through the server", p.Egress, p.Summary)
 	}
-}
-
-func containsMount(mounts []sandboxrt.Mount, want sandboxrt.Mount) bool {
-	for _, m := range mounts {
-		if m == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestPrepareBwrapEgress(t *testing.T) {

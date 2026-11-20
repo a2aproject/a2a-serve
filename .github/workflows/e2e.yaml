@@ -54,13 +54,18 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
 
-    # Ubuntu restricts unprivileged user namespaces with AppArmor, which
-    # also strips the capabilities that the launcher takes in them.
+    # Ubuntu restricts unprivileged user namespaces with AppArmor, and its
+    # profile for bwrap strips the capabilities that the launcher takes in
+    # them.
     - name: Install bubblewrap
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends bubblewrap
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        for p in /etc/apparmor.d/*bwrap*; do
+          if [ -f "$p" ]; then sudo apparmor_parser -R "$p"; fi
+        done
+        sudo aa-status | grep -i bwrap || echo "no bwrap profile loaded"
 
     - name: E2E
       env:
