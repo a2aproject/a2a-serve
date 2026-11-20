@@ -36,7 +36,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/a2aproject/a2a-serve/core/egress"
+	"github.com/a2aproject/a2a-serve/internal/boundary"
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
@@ -100,6 +103,51 @@ type Config struct {
 	// workspace protocol, such as fsys.Handler of a tree, in place of
 	// Tools; nil leaves them to Tools.
 	Workspace http.Handler
+	// ModelKeys are the API keys of model providers by provider name, as
+	// [ParseModelKey] returns them. The forwarded requests to a provider's
+	// host lose the agent's placeholder key, and its inference endpoints
+	// get the real key, as with a2a-run --inject-model-key. New ignores
+	// unknown providers.
+	ModelKeys map[string]string
+}
+
+// ParseModelKey parses a provider=NAME argument and reads the key from
+// the variable NAME with getenv. Its errors leave out the key.
+func ParseModelKey(arg string, getenv func(string) string) (provider, key string, _ error) {
+	provider, name, ok := strings.Cut(arg, "=")
+	if !ok || provider == "" || name == "" {
+		return "", "", fmt.Errorf("invalid model key %q: want provider=NAME, such as gemini=GEMINI_API_KEY", arg)
+	}
+	p, ok := egressrules.LookupProvider(provider)
+	if !ok {
+		return "", "", egressrules.UnknownProvider(provider)
+	}
+	key = getenv(name)
+	if key == "" {
+		return "", "", fmt.Errorf("model key %s: the variable %s is unset or empty", provider, name)
+	}
+	if _, scheme := p.Credential(p.KeyEnv); !httpguts.ValidHeaderFieldValue(scheme + key) {
+		return "", "", fmt.Errorf("model key %s: the variable %s has a character that a header can't carry", provider, name)
+	}
+	return provider, key, nil
+}
+
+// modelKeys returns the injections of keys by the hosts of their
+// providers.
+func modelKeys(keys map[string]string) map[string]boundary.Injection {
+	out := map[string]boundary.Injection{}
+	for name, key := range keys {
+		p, ok := egressrules.LookupProvider(name)
+		if !ok {
+			continue
+		}
+		header, scheme := p.Credential(p.KeyEnv)
+		out[p.Host] = boundary.Injection{
+			Host: p.Host, Port: egressrules.HTTPSPort, Header: header, Value: scheme + key,
+			Model: true, QueryKey: p.QueryKey, Endpoints: p.Endpoints, Secrets: []string{p.KeyEnv},
+		}
+	}
+	return out
 }
 
 // workspacePaths are the paths of the requests of the workspace protocol.
@@ -128,6 +176,7 @@ func New(cfg Config) *Host {
 		cfg.Dial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
 	}
 	h := &Host{cfg: cfg}
+	keys := modelKeys(cfg.ModelKeys)
 	if cfg.Upstream == nil {
 		cfg.Upstream = &http.Transport{DialContext: h.dial, ForceAttemptHTTP2: true, DisableCompression: true}
 	}
@@ -137,6 +186,10 @@ func New(cfg Config) *Host {
 				if strings.HasPrefix(name, "A2a-Run-") {
 					pr.Out.Header.Del(name)
 				}
+			}
+			u := pr.Out.URL
+			if inj, ok := keys[u.Hostname()]; ok && u.Scheme == "https" && (u.Port() == "" || u.Port() == "443") {
+				inj.Apply(pr.Out)
 			}
 		},
 		Transport:     cfg.Upstream,

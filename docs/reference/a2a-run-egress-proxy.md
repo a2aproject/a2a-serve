@@ -64,6 +64,18 @@ The agent trusts a CA that `a2a-run` makes at start and keeps in memory. It can 
 
 The agent gets placeholder API keys in `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, so that it starts without real ones. Each placeholder starts with the provider's usual key prefix and ends with `a2a-serve-placeholder`, such as `sk-ant-api03-a2a-serve-placeholder`. The proxy replaces the placeholder in intercepted requests with the real key before it forwards them. A variable that `--env` or `--secret` sets keeps its value.
 
+## Trying it
+
+The reference host in [`internal/a2arun/refhost`](https://github.com/a2aproject/a2a-serve/tree/main/internal/a2arun/refhost) serves an egress proxy that intercepts every connection and forwards its requests. `--model-key` gives it the real key of a provider from a variable of your environment:
+
+```console
+$ go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock \
+    --model-key gemini=GEMINI_API_KEY
+unix:///tmp/host.sock
+```
+
+Pass `unix:///tmp/host.sock` to `--egress-proxy`. The proxy puts the key in place of the agent's placeholder in its requests to the provider's model endpoints.
+
 ## Conformance
 
 The conformance suite checks a proxy in any language. From a checkout of a2a-serve, name a host that your proxy intercepts and one that it refuses:
