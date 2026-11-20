@@ -81,8 +81,8 @@ Pass `unix:///tmp/host.sock` to `--egress-proxy`. The proxy puts the key in plac
 The conformance suite checks a proxy in any language. From a checkout of a2a-serve, name a host that your proxy intercepts and one that it refuses:
 
 ```console
-$ go test ./internal/sidecar/conformance -egress-proxy unix:///run/host/egress.sock \
+$ go test ./sidecar/conformance -egress-proxy unix:///run/host/egress.sock \
     -intercept api.anthropic.com:443 -refuse blocked.example:443
 ```
 
-The suite also checks that the proxy refuses this host's loopback. Add `-allow-loopback` for a proxy that means to reach it, and `-forward` as well when it forwards plain HTTP requests to `127.0.0.1`, where the suite serves an upstream that streams events. Without `-egress-proxy`, the suite tests the reference host in `internal/sidecar/refhost`.
+The suite also checks that the proxy refuses this host's loopback. Add `-allow-loopback` for a proxy that means to reach it, and `-forward` as well when it forwards plain HTTP requests to `127.0.0.1`, where the suite serves an upstream that streams events. Without `-egress-proxy`, the suite tests the reference host in `internal/sidecar/refhost`. A host written in Go can call `conformance.Run` of [`github.com/a2aproject/a2a-serve/sidecar/conformance`](https://github.com/a2aproject/a2a-serve/tree/main/sidecar/conformance) from its own tests.

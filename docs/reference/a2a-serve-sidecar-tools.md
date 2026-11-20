@@ -105,7 +105,7 @@ The hook sees the calls that the agent asks permission for. `a2a-serve-sidecar` 
 The conformance suite checks a tools endpoint in any language: `initialize`, `tools/list`, an unknown method, the hooks it advertises, and that it refuses them from the sandbox.
 
 ```console
-$ go test ./internal/sidecar/conformance -tools unix:///run/host/tools.sock
+$ go test ./sidecar/conformance -tools unix:///run/host/tools.sock
 ```
 
 The reference host in [`internal/sidecar/refhost`](https://github.com/a2aproject/a2a-serve/tree/main/internal/sidecar/refhost) serves one tool, `echo`, and the hooks. It also serves an egress proxy on the same socket. Run it to try `--tools` by hand:

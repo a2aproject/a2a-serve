@@ -90,7 +90,7 @@ Other failures get `500`.
 The conformance suite of `a2a-serve-sidecar` checks a server from a checkout of this repository:
 
 ```sh
-go test ./internal/sidecar/conformance -workspace unix:///path/to/socket
+go test ./sidecar/conformance -workspace unix:///path/to/socket
 ```
 
 It works in a directory of its own in the tree, `a2a-serve-sidecar-conformance-` and a random suffix, and removes it at the end. The reference host serves a tree in memory on the same socket as its egress proxy and tools endpoint:
