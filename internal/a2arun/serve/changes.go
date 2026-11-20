@@ -25,6 +25,8 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"slices"
+	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -94,7 +96,20 @@ func (c *changesets) synced(ctx context.Context, key string, changes []fsys.Info
 		c.log.Info("wrote back changes that the agent made after its last turn", "context", key, "changes", len(changes), "paths", paths)
 		return
 	}
+	// Git's internals, such as the project ID that opencode keeps in
+	// .git/opencode, still sync, but a host diffing changesets wants the
+	// working tree.
+	changes = slices.DeleteFunc(slices.Clone(changes), func(ch fsys.Info) bool { return inGitDir(ch.Path) })
+	if len(changes) == 0 {
+		return
+	}
 	c.store.attachArtifact(id, c.artifact(ctx, changes))
+}
+
+// inGitDir reports whether the slash-separated path p is in a .git
+// directory.
+func inGitDir(p string) bool {
+	return slices.Contains(strings.Split(path.Dir(p), "/"), ".git") || path.Base(p) == ".git"
 }
 
 // artifact returns the artifact of changes: a data part that lists what
