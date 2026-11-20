@@ -35,9 +35,7 @@ const exposeDir = "/run/a2a"
 
 // Docker is the backend that runs commands in Docker containers.
 type Docker struct {
-	envDir         string
-	launcher       func() string
-	servedAppArmor string
+	cfg DockerConfig
 
 	// probeMu serializes the checks of the containers' egress setup, which
 	// run once for the backend, without and with live workspaces, and
@@ -53,34 +51,69 @@ type probeResult struct {
 
 var _ Backend = (*Docker)(nil)
 
-// NewDocker returns the Docker backend, which keeps the env files of its
-// containers in envDir, where no container must see them. launcher returns
-// the host path of the a2a-serve binary that containers with the egress
-// boundary run as their launcher, or "" to use this binary; nil always
-// uses this binary. servedAppArmor is the AppArmor profile of containers
-// with live workspaces, which Docker's default denies the FUSE mount; empty
-// keeps Docker's default, and refuses live workspaces where it applies.
-func NewDocker(envDir string, launcher func() string, servedAppArmor string) *Docker {
-	return &Docker{envDir: envDir, launcher: launcher, servedAppArmor: servedAppArmor}
+// DockerConfig configures the Docker backend.
+type DockerConfig struct {
+	// EnvDir keeps the env files of the containers, where no container
+	// must see them.
+	EnvDir string
+	// Launcher returns the host path of the a2a-serve binary that
+	// containers with the egress boundary run as their launcher, or "" to
+	// use this binary; nil always uses this binary.
+	Launcher func() string
+	// ServedAppArmor is the AppArmor profile of containers with live
+	// workspaces, which Docker's default denies the FUSE mount; empty
+	// keeps Docker's default, and refuses live workspaces where it applies.
+	ServedAppArmor string
+	// Runtime is the OCI runtime of the containers, as docker run
+	// --runtime takes it, such as runsc for gVisor; empty is the daemon's
+	// default.
+	Runtime string
 }
 
-// Probe implements [Backend]: the docker daemon answers, and whether the
-// egress boundary can work with an image of this host's architecture.
+// NewDocker returns the Docker backend of cfg.
+func NewDocker(cfg DockerConfig) *Docker {
+	return &Docker{cfg: cfg}
+}
+
+// Probe implements [Backend]: the docker daemon answers and has the
+// runtime, and whether the egress boundary can work with an image of this
+// host's architecture.
 func (d *Docker) Probe(ctx context.Context) (Capabilities, error) {
 	rootless, err := CheckDocker(ctx)
 	if err != nil {
 		return Capabilities{}, err
 	}
+	rt, err := d.runtime(ctx)
+	if err != nil {
+		return Capabilities{}, err
+	}
 	c := d.egressEnv().Probe()
 	c.Rootless = rootless
-	c.Served = d.servedProblem(ctx, c)
+	switch {
+	case c.EgressRelay && d.cfg.Runtime != "":
+		c.Boundary, c.EgressRelay, c.RelayImage = relayRuntimeProblem(d.cfg.Runtime), false, nil
+	case c.Boundary == nil && rt.gVisor():
+		c.Boundary = rt.hostSocketsProblem()
+	}
+	c.Served = d.servedProblem(ctx, c, rt)
 	return c, nil
 }
 
-// servedProblem returns why containers can't show live workspaces on this
-// machine, whose egress capabilities are c, or nil.
-func (d *Docker) servedProblem(ctx context.Context, c Capabilities) error {
+// runtime returns the OCI runtime of the containers, which is empty for
+// the daemon's default.
+func (d *Docker) runtime(ctx context.Context) (ociRuntime, error) {
+	if d.cfg.Runtime == "" {
+		return ociRuntime{}, nil
+	}
+	return lookupRuntime(ctx, d.cfg.Runtime)
+}
+
+// servedProblem returns why containers of the runtime rt can't show live
+// workspaces on this machine, whose egress capabilities are c, or nil.
+func (d *Docker) servedProblem(ctx context.Context, c Capabilities, rt ociRuntime) error {
 	switch {
+	case rt.gVisor():
+		return errGVisorServed
 	case c.EgressRelay:
 		return errors.New("an egress container can't carry a live workspace")
 	case c.Boundary != nil:
@@ -91,16 +124,16 @@ func (d *Docker) servedProblem(ctx context.Context, c Capabilities) error {
 			return fmt.Errorf("this machine has no FUSE device: %w", err)
 		}
 	}
-	return appArmorProblem(ctx, d.servedAppArmor)
+	return appArmorProblem(ctx, d.cfg.ServedAppArmor)
 }
 
 // egressEnv returns the environment of this process, with the launcher of d.
 func (d *Docker) egressEnv() EgressEnv {
 	env := HostEgressEnv()
-	if d.launcher == nil {
+	if d.cfg.Launcher == nil {
 		return env
 	}
-	if l := d.launcher(); l != "" {
+	if l := d.cfg.Launcher(); l != "" {
 		env.Launcher = func() (string, error) { return CheckLauncher(l) }
 	}
 	return env
@@ -117,8 +150,15 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
+	rt, err := d.runtime(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(spec.Served) > 0 && rt.gVisor() {
+		return nil, &ServedMountError{Dst: spec.Served[0].Dst, Reason: errGVisorServed.Error()}
+	}
 	if len(spec.Served) > 0 {
-		if err := checkServed(ctx, spec, d.servedAppArmor); err != nil {
+		if err := checkServed(ctx, spec, d.cfg.ServedAppArmor); err != nil {
 			return nil, err
 		}
 	}
@@ -133,19 +173,20 @@ func (d *Docker) Prepare(ctx context.Context, spec Spec) (Sandbox, error) {
 		Masks:    spec.Masks,
 		Scratch:  spec.Scratch,
 		Home:     spec.Home,
-		EnvDir:   d.envDir,
+		EnvDir:   d.cfg.EnvDir,
 		Env:      withoutEgressCA(spec.Command.Env),
 		Limits:   spec.Limits,
 		Labels:   spec.Labels,
 		Rootless: rootless,
+		Runtime:  d.cfg.Runtime,
 	}
 	if len(spec.Served) > 0 {
-		r.ServedAppArmor = d.servedAppArmor
+		r.ServedAppArmor = d.cfg.ServedAppArmor
 	}
 	info := Info{Summary: "docker: " + what, Image: image}
 	closeEgress := func() error { return nil }
 	if spec.Network.Boundary != nil {
-		eg, closeFn, err := d.openEgress(ctx, spec, image, rootless)
+		eg, closeFn, err := d.openEgress(ctx, spec, image, rootless, rt)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +272,7 @@ func expose(r *DockerRunner, sockets []Socket, relay bool) {
 // openEgress opens the boundary of a container of image, and with Docker
 // Desktop starts its egress container. It fails with an error that wraps
 // [ErrNoBoundary] when the boundary can't work on this host.
-func (d *Docker) openEgress(ctx context.Context, spec Spec, image string, rootless bool) (*DockerEgress, func() error, error) {
+func (d *Docker) openEgress(ctx context.Context, spec Spec, image string, rootless bool, rt ociRuntime) (*DockerEgress, func() error, error) {
 	arch, entrypoint, err := ImageConfig(ctx, image)
 	if err != nil {
 		return nil, nil, err
@@ -241,11 +282,19 @@ func (d *Docker) openEgress(ctx context.Context, spec Spec, image string, rootle
 	// openRelay pulls or builds a missing image of the egress container.
 	env.RelayImage = nil
 	caps := env.Probe()
+	if caps.EgressRelay && d.cfg.Runtime != "" {
+		return nil, nil, relayRuntimeProblem(d.cfg.Runtime)
+	}
 	if caps.EgressRelay {
 		return openRelay(ctx, spec, entrypoint, rootless, HostGateway(env.GOOS))
 	}
 	if caps.Boundary != nil {
 		return nil, nil, caps.Boundary
+	}
+	if rt.gVisor() {
+		if err := rt.hostSocketsProblem(); err != nil {
+			return nil, nil, err
+		}
 	}
 	launcher, err := env.Launcher()
 	if err != nil {

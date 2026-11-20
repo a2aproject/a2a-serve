@@ -38,6 +38,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt/sandboxtest"
 	"github.com/a2aproject/a2a-serve/internal/sidecar"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/refhost"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
@@ -82,14 +83,29 @@ func TestEgressProxyReportsInvalidFlags(t *testing.T) {
 func requireDocker(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" || os.Getenv("A2A_SERVE_SANDBOX_RELAY") == "1" {
-		t.Skip("needs the egress boundary of Linux without an egress container")
+		sandboxtest.Skip(t, "needs the egress boundary of Linux without an egress container")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("needs the docker CLI")
+		sandboxtest.Skip(t, "needs the docker CLI")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skipf("docker isn't available: %v", err)
+		sandboxtest.Skip(t, "docker isn't available: %v", err)
 	}
+}
+
+// dockerSandbox returns the --sandbox of the Docker tests: gvisor when
+// sandboxtest.EnvRuntime asks for runsc, and docker otherwise.
+func dockerSandbox() string {
+	if sandboxtest.Runtime() == "runsc" {
+		return serve.SandboxGVisor
+	}
+	return serve.SandboxDocker
+}
+
+// dockerOptions returns the options of the Docker runtime that the
+// a2a-serve-sidecar binary bin runs with dockerSandbox.
+func dockerOptions(bin string) sandbox.DockerOptions {
+	return sandbox.DockerOptions{Launcher: bin, Runtime: sandboxtest.Runtime()}
 }
 
 // buildSidecar builds a2a-serve-sidecar with CGO_ENABLED set to cgo; releases build
@@ -136,12 +152,12 @@ func dockerTestEnv(t *testing.T) (bin, image string) {
 	t.Helper()
 	requireDocker(t)
 	bin = buildSidecar(t, "0")
-	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background())
+	caps, err := sandbox.Docker(dockerOptions(bin)).Probe(context.Background())
 	if err != nil {
 		t.Fatalf("Docker().Probe() error = %v", err)
 	}
 	if !caps.Boundary {
-		t.Skipf("the boundary can't work here: %s", caps.Problem)
+		sandboxtest.Skip(t, "the boundary can't work here: %s", caps.Problem)
 	}
 	return bin, buildFakeacpImage(t)
 }
@@ -229,10 +245,10 @@ func TestEgressProxyDecidesTheDockerSandboxConnections(t *testing.T) {
 		}),
 	})
 	sock := filepath.Join(dir, "a2a.sock")
-	ready := startBinary(t, bin, "--sandbox", "docker", "--image", image, "--command", "/usr/local/bin/fakeacp",
+	ready := startBinary(t, bin, "--sandbox", dockerSandbox(), "--image", image, "--command", "/usr/local/bin/fakeacp",
 		"--workspace", "dir:"+t.TempDir(), "--listen", "unix://"+sock, "--egress-proxy", serveHost(t, host, dir))
-	if ready.Egress != serve.EgressProxy {
-		t.Fatalf("ready line egress = %q, want %q", ready.Egress, serve.EgressProxy)
+	if ready.Egress != serve.EgressProxy || !strings.HasPrefix(ready.Sandbox, dockerSandbox()) {
+		t.Fatalf("ready line = %+v, want egress %q in the sandbox %s", ready, serve.EgressProxy, dockerSandbox())
 	}
 	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
 	if err != nil {

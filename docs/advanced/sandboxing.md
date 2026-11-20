@@ -82,6 +82,8 @@ A live workspace needs the launcher, so it runs only behind the egress boundary.
 | Docker rootful on Linux | Yes, verified, with the AppArmor profile `a2a-serve-live` where Docker applies AppArmor. The profile is Docker's default with the FUSE mount allowed. `a2a-serve-sidecar` uses it once it is [loaded](../reference/a2a-serve-sidecar.md#workspace), and embedders name it with `DockerOptions.ServedAppArmor`. |
 | Docker Desktop | No: the egress container doesn't carry the fs socket yet |
 | bubblewrap on Linux | Yes, verified. It needs `/dev/fuse` and unprivileged user namespaces. |
+| gVisor (`runsc`) | No: gVisor's FUSE can't map files into memory, so git and the programs in the workspace fail. The container doesn't start, and the error says so. Verified. |
+| Platform-provided sandbox | Where the platform mounts a `Served` source, as [Platform-provided Sandboxes](#platform-provided-sandboxes) describes. Not verified yet. |
 | Local | No: the agent runs on the host, with no mount namespace |
 
 ## Bubblewrap
@@ -100,6 +102,29 @@ With the egress boundary, the launcher starts first, as root of the sandbox's us
 Ubuntu 23.10 and later restrict unprivileged user namespaces with AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`). Where bwrap's AppArmor profile lets it make the namespaces, the profile can still deny the capabilities in them, so the launcher can't create the TUN device or mount FUSE. To run the sandbox there, give bwrap an AppArmor profile that allows user namespaces with their capabilities, or set `kernel.apparmor_restrict_unprivileged_userns=0`, which lifts the restriction for every program. The errors of `a2a-serve-sidecar` name this setting when it applies.
 
 Without an egress endpoint, or with an unrestricted policy, the sandbox has only loopback and doesn't start the launcher. In Go, `BubblewrapOptions.HostNetwork` shares the host's network in that case. The agent then reaches every service of the host on loopback and on abstract Unix sockets, such as the X11 display, which can read and send keystrokes. Bubblewrap applies no memory, CPU or process limits.
+
+## gVisor
+
+`a2a-serve-sidecar --sandbox gvisor`, and `DockerOptions.Runtime` set to `runsc` in Go, run the Docker containers with [gVisor](https://gvisor.dev)'s runtime `runsc`. gVisor runs the container on a kernel of its own in user space, so the agent's system calls don't reach the host's kernel.
+
+The container starts as other Docker containers do. The launcher sets up the TUN device in gVisor's network stack, drops every capability, and starts the agent, so every connection goes through the egress boundary. gVisor refuses connections to the host's Unix sockets by default, so Docker must run `runsc` with `--host-uds=open` for the container to reach its egress socket:
+
+```console
+$ sudo runsc install -- --host-uds=open
+$ sudo systemctl restart docker
+```
+
+Without it, the sandbox doesn't start, and the error names the flag. Live workspaces don't work under gVisor, and Docker Desktop's egress container doesn't work with another runtime yet. Verified with rootful Docker on Linux.
+
+## Platform-provided Sandboxes
+
+A platform that already isolates the agent, such as a sandbox service or a microVM runtime, embeds the core in Go and implements `sandbox.Runtime`. The core passes the workspace and the other mounts in `Spec.Mounts`:
+
+- A `HostDir` source for a directory workspace, and for turn sync, which gives each A2A context a copy in a directory.
+- A `Tmpfs` source for the agent's scratch directories.
+- A `Served` source for a live workspace.
+
+The platform shows each source at its path. Directory and turn-synced workspaces work wherever the platform can show a directory of the host. Live workspaces work where it can mount a served tree, and its `Create` returns a `sandbox.UnsupportedMountError` elsewhere. The platform enforces egress itself. A runtime that can't route the connections through the endpoint in `Spec.Egress` fails `Create` with `sandbox.ErrNoBoundary`, so give the core no egress boundary there. This isn't verified with a platform yet.
 
 ## Calling the Network
 

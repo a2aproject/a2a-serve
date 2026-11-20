@@ -39,9 +39,14 @@ import (
 // Sandboxes.
 const (
 	SandboxDocker = "docker"
+	// SandboxGVisor runs Docker containers under gVisor's runtime runsc.
+	SandboxGVisor = "gvisor"
 	SandboxBwrap  = "bwrap"
 	SandboxLocal  = "local"
 )
+
+// gVisorRuntime is the Docker runtime of SandboxGVisor.
+const gVisorRuntime = "runsc"
 
 const (
 	// DefaultListen is the address of the A2A endpoint without --listen.
@@ -61,7 +66,7 @@ type Config struct {
 	Command string
 	Image   string
 	Model   string
-	// Sandbox is docker, bwrap or local; "" is docker.
+	// Sandbox is docker, gvisor, bwrap or local; "" is docker.
 	Sandbox string
 	// Egress is the egress mode; "" when unset, which is internet.
 	Egress      string
@@ -201,9 +206,11 @@ func resolveSandbox(cfg Config) (string, error) {
 	switch cfg.Sandbox {
 	case "", SandboxDocker:
 		return SandboxDocker, nil
+	case SandboxGVisor:
+		return SandboxGVisor, nil
 	case SandboxBwrap, SandboxLocal:
 		if cfg.Image != "" {
-			return "", usagef("--image needs --sandbox docker: --sandbox %s runs the agent that this machine has", cfg.Sandbox)
+			return "", usagef("--image needs --sandbox docker or gvisor: --sandbox %s runs the agent that this machine has", cfg.Sandbox)
 		}
 		if cfg.Sandbox == SandboxBwrap {
 			return SandboxBwrap, nil
@@ -220,12 +227,15 @@ func resolveSandbox(cfg Config) (string, error) {
 			if len(sandboxed) > 1 {
 				verb = "need"
 			}
-			return "", usagef("%s %s --sandbox docker or bwrap: --sandbox local runs the agent on this machine, with its network", strings.Join(sandboxed, ", "), verb)
+			return "", usagef("%s %s --sandbox docker, gvisor or bwrap: --sandbox local runs the agent on this machine, with its network", strings.Join(sandboxed, ", "), verb)
 		}
 		return SandboxLocal, nil
 	}
-	return "", usagef("invalid --sandbox %q: want %s, %s or %s", cfg.Sandbox, SandboxDocker, SandboxBwrap, SandboxLocal)
+	return "", usagef("invalid --sandbox %q: want %s, %s, %s or %s", cfg.Sandbox, SandboxDocker, SandboxGVisor, SandboxBwrap, SandboxLocal)
 }
+
+// containers reports whether sandbox runs the agent in Docker containers.
+func containers(sandbox string) bool { return sandbox == SandboxDocker || sandbox == SandboxGVisor }
 
 func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
 	var argv []string
@@ -240,8 +250,8 @@ func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
 		if len(argv) == 0 {
 			return a2aserve.Profile{}, usagef("no agent: pass --agent %s, or --command with the command line of an ACP agent", strings.Join(a2aserve.ProfileNames(), " or --agent "))
 		}
-		if sandbox == SandboxDocker && cfg.Image == "" {
-			return a2aserve.Profile{}, usagef("--command without --agent needs --image with --sandbox docker, or --sandbox bwrap or local")
+		if containers(sandbox) && cfg.Image == "" {
+			return a2aserve.Profile{}, usagef("--command without --agent needs --image with --sandbox %s, or --sandbox bwrap or local", sandbox)
 		}
 		return a2aserve.Command(argv...), nil
 	}

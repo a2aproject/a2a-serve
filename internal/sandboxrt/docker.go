@@ -62,6 +62,9 @@ type DockerRunner struct {
 	// Rootless is set for rootless Docker, where container root is the host
 	// user, so files the process writes stay owned by the user.
 	Rootless bool
+	// Runtime is the OCI runtime of the container, such as runsc, or ""
+	// for the daemon's default.
+	Runtime string
 	// Egress is set when the container's only network path is the egress
 	// socket. The launcher starts the command after the image's entrypoint.
 	Egress *DockerEgress
@@ -435,6 +438,9 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 		uid, gid = 0, 0
 	}
 	args := []string{"--rm", "-i"}
+	if r.Runtime != "" {
+		args = append(args, "--runtime", r.Runtime)
+	}
 	if r.Egress == nil {
 		args = append(args,
 			"--init",

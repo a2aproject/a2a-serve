@@ -155,7 +155,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Name:        "a2a-serve-sidecar-" + runID,
 		Labels:      map[string]string{"a2a.run": runID},
 	}
-	if s.sandbox == SandboxDocker {
+	if containers(s.sandbox) {
 		base.Limits = limits
 	}
 	if srv.tools != nil {
@@ -287,8 +287,13 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	case SandboxBwrap:
 		return bwrapRuntime(ctx, set)
 	}
-	opts := sandbox.DockerOptions{Progress: stderr}
-	if set.workspace.served() {
+	opts, here := sandbox.DockerOptions{Progress: stderr}, "Docker here"
+	switch {
+	case set.sandbox == SandboxGVisor:
+		// gVisor ignores AppArmor, and Probe says why it can't mount the
+		// workspace.
+		opts.Runtime, here = gVisorRuntime, "gVisor here"
+	case set.workspace.served():
 		profile, err := sandboxrt.LiveDockerAppArmor(ctx, sandboxrt.AppArmorDir)
 		if errors.Is(err, sandboxrt.ErrLiveAppArmorNotLoaded) {
 			return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %w; %s", set.workspace.shown, err, appArmorHint)
@@ -303,14 +308,17 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	if err != nil {
 		return nil, "", sandbox.Capabilities{}, err
 	}
+	if !caps.Boundary && set.sandbox == SandboxGVisor {
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--sandbox gvisor routes every connection of the agent through a2a-serve-sidecar, which can't work here: %s", caps.Problem)
+	}
 	if !caps.Boundary && set.egressProxy != "" {
-		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which Docker here can't: %s", caps.Problem)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which %s can't: %s", here, caps.Problem)
 	}
 	if !caps.Boundary && set.tools != nil {
-		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--tools with --sandbox docker needs a sandbox that routes the agent's connections through a2a-serve-sidecar, which Docker here can't: %s; use --sandbox local with an http:// URL", caps.Problem)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--tools with --sandbox %s needs a sandbox that routes the agent's connections through a2a-serve-sidecar, which %s can't: %s; use --sandbox local with an http:// URL", set.sandbox, here, caps.Problem)
 	}
 	if set.workspace.served() && !slices.Contains(caps.Mounts, sandbox.MountServed) {
-		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %s; %s", set.workspace.shown, caps.MountProblems[sandbox.MountServed], liveHint)
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which %s can't: %s; %s", set.workspace.shown, here, caps.MountProblems[sandbox.MountServed], liveHint)
 	}
 	if !caps.Boundary {
 		s.log.Warn("the sandbox can't route its connections through the egress boundary", "problem", caps.Problem)
@@ -320,9 +328,9 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 		return nil, "", sandbox.Capabilities{}, err
 	}
 	if rootless {
-		return rt, SandboxDocker + " (rootless)", caps, nil
+		return rt, set.sandbox + " (rootless)", caps, nil
 	}
-	return rt, SandboxDocker, caps, nil
+	return rt, set.sandbox, caps, nil
 }
 
 // bwrapRuntime returns the bubblewrap runtime of set, which runs the agent

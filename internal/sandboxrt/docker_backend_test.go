@@ -55,7 +55,7 @@ func TestDockerProbeOnce(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := NewDocker(t.TempDir(), nil, "")
+			d := NewDocker(DockerConfig{EnvDir: t.TempDir()})
 			calls := 0
 			probe := func() error {
 				calls++
@@ -97,7 +97,7 @@ esac
 `)
 	t.Setenv(EnvForceRelay, "")
 	opened := false
-	d := NewDocker(t.TempDir(), func() string { return filepath.Join(t.TempDir(), "missing") }, "")
+	d := NewDocker(DockerConfig{EnvDir: t.TempDir(), Launcher: func() string { return filepath.Join(t.TempDir(), "missing") }})
 	_, err := d.Prepare(context.Background(), Spec{
 		Name:    "a2a-test",
 		Image:   "img:1",
@@ -152,7 +152,7 @@ func TestDockerPrepareChecksBoundaryOnce(t *testing.T) {
 	calls := filepath.Join(t.TempDir(), "calls")
 	sandboxtest.FakeDocker(t, relayDocker(calls, filepath.Join(t.TempDir(), "env")))
 	spec := relaySpec(t)
-	d := NewDocker(t.TempDir(), nil, "")
+	d := NewDocker(DockerConfig{EnvDir: t.TempDir()})
 	for i := range 2 {
 		sb, err := d.Prepare(context.Background(), spec)
 		if err != nil {
@@ -177,7 +177,7 @@ func TestDockerPrepareTrustsOnlyItsCA(t *testing.T) {
 	spec := relaySpec(t)
 	spec.Command.Env = []string{"A=1", boundary.EgressCAEnv([]byte("from the caller"))}
 	spec.Network.CA = []byte("from the boundary")
-	sb, err := NewDocker(t.TempDir(), nil, "").Prepare(context.Background(), spec)
+	sb, err := NewDocker(DockerConfig{EnvDir: t.TempDir()}).Prepare(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Docker.Prepare() error = %v", err)
 	}
@@ -212,13 +212,13 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	if runtime.GOOS != "linux" || os.Getenv(EnvForceRelay) == "1" {
-		t.Skip("needs the egress boundary of Linux without an egress container")
+		sandboxtest.Skip(t, "needs the egress boundary of Linux without an egress container")
 	}
 	if _, err := CheckDocker(ctx); err != nil {
-		t.Skipf("docker isn't available: %v", err)
+		sandboxtest.Skip(t, "docker isn't available: %v", err)
 	}
 	if err := CheckTUN(); err != nil {
-		t.Skip(err)
+		sandboxtest.Skip(t, "%v", err)
 	}
 	launcher, image := buildTestContainer(t)
 
@@ -242,7 +242,7 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	}
 	name := "a2a-sandbox-test-" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
 	var stderr bytes.Buffer
-	sb, err := NewDocker(t.TempDir(), func() string { return launcher }, "").Prepare(ctx, Spec{
+	sb, err := NewDocker(DockerConfig{EnvDir: t.TempDir(), Launcher: func() string { return launcher }, Runtime: sandboxtest.Runtime()}).Prepare(ctx, Spec{
 		Name:  name,
 		Image: image,
 		Command: Command{Path: "/probe", Args: []string{

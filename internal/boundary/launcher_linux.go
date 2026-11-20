@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/aojea/agents.net/sdk/pkg/tun2connect"
@@ -42,6 +43,9 @@ const (
 	guestAddr6     = "100::ffff:ffff:ffff:fffe/64"
 	resolverAddr   = "100.127.255.253"
 	resolvConfPath = "/etc/resolv.conf"
+	// socketCheckTimeout bounds the connection of the check to the
+	// boundary socket.
+	socketCheckTimeout = 10 * time.Second
 )
 
 // Launch mounts the live workspaces, sets up the container's only route, a
@@ -93,6 +97,9 @@ func Launch(cfg LaunchConfig) (int, error) {
 		}
 	}
 	if cfg.Check {
+		if err := checkBoundarySocket(cfg.Boundary); err != nil {
+			return 0, &SetupError{Err: err}
+		}
 		return 0, checkMounts(cfg.Mounts)
 	}
 	// The agent inherits only its standard streams, and not, say, the
@@ -278,10 +285,18 @@ func dropPrivileges(uid, gid int) error {
 		keepCapsLocked      = 1 << 5
 		noCapAmbientRaise   = 1<<6 | 1<<7
 	)
-	if err := prctlAll(unix.PR_SET_SECUREBITS, noRoot|noSetuidFixupLocked|keepCapsLocked|noCapAmbientRaise); err != nil {
+	// gVisor refuses these securebits, and releases without ambient
+	// capabilities refuse the ambient call. There the empty bounding,
+	// inheritable and ambient sets, which checkNoCapabilities confirms,
+	// are the guarantee: an exec by uid 0, or of a setuid or file
+	// capability binary, gains nothing from them, and the bounding set
+	// never grows. The securebits only back them up where the kernel has
+	// them.
+	gvisor := underGVisor()
+	if err := prctlAll(unix.PR_SET_SECUREBITS, noRoot|noSetuidFixupLocked|keepCapsLocked|noCapAmbientRaise); err != nil && !gvisor {
 		return fmt.Errorf("securebits: %w", err)
 	}
-	if err := prctlAll(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL); err != nil {
+	if err := prctlAll(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL); err != nil && !gvisor {
 		return fmt.Errorf("ambient set: %w", err)
 	}
 	last, err := lastCap()
@@ -320,17 +335,43 @@ func setgroupsDenied() bool {
 	return err == nil && strings.TrimSpace(string(b)) == "deny"
 }
 
-// checkNoCapabilities confirms that the process holds no capability.
+// gvisorVersion is the version that gVisor's uname reports, which its
+// sentry fixes whatever the host kernel.
+const gvisorVersion = "#1 SMP Sun Jan 10 15:06:54 PST 2016"
+
+// underGVisor reports whether the process runs on gVisor's kernel.
+func underGVisor() bool {
+	var u unix.Utsname
+	return unix.Uname(&u) == nil && unix.ByteSliceToString(u.Version[:]) == gvisorVersion
+}
+
+// checkNoCapabilities confirms that the process holds no capability. Every
+// set but the ambient one, which kernels and gVisor releases without it
+// leave out, must be listed.
 func checkNoCapabilities() error {
 	status, err := os.ReadFile("/proc/self/status")
 	if err != nil {
 		return err
 	}
-	for line := range strings.Lines(string(status)) {
-		for _, set := range []string{"CapInh:", "CapPrm:", "CapEff:", "CapBnd:", "CapAmb:"} {
-			if v, ok := strings.CutPrefix(line, set); ok && strings.Trim(strings.TrimSpace(v), "0") != "" {
-				return fmt.Errorf("%s is still %s", strings.TrimSuffix(set, ":"), strings.TrimSpace(v))
-			}
+	return checkCapabilitySets(string(status))
+}
+
+// checkCapabilitySets checks status, the contents of /proc/self/status.
+func checkCapabilitySets(status string) error {
+	listed := map[string]bool{}
+	for line := range strings.Lines(status) {
+		name, v, ok := strings.Cut(line, ":")
+		if !ok || !strings.HasPrefix(name, "Cap") {
+			continue
+		}
+		if strings.Trim(strings.TrimSpace(v), "0") != "" {
+			return fmt.Errorf("%s is still %s", name, strings.TrimSpace(v))
+		}
+		listed[name] = true
+	}
+	for _, set := range []string{"CapInh", "CapPrm", "CapEff", "CapBnd"} {
+		if !listed[set] {
+			return fmt.Errorf("the process status doesn't list %s", set)
 		}
 	}
 	return nil
@@ -359,6 +400,21 @@ func lastCap() (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(strings.TrimSpace(string(b)))
+}
+
+// checkBoundarySocket connects to the boundary socket under gVisor, which
+// refuses connections to the host's sockets unless runsc runs with
+// --host-uds=open. Elsewhere a socket that the container sees accepts its
+// connections, and the check of a runtime may run without one.
+func checkBoundarySocket(path string) error {
+	if !underGVisor() {
+		return nil
+	}
+	c, err := net.DialTimeout("unix", path, socketCheckTimeout)
+	if err != nil {
+		return fmt.Errorf("connecting to the egress socket: %w; gVisor refuses the connections to the host's sockets unless runsc runs with --host-uds=open", err)
+	}
+	return c.Close()
 }
 
 // checkMounts lists the root of each mount, as the agent would, once the

@@ -332,6 +332,10 @@ func (b *Boundary) handle(guest net.Conn) {
 		return
 	}
 	br := bufio.NewReaderSize(io.LimitReader(guest, maxHead), 4096)
+	// The launcher's check under gVisor connects and closes at once.
+	if _, err := br.Peek(1); errors.Is(err, io.EOF) {
+		return
+	}
 	host, port, rerr := readConnect(br)
 	if rerr != nil {
 		b.log.write(slog.LevelWarn, "egress blocked", "reason", rerr.reason)

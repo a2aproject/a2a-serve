@@ -1,0 +1,67 @@
+# Runs the Docker sandbox tests with gVisor's runsc as the runtime of the
+# containers, on the runner's rootful Docker.
+name: gVisor
+
+on:
+  push:
+    branches: [ "main", "release/**" ]
+
+  pull_request:
+    branches: [ "main", "release/**" ]
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker-runsc:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    # As https://gvisor.dev/docs/user_guide/install/ describes. The launcher
+    # reaches the egress socket, a socket of the host, only with
+    # --host-uds=open.
+    - name: Install gVisor
+      run: |
+        curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install -y runsc
+        sudo runsc install -- --host-uds=open
+        sudo systemctl restart docker
+        runsc --version
+        docker info --format '{{json .Runtimes.runsc}}'
+
+    # The launcher test runs runsc do rootless, in a user namespace that
+    # Ubuntu's AppArmor restricts.
+    - name: Allow user namespaces
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    # The tests fail rather than skip with A2A_SERVE_TEST_DOCKER_RUNTIME set,
+    # and each one named here must pass.
+    - name: Test
+      shell: bash
+      env:
+        A2A_SERVE_TEST_DOCKER_RUNTIME: runsc
+      run: |
+        export A2A_SERVE_TEST_RUNSC="$(command -v runsc)"
+        run() {
+          pkg=$1; shift
+          out="$RUNNER_TEMP/$(basename "$pkg").log"
+          go test -mod=readonly -v -count=1 -run "^($(IFS='|'; echo "$*"))\$" "$pkg" | tee "$out"
+          for t in "$@"; do
+            grep -q "^--- PASS: $t " "$out" || { echo "::error::$t didn't pass"; exit 1; }
+          done
+        }
+        run ./core/sandbox/ TestLauncherUnderGVisor TestDockerRunsCommandBehindEgress TestDockerServesLiveWorkspace
+        run ./internal/sandboxrt/ TestDockerRunsCommandBehindBoundary
+        run ./internal/sidecar/ TestToolsReachTheHostThroughTheBoundary TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds TestEgressProxyDecidesTheDockerSandboxConnections
