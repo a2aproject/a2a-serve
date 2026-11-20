@@ -95,5 +95,5 @@ On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network,
 - The agent can act only for the conversation it works on, and only while it works on it.
 - A message joins an existing conversation only if its sender started it or is an owner.
 - Guests share one agent process, with a task budget and approvals that time out.
-- In the Docker sandbox, the agent reaches the network only through the server, which blocks private destinations ([Network](../guide/sandbox.md#network)).
+- In the Docker and bubblewrap sandboxes, the agent reaches the network only through the server, which blocks private destinations ([Network](../guide/sandbox.md#network)).
 - A loopback connection alone grants nothing. The local token works only on the local URL.

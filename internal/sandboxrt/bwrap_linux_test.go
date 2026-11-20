@@ -241,8 +241,8 @@ func TestUserNamespaceFix(t *testing.T) {
 		"no restriction": {wantFix: "allow unprivileged user namespaces"},
 		"apparmor": {
 			sysctls:     map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "1\n"},
-			wantFix:     "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
-			wantNetwork: "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+			wantFix:     "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot",
+			wantNetwork: "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot",
 		},
 		"apparmor off": {sysctls: map[string]string{"kernel/apparmor_restrict_unprivileged_userns": "0\n"}, wantFix: "allow unprivileged user namespaces"},
 		"debian clone sysctl": {

@@ -63,6 +63,8 @@ type fakeMachine struct {
 	launcher, tun error
 	// route is why this host has no route to the internet.
 	route error
+	// goos is the system of the machine.
+	goos string
 	// bwrap is what the probe of bubblewrap finds, and bwrapErr why
 	// bubblewrap can't make sandboxes.
 	bwrap    sandboxrt.Capabilities
@@ -74,6 +76,7 @@ type fakeMachine struct {
 func newFakeMachine(t *testing.T) *fakeMachine {
 	t.Helper()
 	m := &fakeMachine{
+		goos: "linux",
 		home: t.TempDir(),
 		env:  map[string]string{"PATH": "/usr/bin"},
 		paths: map[string]string{
@@ -107,6 +110,7 @@ func (m *fakeMachine) writeUserConfig(t *testing.T, content string) {
 func (m *fakeMachine) Env() Env {
 	return Env{
 		Home:        m.home,
+		GOOS:        m.goos,
 		Credentials: credstore.At(m.home),
 		LookupEnv: func(name string) (string, bool) {
 			v, ok := m.env[name]
@@ -187,32 +191,48 @@ func TestCheckServeBinaryMissingFix(t *testing.T) {
 
 func TestDockerFix(t *testing.T) {
 	t.Parallel()
+	unreachable := func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true }
+	missing := func(m *fakeMachine) { delete(m.paths, "docker") }
 	tests := []struct {
 		name    string
 		agent   bool
+		goos    string
 		breakIt func(*fakeMachine)
 		want    string
 	}{
 		{
 			name:    "unreachable outside an agent",
-			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
-			want:    "start Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+			breakIt: unreachable,
+			want:    "start Docker, or run a2a-serve start <agent> --sandbox bwrap in your project directory, or --sandbox local for no isolation",
 		},
 		{
 			name:    "not installed outside an agent",
-			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
-			want:    "install Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+			breakIt: missing,
+			want:    "install Docker, or run a2a-serve start <agent> --sandbox bwrap in your project directory, or --sandbox local for no isolation",
 		},
 		{
 			name:    "unreachable in an agent",
 			agent:   true,
-			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
-			want:    "start Docker, or a2a-serve config set --sandbox local",
+			breakIt: unreachable,
+			want:    "start Docker, or a2a-serve config set --sandbox bwrap, or a2a-serve config set --sandbox local for no isolation",
 		},
 		{
 			name:    "not installed in an agent",
 			agent:   true,
-			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
+			breakIt: missing,
+			want:    "install Docker, or a2a-serve config set --sandbox bwrap, or a2a-serve config set --sandbox local for no isolation",
+		},
+		{
+			name:    "not installed outside an agent on macOS",
+			goos:    "darwin",
+			breakIt: missing,
+			want:    "install Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+		},
+		{
+			name:    "not installed in an agent on macOS",
+			agent:   true,
+			goos:    "darwin",
+			breakIt: missing,
 			want:    "install Docker, or a2a-serve config set --sandbox local",
 		},
 	}
@@ -220,6 +240,9 @@ func TestDockerFix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := newFakeMachine(t)
+			if tc.goos != "" {
+				m.goos = tc.goos
+			}
 			tc.breakIt(m)
 			var opts Options
 			if tc.agent {

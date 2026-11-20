@@ -17,11 +17,11 @@ What the sandbox doesn't protect yet:
 - **`--secret` values are readable inside it.** Every container that gets a secret has it as an environment variable, so a tricked agent, or a caller who approves their own commands, can read it and send it anywhere. [`--inject-model-key` and `--inject-header`](../guide/secrets.md#keep-keys-out-of-the-sandbox) keep a key out of the container, though the agent can still spend it. Give guests and members you trust less a [separate key](../guide/sandbox.md#give-guests-a-key-of-their-own).
 - **It can reach any public host.** A tricked agent can send the files it can read anywhere on the internet. `--egress allowlist` limits it to the hosts you list.
 - **A host you allow is reachable from every container**, including the containers of members and guests.
-- **Without the network boundary, it reaches the tailnet and the LAN as you.** This happens with `--egress unrestricted`, `--sandbox local`, and the setups that [Where it applies](../guide/sandbox.md#where-it-applies) lists. Your other agents and tailnet services then see your device and grant your rights, whoever started the task.
+- **Without the network boundary, it reaches the tailnet and the LAN as you.** This happens with `--egress unrestricted`, `--sandbox local`, and the setups that [Where it applies](../guide/sandbox.md#where-it-applies) lists. Your other agents and tailnet services then see your device and grant your rights, whoever started the task. With `--sandbox bwrap` and `--egress unrestricted`, the agent also reaches the services of this machine on loopback and on abstract Unix sockets, such as the X11 display.
 - **A shared workspace is writable**, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
 - **`docker exec` into a sandbox runs as root** with the capabilities the container starts with. Pass `--user` with your user ID.
 - **An agent created inside the mounts of a running agent** is visible to that agent's running containers until `a2a-serve restart`.
-- **Docker is the boundary.** Kernel and Docker escapes are out of scope.
+- **Docker or bubblewrap is the boundary.** Kernel, Docker and bubblewrap escapes are out of scope. Bubblewrap applies no memory, CPU or process limits.
 
 `--sandbox local` runs the agent on the host, as you, with no isolation. Secrets and storage rules don't confine it. It can read everything you can, including your owner token, the `.a2a/` directories of your other agents and the conversations of every user. Use it only when you trust the agent and everyone who can call it completely.
 
@@ -71,6 +71,6 @@ Starting an agent runs what its files say. Read the files you didn't write befor
 - **Agent settings files**, such as `opencode.json` and `.claude/settings.json`, change what the agent runs and approves.
 - **Skills and instruction files**, such as `AGENTS.md`, instruct the agent. Commands they suggest still wait for approval.
 
-In the Docker sandbox, the agent can't read or edit `.mcp.json` or its settings files, and Claude Code runs no hooks. With `sandbox: local`, the agent can edit them, and the hooks and `allowed-tools` of skills run without asking.
+In the Docker and bubblewrap sandboxes, the agent can't read or edit `.mcp.json` or its settings files, and Claude Code runs no hooks. With `sandbox: local`, the agent can edit them, and the hooks and `allowed-tools` of skills run without asking.
 
 `a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups.

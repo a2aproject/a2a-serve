@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,8 @@ func (r Result) Apply() (string, error) {
 type Env struct {
 	// Home is the home directory of the a2a CLI config.
 	Home string
+	// GOOS is the system the server runs on.
+	GOOS string
 	// Credentials holds the owner token of this machine.
 	Credentials *credstore.Store
 	LookupEnv   func(string) (string, bool)
@@ -144,6 +147,7 @@ func System() (Env, error) {
 	}
 	return Env{
 		Home:               home,
+		GOOS:               runtime.GOOS,
 		Credentials:        credstore.At(home),
 		LookupEnv:          os.LookupEnv,
 		LookPath:           exec.LookPath,

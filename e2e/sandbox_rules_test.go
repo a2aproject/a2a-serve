@@ -91,7 +91,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 
 func TestSandboxStorageModes(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner, anna, ben, cy := newUser(t), newUser(t), newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
 	anna.pairJoin(coder.url, coder.invite("anna", "--storage", "read-only"))

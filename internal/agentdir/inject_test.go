@@ -121,7 +121,7 @@ func TestValidateInject(t *testing.T) {
 		{name: "secret not stored", cfg: Config{Inject: []InjectRule{gh}}, want: "secret GH is not one of the agent's secrets"},
 		{name: "two rules for a host", cfg: Config{Secrets: []string{"GH", "K"}, Inject: []InjectRule{gh, {Host: "api.github.com:443", Header: "X-Token: $K"}}}, want: "api.github.com already gets a header from inject-header"},
 		{name: "model and header for a host", cfg: Config{Secrets: []string{"GH", "K"}, Inject: []InjectRule{{Model: "openrouter", Key: "K"}, {Host: "openrouter.ai", Header: "X-Token: $GH"}}}, want: "openrouter.ai already gets a header"},
-		{name: "local sandbox", cfg: Config{Sandbox: SandboxLocal, Secrets: []string{"GH"}, Inject: []InjectRule{gh}}, want: "--inject-header needs the Docker sandbox"},
+		{name: "local sandbox", cfg: Config{Sandbox: SandboxLocal, Secrets: []string{"GH"}, Inject: []InjectRule{gh}}, want: "--inject-header needs the Docker or bubblewrap sandbox"},
 		{name: "unrestricted egress", cfg: Config{Egress: EgressConfig{Mode: "unrestricted"}, Secrets: []string{"GH"}, Inject: []InjectRule{gh}}, want: "--egress unrestricted turns off"},
 		{name: "mixed rule", cfg: Config{Secrets: []string{"GH"}, Inject: []InjectRule{{Model: "openrouter", Key: "GH", Host: "x.example"}}}, want: "either host and header, or model and key"},
 		{

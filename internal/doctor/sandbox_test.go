@@ -29,7 +29,7 @@ import (
 
 func TestBwrapChecks(t *testing.T) {
 	t.Parallel()
-	appArmor := "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+	appArmor := "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot"
 	tests := []struct {
 		name  string
 		mode  string
@@ -45,8 +45,10 @@ func TestBwrapChecks(t *testing.T) {
 			},
 		},
 		{
-			name:  "not installed",
-			setup: func(m *fakeMachine) { m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "is not installed", Fix: "install bubblewrap", Err: errors.New("exec: \"bwrap\": executable file not found in $PATH")} },
+			name: "not installed",
+			setup: func(m *fakeMachine) {
+				m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "is not installed", Fix: "install bubblewrap", Err: errors.New("exec: \"bwrap\": executable file not found in $PATH")}
+			},
 			want: []Result{{
 				ID: "bwrap", Status: StatusFail, Message: "bwrap is not installed",
 				Detail: "exec: \"bwrap\": executable file not found in $PATH",
@@ -54,24 +56,30 @@ func TestBwrapChecks(t *testing.T) {
 			}},
 		},
 		{
-			name:  "user namespaces restricted by AppArmor",
-			setup: func(m *fakeMachine) { m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "can't make a sandbox on this machine", Fix: appArmor} },
+			name: "user namespaces restricted by AppArmor",
+			setup: func(m *fakeMachine) {
+				m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "can't make a sandbox on this machine", Fix: appArmor}
+			},
 			want: []Result{{
 				ID: "bwrap", Status: StatusFail, Message: "bwrap can't make a sandbox on this machine",
 				Fix: appArmor + ", or a2a-serve config set --sandbox docker",
 			}},
 		},
 		{
-			name:  "not Linux",
-			setup: func(m *fakeMachine) { m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "runs only on Linux", Fix: "use the Docker sandbox", Err: errors.ErrUnsupported} },
+			name: "not Linux",
+			setup: func(m *fakeMachine) {
+				m.bwrapErr = &sandboxrt.BubblewrapError{Problem: "runs only on Linux", Fix: "use the Docker sandbox", Err: errors.ErrUnsupported}
+			},
 			want: []Result{{
 				ID: "bwrap", Status: StatusFail, Message: "bwrap runs only on Linux; use the Docker sandbox: unsupported operation",
 				Fix: "a2a-serve config set --sandbox docker",
 			}},
 		},
 		{
-			name:  "no TUN device",
-			setup: func(m *fakeMachine) { m.bwrap.Boundary = errors.New("this machine has no /dev/net/tun; load the tun kernel module") },
+			name: "no TUN device",
+			setup: func(m *fakeMachine) {
+				m.bwrap.Boundary = errors.New("this machine has no /dev/net/tun; load the tun kernel module")
+			},
 			want: []Result{
 				{ID: "bwrap", Status: StatusOK, Message: "bubblewrap makes sandboxes"},
 				{ID: "harness-command", Status: StatusOK, Message: "opencode at /usr/bin/opencode (sandbox bwrap)"},

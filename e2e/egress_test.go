@@ -42,9 +42,9 @@ func publicTarget() string {
 	return "example.com:80"
 }
 
-func TestDockerSandboxEgress(t *testing.T) {
+func TestSandboxEgress(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 	requireBoundary(t, coder)

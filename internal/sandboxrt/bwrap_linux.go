@@ -99,7 +99,7 @@ func appArmorFix(proc string) string {
 	if sysctl(proc, "kernel/apparmor_restrict_unprivileged_userns") != "1" {
 		return ""
 	}
-	return "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+	return "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1): give bwrap an AppArmor profile that allows them, or run sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 and put the same setting in a file in /etc/sysctl.d to keep it after a reboot"
 }
 
 // userNamespaceFix returns how to let bwrap make user namespaces on the

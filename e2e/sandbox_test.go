@@ -30,9 +30,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 )
 
-func TestDockerSandboxMounts(t *testing.T) {
+func TestSandboxMounts(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner := newUser(t)
 	docs := filepath.Join(owner.home, "docs")
 	if err := os.Mkdir(docs, 0o700); err != nil {
@@ -67,9 +67,9 @@ func TestDockerSandboxMounts(t *testing.T) {
 	}
 }
 
-func TestDockerSandboxMasksAgentConfig(t *testing.T) {
+func TestSandboxMasksAgentConfig(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder", "--deny-tools", "execute")
 
@@ -92,9 +92,9 @@ func TestDockerSandboxMasksAgentConfig(t *testing.T) {
 	}
 }
 
-func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
+func TestSandboxLocksMemberHomeConfig(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner, anna := newUser(t), newUser(t)
 	coder := owner.startAgent("coder", "--deny-tools", "execute")
 	anna.pairJoin(coder.url, coder.invite("anna"))
@@ -121,9 +121,9 @@ func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
 	}
 }
 
-func TestDockerSandboxPolicy(t *testing.T) {
+func TestSandboxPolicy(t *testing.T) {
 	t.Parallel()
-	requireDocker(t)
+	requireSandbox(t)
 	owner, anna := newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
 	anna.pairJoin(coder.url, coder.invite("anna"))

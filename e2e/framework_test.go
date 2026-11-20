@@ -276,8 +276,18 @@ func topName(t *testing.T) string {
 	return name
 }
 
-// requireDocker marks a test of the docker sandbox, and skips it when the
-// agents run locally.
+// requireSandbox marks a test of what a sandbox hides and routes, and
+// skips it when the agents run locally.
+func requireSandbox(t *testing.T) {
+	t.Helper()
+	dependsOnSandbox(t)
+	if sandbox == "local" {
+		t.Skip("needs E2E_SANDBOX=docker or bwrap")
+	}
+}
+
+// requireDocker marks a test of the docker sandbox, and skips it unless the
+// agents run in Docker.
 func requireDocker(t *testing.T) {
 	t.Helper()
 	dependsOnSandbox(t)

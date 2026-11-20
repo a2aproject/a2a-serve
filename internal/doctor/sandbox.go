@@ -30,10 +30,13 @@ import (
 )
 
 // useLocalSandbox is the fix of a missing Docker in an agent, and
-// startLocalSandbox outside one, where there is no agent to configure.
+// startLocalSandbox outside one, where there is no agent to configure. On
+// Linux, useBwrapSandbox and startBwrapSandbox suggest bubblewrap first.
 const (
 	useLocalSandbox   = "a2a-serve config set --sandbox local"
 	startLocalSandbox = "run a2a-serve start <agent> --sandbox local in your project directory"
+	useBwrapSandbox   = "a2a-serve config set --sandbox bwrap, or " + useLocalSandbox + " for no isolation"
+	startBwrapSandbox = "run a2a-serve start <agent> --sandbox bwrap in your project directory, or --sandbox local for no isolation"
 )
 
 // sandboxChecks checks Docker and the harness image, or the harness command
@@ -53,8 +56,13 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		results = append(results, bwrapChecks(ctx, env, *dir, cfg)...)
 	default:
 		local := useLocalSandbox
-		if dir == nil {
+		switch {
+		case dir == nil && env.GOOS == "linux":
+			local = startBwrapSandbox
+		case dir == nil:
 			local = startLocalSandbox
+		case env.GOOS == "linux":
+			local = useBwrapSandbox
 		}
 		docker := checkDocker(ctx, env, local)
 		results = append(results, docker)
