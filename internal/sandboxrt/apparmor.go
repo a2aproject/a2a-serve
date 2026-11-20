@@ -111,7 +111,8 @@ func LiveDockerAppArmor(ctx context.Context, dir string) (string, error) {
 	}
 	loaded, err := AppArmorLoaded(dir, LiveAppArmorProfile)
 	if errors.Is(err, fs.ErrNotExist) {
-		// This kernel has no AppArmor, so the daemon runs in a VM.
+		// This machine shows no AppArmor policy, as where the daemon runs
+		// in a VM or securityfs isn't mounted, so only the daemon can tell.
 		return LiveAppArmorProfile, nil
 	}
 	if err != nil {

@@ -46,6 +46,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 
 - **A well-known network provider downloaded into the data directory isn't checked against its pin on every start** (`internal/netinstall/netinstall.go`, `local`). The pin is the archive's checksum, checked at download; the installed binary is as writable to the user as `a2a-serve` itself, which runs it. Bundled providers next to `a2a-serve` have the same trust as the server binary.
 - **Guests share one container and home, so one guest's transcripts sit in the home another guest's agent uses** (from the review at `cb010cd`: `agentkey.Of`). The transcripts are outside the workspace, and Claude Code and opencode ask before they read there; guests' approvals go to owners. At most this needs a note in `docs/advanced/security.md`.
+- **`a2a-serve-sidecar` checks this machine's kernel for the `a2a-serve-live` AppArmor profile when Docker's socket is a Unix socket** (from #610: `internal/sandboxrt/apparmor.go`, `LiveDockerAppArmor`). With a daemon in a VM behind a forwarded Unix socket, such as Colima on an AppArmor host, the refusal asks to load the profile on the host. It fails safe, never runs unconfined, and the docs say to load the profile where the daemon runs.
 
 ### Correctness
 
@@ -92,6 +93,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **`agentctl.messengerKinds` repeats `agentdir.MessengerKinds`** (at `cb010cd`: `internal/agentctl/apply.go:378`). The lists are identical, and nothing has drifted.
 - **A contact added while the agent is stopped is stored as `direct`, even for a private-network URL.** The call still reaches the contact with its token, and the identity difference falls within the trust of the user's own devices.
 - **The owner's schedules made with the CLI skip the 5-minute minimum between runs.** `schedulesvc.AgentLimits` applies to the agent only, on purpose.
+- **Embedders of `core/sandbox` get the `a2a-serve-live` profile text only from `a2a-serve-sidecar apparmor-profile`** (from #610). Exporting it would add public API for a file that users load once with `apparmor_parser`, and the `ServedAppArmor` doc names the command.
 
 ### User simulation
 

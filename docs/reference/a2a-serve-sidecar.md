@@ -150,7 +150,7 @@ $ a2a-serve-sidecar --agent opencode --workspace unix:///run/host/fs.sock --work
 
 At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
 
-Rootful Docker on Ubuntu and other systems with AppArmor needs an AppArmor profile that allows the mount. Load it once after each boot, on the machine where the Docker daemon runs:
+Rootful Docker on Ubuntu and other systems with AppArmor needs an AppArmor profile that allows the mount. The profile needs AppArmor 3.0 or later, as in Ubuntu 22.04 and Debian 12. Load it once after each boot, on the machine where the Docker daemon runs:
 
 ```console
 $ a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r
