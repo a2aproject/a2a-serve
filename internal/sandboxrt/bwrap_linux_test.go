@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	fusefs "github.com/hanwen/go-fuse/v2/fs"
@@ -322,7 +323,7 @@ func TestCheckBubblewrapWhileMountsChange(t *testing.T) {
 				done <- err
 				return
 			}
-			if err := srv.Unmount(); err != nil {
+			if err := unmountWhenIdle(srv.Unmount); err != nil {
 				done <- err
 				return
 			}
@@ -338,5 +339,19 @@ func TestCheckBubblewrapWhileMountsChange(t *testing.T) {
 		if err := CheckBubblewrap(t.Context()); err != nil {
 			t.Fatalf("CheckBubblewrap() error = %v, want nil", err)
 		}
+	}
+}
+
+// unmountWhenIdle calls unmount until it succeeds, for a mount that another
+// process, such as one that reads the temporary directories, keeps busy
+// for a moment.
+func unmountWhenIdle(unmount func() error) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := unmount()
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
