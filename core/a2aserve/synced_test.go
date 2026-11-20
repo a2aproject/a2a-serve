@@ -305,6 +305,35 @@ func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
 			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "new.txt": "-rw-r--r-- theirs"},
 			wantPaths: []string{"new.txt"},
 		},
+		{
+			name:      "both create a file of the same size",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "new.txt", "abcd", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "new.txt", "abce", 0o644) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "new.txt": "-rw-r--r-- abcd"},
+			wantPaths: []string{"new.txt"},
+		},
+		{
+			name:         "both change a file to the same size between turns",
+			treeEdit:     func(t *testing.T, tree fsys.FS) { put(t, tree, "f.txt", "ours", 0o644) },
+			localEdit:    func(t *testing.T, local fsys.FS) { put(t, local, "f.txt", "mine", 0o644) },
+			betweenTurns: true,
+			want:         map[string]string{"f.txt": "-rw-r--r-- ours", "d": "dir", "d/a.txt": "-rw-r--r-- a"},
+			wantPaths:    []string{"f.txt"},
+		},
+		{
+			name:      "both create a file with the same bytes and other permissions",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { put(t, tree, "new.sh", "same", 0o644) },
+			localEdit: func(t *testing.T, local fsys.FS) { put(t, local, "new.sh", "same", 0o755) },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "new.sh": "-rw-r--r-- same"},
+			wantPaths: []string{"new.sh"},
+		},
+		{
+			name:      "both create a symlink to other targets",
+			treeEdit:  func(t *testing.T, tree fsys.FS) { symlink(t, tree, "f.txt", "link") },
+			localEdit: func(t *testing.T, local fsys.FS) { symlink(t, local, "d/a.txt", "link") },
+			want:      map[string]string{"f.txt": "-rw-r--r-- base", "d": "dir", "d/a.txt": "-rw-r--r-- a", "link": "-> f.txt"},
+			wantPaths: []string{"link"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,6 +381,188 @@ func TestTurnSyncedKeepsTheTreesVersionOnConflict(t *testing.T) {
 				t.Fatalf("Release() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestTurnSyncedTakesIdenticalChangesWithoutConflict(t *testing.T) {
+	t.Parallel()
+	same := func(t *testing.T, tree fsys.FS) {
+		put(t, tree, "f.txt", "same", 0o644)
+		put(t, tree, "new/run.sh", "#!/bin/sh", 0o755)
+		symlink(t, tree, "f.txt", "link")
+	}
+	tests := []struct {
+		name string
+		// betweenTurns makes both edits before BeforeTurn.
+		betweenTurns bool
+	}{
+		{name: "during a turn"},
+		{name: "between turns", betweenTurns: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.Memory()
+			put(t, tree, "f.txt", "base", 0o644)
+			var reports [][]fsys.Info
+			opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(_ context.Context, _ string, changes []fsys.Info) {
+				reports = append(reports, changes)
+			}}
+			att, err := a2aserve.TurnSynced(tree, opts).Attach(context.Background(), "a")
+			if err != nil {
+				t.Fatalf("TurnSynced().Attach() error = %v", err)
+			}
+			local := fsys.Dir(att.Dir)
+			ctx := context.Background()
+			if !tc.betweenTurns {
+				if err := att.BeforeTurn(ctx); err != nil {
+					t.Fatalf("BeforeTurn() error = %v", err)
+				}
+			}
+			same(t, local)
+			same(t, tree)
+			if tc.betweenTurns {
+				if err := att.BeforeTurn(ctx); err != nil {
+					t.Fatalf("BeforeTurn() error = %v", err)
+				}
+			}
+
+			if err := att.AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() error = %v, want nil", err)
+			}
+
+			want := map[string]string{"f.txt": "-rw-r--r-- same", "new": "dir", "new/run.sh": "-rwxr-xr-x #!/bin/sh", "link": "-> f.txt"}
+			if diff := cmp.Diff(want, snapshot(t, tree)); diff != "" {
+				t.Fatalf("tree after the turn wrong entries (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(want, snapshot(t, local)); diff != "" {
+				t.Fatalf("directory after the turn wrong entries (-want +got) diff = %s", diff)
+			}
+			if len(reports) > 0 {
+				t.Fatalf("Synced() reports = %v, want none", reports)
+			}
+			if err := att.BeforeTurn(ctx); err != nil {
+				t.Fatalf("BeforeTurn() of the next turn error = %v", err)
+			}
+			if err := att.AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() of the next turn error = %v, want nil", err)
+			}
+			if err := att.Release(); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTurnSyncedKeysWritingTheSameNewFilesDontConflict(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// pullFirst syncs b in before its turn ends, after a wrote back.
+		pullFirst bool
+	}{
+		{name: "both turns end"},
+		{name: "second turn starts after the first ends", pullFirst: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := fsys.Memory()
+			put(t, tree, "README.md", "hi", 0o644)
+			var mu sync.Mutex
+			reported := map[string][]string{}
+			opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(_ context.Context, key string, changes []fsys.Info) {
+				mu.Lock()
+				defer mu.Unlock()
+				for _, c := range changes {
+					reported[key] = append(reported[key], c.Path)
+				}
+			}}
+			w := a2aserve.TurnSynced(tree, opts)
+			ctx := context.Background()
+			atts := map[string]a2aserve.Attachment{}
+			for _, key := range []string{"a", "b"} {
+				att, err := w.Attach(ctx, key)
+				if err != nil {
+					t.Fatalf("TurnSynced().Attach(%q) error = %v", key, err)
+				}
+				atts[key] = att
+				if !tc.pullFirst || key == "a" {
+					if err := att.BeforeTurn(ctx); err != nil {
+						t.Fatalf("BeforeTurn() of %q error = %v", key, err)
+					}
+				}
+				local := fsys.Dir(att.Dir)
+				put(t, local, ".git/opencode", "0123abcd", 0o444)
+				put(t, local, ".git/objects/69/fecf", "blob", 0o444)
+			}
+
+			if err := atts["a"].AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() of a error = %v, want nil", err)
+			}
+			if tc.pullFirst {
+				if err := atts["b"].BeforeTurn(ctx); err != nil {
+					t.Fatalf("BeforeTurn() of b error = %v", err)
+				}
+			}
+			if err := atts["b"].AfterTurn(ctx); err != nil {
+				t.Fatalf("AfterTurn() of b error = %v, want nil", err)
+			}
+
+			want := map[string][]string{"a": {".git", ".git/objects", ".git/objects/69", ".git/objects/69/fecf", ".git/opencode"}}
+			mu.Lock()
+			diff := cmp.Diff(want, reported)
+			mu.Unlock()
+			if diff != "" {
+				t.Fatalf("Synced() reports wrong result (-want +got) diff = %s", diff)
+			}
+			for key, att := range atts {
+				if err := att.Release(); err != nil {
+					t.Fatalf("Release() of %q error = %v", key, err)
+				}
+			}
+		})
+	}
+}
+
+func TestTurnSyncedDoesntWriteBackAnIdenticalRewrite(t *testing.T) {
+	t.Parallel()
+	tree := fsys.Memory()
+	put(t, tree, "f.txt", "base", 0o644)
+	var reports [][]fsys.Info
+	opts := a2aserve.TurnSyncOptions{Dir: t.TempDir(), Synced: func(_ context.Context, _ string, changes []fsys.Info) {
+		reports = append(reports, changes)
+	}}
+	att, err := a2aserve.TurnSynced(tree, opts).Attach(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("TurnSynced().Attach() error = %v", err)
+	}
+	ctx := context.Background()
+	before, err := tree.Stat(ctx, "f.txt")
+	if err != nil {
+		t.Fatalf("FS.Stat() error = %v", err)
+	}
+	if err := att.BeforeTurn(ctx); err != nil {
+		t.Fatalf("BeforeTurn() error = %v", err)
+	}
+	put(t, fsys.Dir(att.Dir), "f.txt", "base", 0o644)
+
+	if err := att.AfterTurn(ctx); err != nil {
+		t.Fatalf("AfterTurn() error = %v, want nil", err)
+	}
+
+	after, err := tree.Stat(ctx, "f.txt")
+	if err != nil {
+		t.Fatalf("FS.Stat() error = %v", err)
+	}
+	if after.Version != before.Version {
+		t.Fatalf("FS.Stat() version after the turn = %q, want %q, the file unwritten", after.Version, before.Version)
+	}
+	if len(reports) > 0 {
+		t.Fatalf("Synced() reports = %v, want none", reports)
+	}
+	if err := att.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
 	}
 }
 

@@ -180,7 +180,7 @@ A completed or failed task sends the artifact before its final status, so a stre
 
 ### Conflicts
 
-When the workspace changed a file during a turn that the agent also changed, the workspace keeps its own version. The agent's version is dropped, and the agent's copy gets the workspace's version. The agent's other changes go back as usual.
+When the workspace changed a file during a turn that the agent also changed, the workspace keeps its own version. The agent's version is dropped, and the agent's copy gets the workspace's version. The agent's other changes go back as usual. When both wrote the same content and permissions, the file counts as unchanged.
 
 The task then fails, even when the agent completed it. Its status message says which files conflicted, and the message's metadata key `a2a-serve/conflicts` lists their paths. The status of such a task:
 
