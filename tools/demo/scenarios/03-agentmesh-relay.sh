@@ -89,7 +89,7 @@ EOF"
   run B "a2a-serve peers --dir ~/a2a-example3/coder"
   run B "a2a-serve contact add reviewer --dir ~/a2a-example3/coder"
   run B "a2a send -a \"\$(a2a-serve status --url=local --dir ~/a2a-example3/coder)\" \\
-  \"$(fake 'Ask reviewer what it thinks of the README in your workspace.' 'call reviewer hello')\""
+  \"$(fake 'Send reviewer the README of your workspace and ask what it thinks of it.' 'call reviewer hello')\""
   approve_pending B '-a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)"'
   expect_status B completed
   expect_log "$HOME/a2a-example3/reviewer" 'task completed'

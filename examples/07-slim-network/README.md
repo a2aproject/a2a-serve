@@ -83,7 +83,7 @@ The agent's SLIM name is `a2a/example7/coder`: the org, the namespace and its na
 a2a-serve peers --dir ~/a2a-example7/coder     # lists reviewer
 a2a-serve contact add reviewer --dir ~/a2a-example7/coder
 a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example7/coder)" \
-  "Ask reviewer what it thinks of the README in your workspace."
+  "Send reviewer the README of your workspace and ask what it thinks of it."
 ```
 
 coder calls reviewer with `a2a send`, a bash command, so it asks first and the task stops in `input-required`. Approve it on the task that the output names:
