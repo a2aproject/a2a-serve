@@ -16,9 +16,9 @@
 // language, speak the protocols a2a-serve-sidecar expects. Run it from a checkout of
 // a2a-serve with
 //
-//	go test ./internal/sidecar/conformance -egress-proxy <url> -intercept api.anthropic.com:443 -refuse blocked.example:443
-//	go test ./internal/sidecar/conformance -tools <url>
-//	go test ./internal/sidecar/conformance -workspace <url>
+//	go test ./sidecar/conformance -egress-proxy <url> -intercept api.anthropic.com:443 -refuse blocked.example:443
+//	go test ./sidecar/conformance -tools <url>
+//	go test ./sidecar/conformance -workspace <url>
 //
 // A proxy must refuse this host's loopback; -allow-loopback skips that
 // check for one that means to reach it. The tools endpoint is http://,
@@ -28,6 +28,8 @@
 // the tree and removes it at the end.
 //
 // Without -egress-proxy, -tools or -workspace it tests the reference host.
+//
+// A host in Go can call [Run] from a test of its own instead.
 package conformance
 
 import (

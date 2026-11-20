@@ -12,13 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package conformance tests that the endpoints of a host, in any language,
-// speak the protocols a2a-serve-sidecar expects. Run it with
-//
-//	go test ./internal/sidecar/conformance -tools <url>
-//
-// where url is the tools endpoint: http://, https:// or unix:///path.
-// Without -tools it tests the reference host.
 package conformance
 
 import (

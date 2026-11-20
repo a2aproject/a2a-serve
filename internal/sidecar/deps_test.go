@@ -26,19 +26,19 @@ import (
 
 const module = "github.com/a2aproject/a2a-serve/"
 
-// TestImportsOnlyTheCore checks that a2a-serve-sidecar is built from the core alone:
-// besides its own packages, it imports only packages the core imports,
-// whose list core/deps_test.go keeps.
+// TestImportsOnlyTheCore checks that a2a-serve-sidecar and its conformance
+// suite are built from the core alone: besides their own packages, they
+// import only packages the core imports, whose list core/deps_test.go keeps.
 func TestImportsOnlyTheCore(t *testing.T) {
 	t.Parallel()
-	for _, dir := range []string{".", "../../cmd/a2a-serve-sidecar", "../../core"} {
+	for _, dir := range []string{".", "../../cmd/a2a-serve-sidecar", "../../sidecar", "../../core"} {
 		readSources(t, dir)
 	}
 	for _, goos := range []string{"linux", "darwin"} {
 		allowed := moduleDeps(t, goos, "../../core/...")
 		var frontend []string
-		for _, pkg := range moduleDeps(t, goos, "./...", "../../cmd/a2a-serve-sidecar") {
-			if strings.HasPrefix(pkg, module+"internal/sidecar") || pkg == module+"cmd/a2a-serve-sidecar" || slices.Contains(allowed, pkg) {
+		for _, pkg := range moduleDeps(t, goos, "./...", "../../cmd/a2a-serve-sidecar", "../../sidecar/...") {
+			if strings.HasPrefix(pkg, module+"internal/sidecar") || strings.HasPrefix(pkg, module+"sidecar/") || pkg == module+"cmd/a2a-serve-sidecar" || slices.Contains(allowed, pkg) {
 				continue
 			}
 			frontend = append(frontend, pkg)
