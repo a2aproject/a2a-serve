@@ -114,7 +114,7 @@ EOF" "mkdir -p ~/a2a-example7/reviewer && cd ~/a2a-example7/reviewer"
   run coder "a2a-serve contact add reviewer --dir ~/a2a-example7/coder"
   clear_pane coder
   run coder "a2a send -a \"\$(a2a-serve status --url=local --dir ~/a2a-example7/coder)\" \\
-  \"$(fake 'Ask reviewer what it thinks of the README in your workspace.' 'call reviewer hello')\""
+  \"$(fake 'Send reviewer the README of your workspace and ask what it thinks of it.' 'call reviewer hello')\""
   approve_pending coder '-a "$(a2a-serve status --url=local --dir ~/a2a-example7/coder)"'
   expect_status coder completed
   expect_log "$HOME/a2a-example7/reviewer" 'task completed'

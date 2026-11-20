@@ -95,7 +95,7 @@ Everyone on this relay can call reviewer, so coder needs no code:
 ```bash
 a2a-serve contact add reviewer --dir ~/a2a-example3/coder
 a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)" \
-  "Ask reviewer what it thinks of the README in your workspace."
+  "Send reviewer the README of your workspace and ask what it thinks of it."
 ```
 
 coder calls reviewer with `a2a send`, a bash command, so it asks first and the
