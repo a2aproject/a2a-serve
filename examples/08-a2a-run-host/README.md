@@ -96,7 +96,7 @@ Artifacts:
   [a2a-run/changes] {"removed":[]} file: hello.py (text/x-python; charset=utf-8, 15 B)
 ```
 
-`out/` now has `hello.py`. Terminal A logs a `hooks/beforeTool` and a `hooks/afterTool` call for each tool call.
+`out/` now has `hello.py`. Terminal A logs a `hooks/beforeTool` call for each tool call the agent asks permission for, such as the write and the command, and a `hooks/afterTool` call for each tool call.
 
 ## 5. Let the host refuse a command
 
