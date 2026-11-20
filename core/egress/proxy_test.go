@@ -126,12 +126,12 @@ func (p *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // spoofed returns the names of the headers in h that a proxy can read as
-// A2A-Run-* headers, besides the ones a2a-run sets.
+// A2A-Sidecar-* headers, besides the ones a2a-serve-sidecar sets.
 func spoofed(h http.Header) string {
 	var out []string
 	for name := range h {
 		norm := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
-		if strings.HasPrefix(norm, "a2a-run-") && name != "A2a-Run-Context" && name != "A2a-Run-Task" {
+		if strings.HasPrefix(norm, "a2a-sidecar-") && name != "A2a-Sidecar-Context" && name != "A2a-Sidecar-Task" {
 			out = append(out, name)
 		}
 	}
@@ -307,7 +307,7 @@ func TestProxyRouterForwardsInterceptedRequests(t *testing.T) {
 	addr, ca := proxyEndpoint(t, egress.ProxyConfig{URL: url, Task: func(key string) string { return "task-of-" + key }}, 5*time.Second, "ctx-1")
 	c := client(t, addr, ca)
 
-	status, body, err := get(t, c, "https://api.example.test/v1/models?page=2", http.Header{"A2a-Run-Context": {"forged"}, "A2A_Run_Context": {"victim"}, "a2a_run-task": {"victim"}, "A2a-Run-Other": {"x"}})
+	status, body, err := get(t, c, "https://api.example.test/v1/models?page=2", http.Header{"A2a-Sidecar-Context": {"forged"}, "A2A_Sidecar_Context": {"victim"}, "a2a_sidecar-task": {"victim"}, "A2a-Sidecar-Other": {"x"}})
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("GET https://api.example.test = %d, %v, want 200", status, err)
 	}

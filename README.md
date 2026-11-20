@@ -63,7 +63,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 5. **[Relay on Cloud Run](./examples/05-relay-cloud-run/README.md):** deploy a persistent relay with Cloud SQL and Secret Manager.
 6. **[Talk to Your Agent on Telegram](./examples/06-telegram-voice/README.md):** send voice notes to the agent and get voice replies.
 7. **[SLIM Network](./examples/07-slim-network/README.md):** connect two agents through a SLIM node, and call one from any SLIM client.
-8. **[Run a Sandboxed Agent for Your Program](./examples/08-a2a-run-host/README.md):** serve an agent to a program with `a2a-run`, give it the program's tools, and get its files back with each task.
+8. **[Run a Sandboxed Agent for Your Program](./examples/08-sidecar-host/README.md):** serve an agent to a program with `a2a-serve-sidecar`, give it the program's tools, and get its files back with each task.
 
 ## User Guide
 
@@ -74,7 +74,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 | **Access & approvals** | [Approvals](./docs/guide/approvals.md) · [Inspector](./docs/guide/inspector.md) · [Identities](./docs/guide/identities.md) · [Email Sign-In](./docs/guide/email-sign-in.md) |
 | **Networks & chat** | [Networks](./docs/guide/networks.md) · [Relays](./docs/guide/relays.md) · [Messengers](./docs/guide/messengers.md) · [Voice](./docs/guide/voice.md) |
 | **Multi-agent** | [Agent2Agent](./docs/guide/agent2agent.md) · [Webhook Nodes](./docs/guide/webhook-nodes.md) |
-| **Architecture & reference** | [Architecture](./docs/advanced/architecture.md) · [Sandboxing](./docs/advanced/sandboxing.md) · [Access Model](./docs/advanced/access-model.md) · [Security](./docs/advanced/security.md) · [Agent Mesh](./docs/advanced/agent-mesh.md) · [Agent Directory](./docs/advanced/agent-directory.md) · [Commands](./docs/reference/commands/a2a-serve.md) · [Config File](./docs/reference/configuration.md) · [HTTP Routes](./docs/reference/http-routes.md) · [Approval Messages](./docs/reference/approval-messages.md) · [Audio Messages](./docs/reference/audio-messages.md) · [Output](./docs/reference/output.md) · [a2a CLI](./docs/reference/a2a-cli.md) · [a2a-run](./docs/reference/a2a-run.md) |
+| **Architecture & reference** | [Architecture](./docs/advanced/architecture.md) · [Sandboxing](./docs/advanced/sandboxing.md) · [Access Model](./docs/advanced/access-model.md) · [Security](./docs/advanced/security.md) · [Agent Mesh](./docs/advanced/agent-mesh.md) · [Agent Directory](./docs/advanced/agent-directory.md) · [Commands](./docs/reference/commands/a2a-serve.md) · [Config File](./docs/reference/configuration.md) · [HTTP Routes](./docs/reference/http-routes.md) · [Approval Messages](./docs/reference/approval-messages.md) · [Audio Messages](./docs/reference/audio-messages.md) · [Output](./docs/reference/output.md) · [a2a CLI](./docs/reference/a2a-cli.md) · [a2a-serve-sidecar](./docs/reference/a2a-serve-sidecar.md) |
 
 ## Things to Know
 

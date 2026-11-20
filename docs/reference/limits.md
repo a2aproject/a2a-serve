@@ -1,6 +1,6 @@
 # Limits
 
-This page lists the limits, caps and timeouts of the server, the relay and `a2a-run`. You rarely hit them in normal use. When you do, the error or `a2a-serve status` says which one.
+This page lists the limits, caps and timeouts of the server, the relay and `a2a-serve-sidecar`. You rarely hit them in normal use. When you do, the error or `a2a-serve status` says which one.
 
 ## Sandbox
 
@@ -155,38 +155,38 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Database backups made by `relay upgrade` | The last 3 |
 | Requests | [HTTP Routes](http-routes.md#relay-routes) |
 
-## a2a-run
+## a2a-serve-sidecar
 
 | Limit | Value |
 | --- | --- |
-| Agent processes running at once | 4 for the A2A contexts. `--max-processes` changes it, up to 64. One more process runs for the life of `a2a-run`, started to check that the agent starts. |
+| Agent processes running at once | 4 for the A2A contexts. `--max-processes` changes it, up to 64. One more process runs for the life of `a2a-serve-sidecar`, started to check that the agent starts. |
 | Idle agent process | Stops after 10 minutes |
 | Tasks running at once | 64 |
 | Question with no answer | The task fails after 4 hours |
 | Memory, CPUs and processes of a container | 4 GB, 2 CPUs and 512 processes |
 | Length of a context ID | 256 characters |
 | Tasks and agent sessions of a context | Forgotten 1 hour after the context's last change, once all its tasks ended |
-| Contexts kept | 1000. Past that, or past 256 MB of tasks, `a2a-run` forgets the contexts whose tasks all ended, least recently changed first. |
-| Tasks kept for one context | 100. Past that, `a2a-run` forgets the oldest tasks that ended. |
+| Contexts kept | 1000. Past that, or past 256 MB of tasks, `a2a-serve-sidecar` forgets the contexts whose tasks all ended, least recently changed first. |
+| Tasks kept for one context | 100. Past that, `a2a-serve-sidecar` forgets the oldest tasks that ended. |
 | Requests at once | 1024, including open streams |
 | Egress proxy decision | The connection fails with 502 when the proxy doesn't connect and answer CONNECT within 10 seconds, or its answer head exceeds 16 KB |
-| Egress proxy refusal | `a2a-run` reads 4 KB of the body and shows the agent the first 256 characters on one line |
+| Egress proxy refusal | `a2a-serve-sidecar` reads 4 KB of the body and shows the agent the first 256 characters on one line |
 | Egress proxy answer to an intercepted request | The head must arrive within 10 minutes and fit in 64 KB. The sandbox's own limits on intercepted requests also apply. |
 | Idle connections to the egress proxy | 32, each closed after 90 seconds unused |
 | Start of the session with the tools endpoint | 10 seconds |
 | Answer to `hooks/beforeTool` | 30 seconds; a call without an answer in time is denied |
 | `hooks/afterTool` notification | 10 seconds. Up to 64 wait to be sent; more are dropped. |
 | Output of a tool call in `hooks/afterTool` | 64 KiB |
-| An answer of the tools endpoint to `a2a-run` | 1 MiB |
-| Requests of `a2a-run` to the tools endpoint at once | 16 |
+| An answer of the tools endpoint to `a2a-serve-sidecar` | 1 MiB |
+| Requests of `a2a-serve-sidecar` to the tools endpoint at once | 16 |
 | Check at start that the file server of a `--workspace` URL answers | 10 seconds |
 | Workspace with `turn` sync | 1 GiB of files and 200000 entries, also for `--workspace memory` as a whole. A larger `dir:` workspace fails at start. A workspace that grows past them fails the turn until files are removed. |
 | Files in the changes artifact | 1 MiB each and 4 MiB in total. Past that, the artifact lists the file without its content. |
 | Paths that the changes artifact lists | 1000. Past that, it counts the rest. |
-| Changes artifacts that wait for their task to end | 1024 or 64 MB. Past that, `a2a-run` drops the oldest. |
+| Changes artifacts that wait for their task to end | 1024 or 64 MB. Past that, `a2a-serve-sidecar` drops the oldest. |
 | Contacts | 100 |
 | A response from a contact | 32 MiB, except event streams |
-| Fetch of a contact's agent card | 10 seconds. `a2a-run` fetches the cards every hour, and a card that failed every minute. |
+| Fetch of a contact's agent card | 10 seconds. `a2a-serve-sidecar` fetches the cards every hour, and a card that failed every minute. |
 | Approvals of contacts that wait for the host | 1000. An approval is forgotten after 4 hours. |
 | Wait for a contact's task after an answer to its approval | 1 hour |
 | A `--contact-auth` value read from stdin with `-` | 64 KiB |
