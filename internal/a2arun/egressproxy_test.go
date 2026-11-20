@@ -55,7 +55,7 @@ func TestEgressProxyReportsInvalidFlags(t *testing.T) {
 	}{
 		{name: "with egress rules", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--egress", "allowlist", "--egress-allow", "nas.lan"}, want: "--egress-proxy can't be used with --egress, --egress-allow: the proxy decides every connection"},
 		{name: "with a model key", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--inject-model-key", "anthropic=ANTHROPIC_API_KEY"}, want: "--egress-proxy can't be used with --inject-model-key"},
-		{name: "local sandbox", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--sandbox", "local"}, want: "--egress-proxy need --sandbox docker"},
+		{name: "local sandbox", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--sandbox", "local"}, want: "--egress-proxy needs --sandbox docker"},
 		{name: "invalid URL", args: []string{"--egress-proxy", "https://proxy.example:443"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL isn't http or unix"},
 		{name: "URL with credentials", args: []string{"--egress-proxy", "http://user:hunter2@proxy.example:8080/?token=hunter2"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL can't carry credentials"},
 	}

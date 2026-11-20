@@ -239,7 +239,7 @@ func TestMainReportsInvalidFlags(t *testing.T) {
 		{name: "unknown flag", args: []string{"--agent", "opencode", "--port", "1"}, want: "unknown flag: --port"},
 		{name: "argument", args: []string{"opencode"}, want: `a2a-run takes no arguments, got "opencode"`},
 		{name: "info on a terminal", args: []string{"info"}, want: `a2a-run takes no arguments, got "info"`},
-		{name: "egress with local", args: []string{"--agent", "opencode", "--workspace", workspace, "--sandbox", "local", "--egress", "allowlist"}, want: "--egress need --sandbox docker"},
+		{name: "egress with local", args: []string{"--agent", "opencode", "--workspace", workspace, "--sandbox", "local", "--egress", "allowlist"}, want: "--egress needs --sandbox docker"},
 		{name: "invalid max processes", args: []string{"--agent", "opencode", "--workspace", workspace, "--max-processes", "x"}, want: `invalid argument "x" for "--max-processes"`},
 	}
 	for _, tc := range tests {
