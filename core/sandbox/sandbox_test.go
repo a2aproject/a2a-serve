@@ -335,6 +335,9 @@ func TestDockerServesLiveWorkspace(t *testing.T) {
 		t.Fatalf("Docker().Probe() error = %v", err)
 	}
 	if !slices.Contains(caps.Mounts, sandbox.MountServed) {
+		if profile := os.Getenv(envLiveAppArmor); profile != "" {
+			t.Fatalf("Docker(ServedAppArmor: %s).Probe() doesn't support served mounts: %s", profile, caps.MountProblems[sandbox.MountServed])
+		}
 		t.Skipf("served mounts can't work here: %s", caps.MountProblems[sandbox.MountServed])
 	}
 
@@ -436,6 +439,10 @@ func TestServedNeedsBoundary(t *testing.T) {
 	}
 }
 
+// envLiveAppArmor names the AppArmor profile that the containers with a
+// live workspace get in the tests, which then fail where it can't mount.
+const envLiveAppArmor = "A2A_SERVE_TEST_LIVE_APPARMOR"
+
 // dockerRuntime returns the Docker runtime with a launcher built from this
 // tree and the image of the probe, or skips the test where it can't run.
 func dockerRuntime(t *testing.T) (sandbox.Runtime, string) {
@@ -450,7 +457,7 @@ func dockerRuntime(t *testing.T) (sandbox.Runtime, string) {
 		t.Skipf("docker isn't available: %v", err)
 	}
 	launcher := filepath.Join(t.TempDir(), "launcher")
-	rt := sandbox.Docker(sandbox.DockerOptions{Launcher: launcher, StateDir: t.TempDir()})
+	rt := sandbox.Docker(sandbox.DockerOptions{Launcher: launcher, StateDir: t.TempDir(), ServedAppArmor: os.Getenv(envLiveAppArmor)})
 	return rt, buildTestContainer(t, launcher)
 }
 

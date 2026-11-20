@@ -79,7 +79,7 @@ A live workspace needs the launcher, so it runs only behind the egress boundary.
 | Runtime | Live workspace |
 | --- | --- |
 | Docker rootless on Linux | Yes, verified |
-| Docker rootful on Linux | Docker's default AppArmor profile denies the mount, and the container doesn't start where Docker applies AppArmor. Embedders can name another profile with `DockerOptions.ServedAppArmor`, such as `unconfined`, which runs the container without AppArmor. Not verified yet. |
+| Docker rootful on Linux | Yes, verified, with the AppArmor profile `a2a-serve-live` where Docker applies AppArmor. The profile is Docker's default with the FUSE mount allowed. `a2a-serve-sidecar` uses it once it is [loaded](../reference/a2a-serve-sidecar.md#workspace), and embedders name it with `DockerOptions.ServedAppArmor`. |
 | Docker Desktop | No: the egress container doesn't carry the fs socket yet |
 | bubblewrap on Linux | Yes, verified. It needs `/dev/fuse` and unprivileged user namespaces. |
 | Local | No: the agent runs on the host, with no mount namespace |

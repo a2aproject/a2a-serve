@@ -64,7 +64,7 @@ func Main(ctx context.Context, args []string, std IO) int {
 	cmd := newRunCmd(std)
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
-	err := cmd.Execute()
+	ran, err := cmd.ExecuteC()
 	if err == nil {
 		return 0
 	}
@@ -74,8 +74,8 @@ func Main(ctx context.Context, args []string, std IO) int {
 	}
 	printError(std.Stderr, err)
 	// A server that printed its ready line reports later errors on stderr
-	// only, so that stdout has one line.
-	if errors.Is(err, errAfterReady) {
+	// only, so that stdout has one line. Other commands print no ready line.
+	if errors.Is(err, errAfterReady) || ran != cmd {
 		return code
 	}
 	if werr := writeReady(std.Stdout, serve.Ready{Error: err.Error()}); werr != nil {

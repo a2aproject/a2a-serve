@@ -47,9 +47,11 @@ type DockerOptions struct {
 	// [Served] mount, whose launcher mounts it with FUSE. Docker's default
 	// profile denies the mount, so where Docker applies AppArmor, such as
 	// rootful Docker on Ubuntu, a Served mount needs a profile that allows
-	// it, or "unconfined", which runs the container without AppArmor.
-	// Empty keeps Docker's default and refuses Served mounts where it
-	// applies.
+	// it. "a2a-serve-live" is Docker's default profile with only that
+	// mount allowed; `a2a-serve-sidecar apparmor-profile` prints it, to
+	// load with apparmor_parser on the machine of the Docker daemon.
+	// "unconfined" runs the container without AppArmor. Empty keeps
+	// Docker's default and refuses Served mounts where it applies.
 	ServedAppArmor string
 }
 

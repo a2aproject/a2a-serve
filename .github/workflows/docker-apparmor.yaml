@@ -1,0 +1,52 @@
+# Runs the live workspace tests on rootful Docker, which applies AppArmor
+# on the runner, with the a2a-serve-live profile loaded as the docs say.
+name: Docker AppArmor
+
+on:
+  push:
+    branches: [ "main", "release/**" ]
+
+  pull_request:
+    branches: [ "main", "release/**" ]
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  live-workspace:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Check that Docker applies AppArmor
+      run: docker info --format '{{.SecurityOptions}}' | grep -q name=apparmor
+
+    - name: Install a2a-serve-sidecar
+      run: |
+        CGO_ENABLED=0 go build -mod=readonly -o "$RUNNER_TEMP/bin/a2a-serve-sidecar" ./cmd/a2a-serve-sidecar
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+    - name: Load the AppArmor profile
+      run: a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r
+
+    # The tests fail where the profile doesn't let the containers mount a
+    # live workspace. The step also fails if a test skipped or didn't run.
+    - name: Test
+      shell: bash
+      env:
+        A2A_SERVE_TEST_LIVE_APPARMOR: a2a-serve-live
+      run: |
+        go test -mod=readonly -v -count=1 -run '^TestDockerServesLiveWorkspace$' ./core/sandbox | tee "$RUNNER_TEMP/core.log"
+        go test -mod=readonly -v -count=1 -run '^TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds$' ./internal/sidecar | tee "$RUNNER_TEMP/sidecar.log"
+        if grep -E -- '--- (SKIP|FAIL)' "$RUNNER_TEMP/core.log" "$RUNNER_TEMP/sidecar.log"; then exit 1; fi
+        grep -q -- '^--- PASS: TestDockerServesLiveWorkspace ' "$RUNNER_TEMP/core.log"
+        grep -q -- '^--- PASS: TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds ' "$RUNNER_TEMP/sidecar.log"

@@ -287,7 +287,18 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	case SandboxBwrap:
 		return bwrapRuntime(ctx, set)
 	}
-	rt := sandbox.Docker(sandbox.DockerOptions{Progress: stderr})
+	opts := sandbox.DockerOptions{Progress: stderr}
+	if set.workspace.served() {
+		profile, err := sandboxrt.LiveDockerAppArmor(ctx, sandboxrt.AppArmorDir)
+		if errors.Is(err, sandboxrt.ErrLiveAppArmorNotLoaded) {
+			return nil, "", sandbox.Capabilities{}, fmt.Errorf("--workspace-sync live with --workspace %s needs a sandbox that mounts the workspace, which Docker here can't: %w; %s", set.workspace.shown, err, appArmorHint)
+		}
+		if err != nil {
+			return nil, "", sandbox.Capabilities{}, err
+		}
+		opts.ServedAppArmor = profile
+	}
+	rt := sandbox.Docker(opts)
 	caps, err := rt.Probe(ctx)
 	if err != nil {
 		return nil, "", sandbox.Capabilities{}, err

@@ -79,6 +79,8 @@ func newRunCmd(std IO) *cobra.Command {
 	cmd.SetOut(std.Stdout)
 	cmd.SetErr(std.Stderr)
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &serve.UsageError{Err: err} })
+	cmd.CompletionOptions.DisableDefaultCmd = true
+	cmd.AddCommand(newAppArmorCmd(std))
 	f := cmd.Flags()
 	f.SortFlags = false
 	f.StringVar(&cfg.Agent, "agent", "", "Agent to serve, a `name`: claude or opencode")

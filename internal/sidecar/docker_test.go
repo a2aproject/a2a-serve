@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/refhost"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
@@ -106,11 +109,23 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T) {
 	t.Parallel()
 	bin, image := dockerTestEnv(t)
-	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin}).Probe(context.Background())
+	ctx := context.Background()
+	wantProfile := os.Getenv(envLiveAppArmor)
+	profile, profileErr := sandboxrt.LiveDockerAppArmor(ctx, sandboxrt.AppArmorDir)
+	if profileErr != nil && !errors.Is(profileErr, sandboxrt.ErrLiveAppArmorNotLoaded) {
+		t.Fatalf("sandboxrt.LiveDockerAppArmor() error = %v", profileErr)
+	}
+	if wantProfile != "" && profile != wantProfile {
+		t.Fatalf("sandboxrt.LiveDockerAppArmor() = %q, %v, want %q", profile, profileErr, wantProfile)
+	}
+	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin, ServedAppArmor: profile}).Probe(ctx)
 	if err != nil {
 		t.Fatalf("Docker().Probe() error = %v", err)
 	}
 	served := slices.Contains(caps.Mounts, sandbox.MountServed)
+	if wantProfile != "" && !served {
+		t.Fatalf("Docker(ServedAppArmor: %q).Probe() doesn't support served mounts: %s", profile, caps.MountProblems[sandbox.MountServed])
+	}
 	tests := []struct {
 		name string
 		// workspace returns the --workspace value, and a function that
@@ -152,6 +167,9 @@ func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T
 				if !strings.Contains(ready.Error, "--workspace-sync live") || !strings.Contains(ready.Error, "use --workspace-sync turn") {
 					t.Fatalf("ready line where Docker can't mount a live workspace = %+v, want an error with the hint to use turn sync", ready)
 				}
+				if errors.Is(profileErr, sandboxrt.ErrLiveAppArmorNotLoaded) && !strings.Contains(ready.Error, "a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r") {
+					t.Fatalf("ready line where the AppArmor profile isn't loaded = %+v, want an error with the command that loads it", ready)
+				}
 				return
 			}
 			if ready := startBinary(t, bin, args...); ready.Workspace != tc.name || ready.WorkspaceSync != serve.SyncLive {
@@ -175,6 +193,11 @@ func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T
 		})
 	}
 }
+
+// envLiveAppArmor names the AppArmor profile that a2a-serve-sidecar must
+// find loaded and give the containers with a live workspace, so that the
+// test fails where they can't mount it.
+const envLiveAppArmor = "A2A_SERVE_TEST_LIVE_APPARMOR"
 
 // failedReady runs the a2a-serve-sidecar binary bin with args, which must fail to
 // start, and returns its ready line.

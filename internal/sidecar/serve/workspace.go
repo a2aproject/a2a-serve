@@ -56,8 +56,12 @@ const (
 // workspace of a URL.
 const workspaceCheckTimeout = 10 * time.Second
 
-// liveHint is the hint of a live workspace that the sandbox can't mount.
-const liveHint = "use --workspace-sync turn, which works on every sandbox"
+// liveHint is the hint of a live workspace that the sandbox can't mount,
+// and appArmorHint the hint where Docker's AppArmor profile denies it.
+const (
+	liveHint     = "use --workspace-sync turn, which works on every sandbox"
+	appArmorHint = "load the profile with `a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r`, or " + liveHint
+)
 
 // workspaceLimits bound a workspace with turn sync, which
 // docs/reference/limits.md lists.
