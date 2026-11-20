@@ -53,6 +53,15 @@ type DockerOptions struct {
 	// "unconfined" runs the container without AppArmor. Empty keeps
 	// Docker's default and refuses Served mounts where it applies.
 	ServedAppArmor string
+	// Runtime is the OCI runtime of the containers, as docker run
+	// --runtime takes it, such as runsc for gVisor. Probe and Create fail
+	// when Docker doesn't have it. Empty is Docker's default. Under gVisor,
+	// runsc must run with --host-uds=open, so that the containers reach
+	// their egress endpoint; where they can't, Create fails, and the
+	// containers never get runsc's own network. [Served] mounts are
+	// refused there, since gVisor's FUSE can't map files into memory,
+	// which git needs.
+	Runtime string
 }
 
 // Docker returns the runtime that runs commands in Docker containers.
@@ -61,7 +70,7 @@ func Docker(opts DockerOptions) Runtime {
 		stateDir: opts.StateDir,
 		launcher: opts.Launcher,
 		newBackend: func(dir string, launcher func() string) *sandboxrt.Docker {
-			return sandboxrt.NewDocker(filepath.Join(dir, "env"), launcher, opts.ServedAppArmor)
+			return sandboxrt.NewDocker(sandboxrt.DockerConfig{EnvDir: filepath.Join(dir, "env"), Launcher: launcher, ServedAppArmor: opts.ServedAppArmor, Runtime: opts.Runtime})
 		},
 	}}
 }
@@ -72,7 +81,7 @@ type docker struct {
 }
 
 func (d *docker) Probe(ctx context.Context) (Capabilities, error) {
-	c, err := sandboxrt.NewDocker("", func() string { return d.opts.Launcher }, d.opts.ServedAppArmor).Probe(ctx)
+	c, err := sandboxrt.NewDocker(sandboxrt.DockerConfig{Launcher: func() string { return d.opts.Launcher }, ServedAppArmor: d.opts.ServedAppArmor, Runtime: d.opts.Runtime}).Probe(ctx)
 	if err != nil {
 		return Capabilities{}, err
 	}

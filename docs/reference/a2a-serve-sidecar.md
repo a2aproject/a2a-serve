@@ -36,11 +36,11 @@ Once the agent is up, `a2a-serve-sidecar` prints one JSON line on stdout. Logs g
 | --- | --- |
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
-| `sandbox` | `docker`, `docker (rootless)`, `bwrap` or `local` |
+| `sandbox` | `docker`, `docker (rootless)`, `gvisor`, `gvisor (rootless)`, `bwrap` or `local` |
 | `workspace` | `dir`, `memory` or `url` |
 | `workspace_sync` | `turn` or `live` |
 | `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |
-| `egress` | What decides the agent's connections, with `--sandbox docker` or `bwrap`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-serve-sidecar`, and the agent uses Docker's network. The log on stderr says why. |
+| `egress` | What decides the agent's connections, with `--sandbox docker`, `gvisor` or `bwrap`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-serve-sidecar`, and the agent uses Docker's network. The log on stderr says why. |
 | `error` | Why it failed to start, with `ready` false |
 
 When it fails to start, it prints `{"ready":false,"error":"..."}` and exits with code 2 for invalid flags, or 1 for other errors.
@@ -56,7 +56,7 @@ $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"proxy"}
 ```
 
-The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker` or `bwrap`, and replaces `--egress`, `--egress-allow` and `--inject-model-key`. [a2a-serve-sidecar egress proxy protocol](a2a-serve-sidecar-egress-proxy.md) specifies what the proxy gets and answers.
+The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker`, `gvisor` or `bwrap`, and replaces `--egress`, `--egress-allow` and `--inject-model-key`. [a2a-serve-sidecar egress proxy protocol](a2a-serve-sidecar-egress-proxy.md) specifies what the proxy gets and answers.
 
 ## A2A endpoint
 
@@ -110,6 +110,7 @@ When a contact asks for an approval, the task ends its turn in `input-required` 
 `--sandbox` picks where the agent runs:
 
 - `docker`, the default, runs the agent in a container of its image.
+- `gvisor` runs the agent in a container of its image with [gVisor](https://gvisor.dev)'s runtime `runsc`, which Docker must have, run with `--host-uds=open`. Every connection of the agent goes through `a2a-serve-sidecar`, and it fails to start where that can't work. `live` sync of a `memory` or URL workspace doesn't work under gVisor. [Sandboxing](../advanced/sandboxing.md#gvisor) describes the setup.
 - `bwrap` runs the agent that this machine has with [bubblewrap](https://github.com/containers/bubblewrap), on Linux. It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `/dev/fuse` for a `memory` or URL workspace with `live` sync. Every connection of the agent goes through `a2a-serve-sidecar`, and it fails to start where that can't work. Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor by default; the error then names the setting and how to lift it, as [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes.
 - `local` runs the agent on this machine with no isolation.
 
@@ -120,6 +121,13 @@ $ a2a-serve-sidecar --sandbox bwrap --agent opencode --workspace dir:$PWD \
     --inject-model-key openrouter=OPENROUTER_API_KEY \
     --listen unix:///tmp/a2a-serve-sidecar.sock
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"bwrap","workspace":"dir","workspace_sync":"turn","egress":"policy"}
+```
+
+```console
+$ a2a-serve-sidecar --sandbox gvisor --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"gvisor","workspace":"dir","workspace_sync":"turn","egress":"policy"}
 ```
 
 ## Stopping
@@ -148,7 +156,7 @@ $ a2a-serve-sidecar --agent opencode --workspace unix:///run/host/fs.sock --work
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"url","workspace_sync":"live","egress":"policy"}
 ```
 
-At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
+At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet, and neither can gVisor. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
 
 Rootful Docker on Ubuntu and other systems with AppArmor needs an AppArmor profile that allows the mount. The profile needs AppArmor 3.0 or later, as in Ubuntu 22.04 and Debian 12. Load it once after each boot, on the machine where the Docker daemon runs:
 
@@ -206,8 +214,8 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--agent name` |  | Agent to serve, a name: claude or opencode |
 | `--command words` |  | Command line of the agent, as shell words: replaces the command of --agent, or without --agent starts any agent that speaks ACP on stdio |
 | `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
-| `--image string` |  | Container image of the agent (default: the image of --agent); only applies to --sandbox docker |
-| `--sandbox string` | `docker` | Where the agent runs: docker, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
+| `--image string` |  | Container image of the agent (default: the image of --agent); only applies to --sandbox docker and gvisor |
+| `--sandbox string` | `docker` | Where the agent runs: docker, gvisor for Docker containers under gVisor's runtime runsc, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
 | `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts and the hosts of --inject-model-key) (default internet) |
 | `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port |
 | `--egress-proxy URL` |  | HTTP proxy that decides every connection of the sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow and --inject-model-key |

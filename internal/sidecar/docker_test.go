@@ -57,7 +57,7 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 			dir := testutil.ShortTempDir(t)
 			url := serveHost(t, host, dir)
 			sock := filepath.Join(dir, "a2a.sock")
-			args := []string{"--sandbox", "docker", "--image", image, "--command", "/usr/local/bin/fakeacp",
+			args := []string{"--sandbox", dockerSandbox(), "--image", image, "--command", "/usr/local/bin/fakeacp",
 				"--workspace", "dir:" + t.TempDir(), "--tools", url, "--listen", "unix://" + sock, "--max-processes", "1"}
 			if tc.egressProxy {
 				args = append(args, "--egress-proxy", url)
@@ -118,7 +118,9 @@ func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T
 	if wantProfile != "" && profile != wantProfile {
 		t.Fatalf("sandboxrt.LiveDockerAppArmor() = %q, %v, want %q", profile, profileErr, wantProfile)
 	}
-	caps, err := sandbox.Docker(sandbox.DockerOptions{Launcher: bin, ServedAppArmor: profile}).Probe(ctx)
+	opts := dockerOptions(bin)
+	opts.ServedAppArmor = profile
+	caps, err := sandbox.Docker(opts).Probe(ctx)
 	if err != nil {
 		t.Fatalf("Docker().Probe() error = %v", err)
 	}
@@ -159,15 +161,18 @@ func TestLiveWorkspaceInDockerShowsTheAgentsWritesBeforeTheTurnEnds(t *testing.T
 			t.Parallel()
 			workspace, seen := tc.workspace(t)
 			sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
-			args := []string{"--sandbox", "docker", "--image", image, "--command", "/usr/local/bin/fakeacp", "--egress", "allowlist",
+			args := []string{"--sandbox", dockerSandbox(), "--image", image, "--command", "/usr/local/bin/fakeacp", "--egress", "allowlist",
 				"--workspace", workspace, "--workspace-sync", "live", "--listen", "unix://" + sock}
 			if !served {
-				t.Logf("Docker here can't mount a live workspace, so the test checks the refusal: %s", caps.MountProblems[sandbox.MountServed])
+				t.Logf("The sandbox here can't mount a live workspace, so the test checks the refusal: %s", caps.MountProblems[sandbox.MountServed])
 				ready := failedReady(t, bin, args...)
 				if !strings.Contains(ready.Error, "--workspace-sync live") || !strings.Contains(ready.Error, "use --workspace-sync turn") {
 					t.Fatalf("ready line where Docker can't mount a live workspace = %+v, want an error with the hint to use turn sync", ready)
 				}
-				if errors.Is(profileErr, sandboxrt.ErrLiveAppArmorNotLoaded) && !strings.Contains(ready.Error, "a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r") {
+				if dockerSandbox() == serve.SandboxGVisor && !strings.Contains(ready.Error, "gVisor") {
+					t.Fatalf("ready line under gVisor = %+v, want an error that names gVisor", ready)
+				}
+				if dockerSandbox() == serve.SandboxDocker && errors.Is(profileErr, sandboxrt.ErrLiveAppArmorNotLoaded) && !strings.Contains(ready.Error, "a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r") {
 					t.Fatalf("ready line where the AppArmor profile isn't loaded = %+v, want an error with the command that loads it", ready)
 				}
 				return

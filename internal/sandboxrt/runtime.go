@@ -33,6 +33,9 @@ type RuntimeInfo struct {
 	// ServedAppArmor is the AppArmor profile of Docker containers with
 	// live workspaces, or "" for Docker's default.
 	ServedAppArmor string
+	// Runtime is the OCI runtime of Docker containers, or "" for Docker's
+	// default.
+	Runtime string
 }
 
 var runtimeOf func(any) (RuntimeInfo, bool)

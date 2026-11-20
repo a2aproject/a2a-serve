@@ -50,7 +50,7 @@ func parseTools(v, sandbox string) (*hosttools.Endpoint, error) {
 		return nil, usagef("invalid --tools: %w", err)
 	}
 	if ep.Unix() && sandbox == SandboxLocal {
-		return nil, usagef("--tools unix:// needs --sandbox docker or bwrap: with --sandbox local the agent connects to the tools endpoint itself, so pass an http:// URL")
+		return nil, usagef("--tools unix:// needs --sandbox docker, gvisor or bwrap: with --sandbox local the agent connects to the tools endpoint itself, so pass an http:// URL")
 	}
 	return &ep, nil
 }
