@@ -87,7 +87,7 @@ func serveForTest(spec string) int {
 	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if err := server.Unmount(); err != nil {
+	if err := unmountWhenIdle(server.Unmount); err != nil {
 		fmt.Fprintln(os.Stderr, "unmounting:", err)
 		return 1
 	}
@@ -231,4 +231,18 @@ func isMounted(dir string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// unmountWhenIdle calls unmount until it succeeds, for a mount that another
+// process, such as one that reads the temporary directories, keeps busy
+// for a moment.
+func unmountWhenIdle(unmount func() error) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := unmount()
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

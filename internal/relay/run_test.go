@@ -27,6 +27,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -122,27 +123,63 @@ func (noRoutes) Enrollment(string) bool          { return false }
 func (noRoutes) Ingress(string) (string, string) { return "", "" }
 
 // runFake runs a relay over b and returns its directory, its URL, its
-// control client, and the result of Run.
+// control client, and the result of Run. Another process can take the
+// relay's port before the relay listens on it, so it tries other ports.
 func runFake(t *testing.T, b Backend) (relaydir.Dir, string, *control.Client, context.CancelFunc, <-chan error) {
 	t.Helper()
 	d := relaydir.Dir{Root: testutil.ShortTempDir(t)}
-	port := freeLoopbackPort(t)
-	relayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if _, err := d.SaveSettings(relaydir.Settings{URL: relayURL, Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
-		t.Fatalf("SaveSettings() error = %v", err)
+	for range 5 {
+		port := freeLoopbackPort(t)
+		relayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+		if _, err := d.SaveSettings(relaydir.Settings{URL: relayURL, Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+			t.Fatalf("SaveSettings() error = %v", err)
+		}
+		release, err := d.Lock()
+		if err != nil {
+			t.Fatalf("Lock() error = %v", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			err := New(Options{Dir: d, Backend: b, A2AServe: "test", Out: io.Discard, TunnelLog: io.Discard, Now: time.Now}).Run(ctx)
+			done <- errors.Join(err, release())
+		}()
+		t.Cleanup(cancel)
+		result, taken := waitListening(t, d, done)
+		if taken {
+			continue
+		}
+		return d, relayURL, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, result
 	}
-	release, err := d.Lock()
-	if err != nil {
-		t.Fatalf("Lock() error = %v", err)
+	t.Fatal("another process took every port the relay tried")
+	return relaydir.Dir{}, "", nil, nil, nil
+}
+
+// waitListening waits until the relay of d listens, which it does before
+// it opens its control socket, or Run returns. It returns the result of
+// Run, and whether Run returned because another process took the port.
+func waitListening(t *testing.T, d relaydir.Dir, done <-chan error) (<-chan error, bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			if errors.Is(err, syscall.EADDRINUSE) {
+				return nil, true
+			}
+			out := make(chan error, 1)
+			out <- err
+			return out, false
+		default:
+		}
+		if _, err := os.Stat(d.SocketPath()); err == nil {
+			return done, false
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the relay didn't listen")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		err := New(Options{Dir: d, Backend: b, A2AServe: "test", Out: io.Discard, TunnelLog: io.Discard, Now: time.Now}).Run(ctx)
-		done <- errors.Join(err, release())
-	}()
-	t.Cleanup(cancel)
-	return d, relayURL, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, done
 }
 
 // freeLoopbackPort returns a free port below the ephemeral ranges of Linux
