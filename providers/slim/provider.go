@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	a2aslimrpc "github.com/agntcy/slim-a2a-go/a2aslimrpc/v1"
 	slim_bindings "github.com/agntcy/slim-bindings-go/v3"
 	slim_rpc "github.com/agntcy/slim-bindings-go/v3/slim_rpc"
@@ -41,8 +43,30 @@ const (
 	closeTimeout = 2 * time.Second
 )
 
+// notifier is where the provider's notifications go: the server.
+type notifier interface {
+	Health(netprovider.Health)
+}
+
+// opener opens the agent's app on the node.
+type opener func(ctx context.Context, set settings, id identity, self name) (node, error)
+
+// node is the agent's app on a SLIM node: its connection, and its
+// subscription and server on it.
+type node interface {
+	// connected reports whether the connection to the node is up.
+	connected() bool
+	// listen serves the agent's SLIMRPC calls with h until close.
+	listen(h a2asrv.RequestHandler)
+	// transport returns a transport to the agent n on the node.
+	transport(n name) (a2aclient.Transport, error)
+	// close leaves the node.
+	close() error
+}
+
 type provider struct {
-	host *netprovider.Host
+	host notifier
+	open opener
 	out  *outbound
 
 	mu      sync.Mutex
@@ -51,12 +75,18 @@ type provider struct {
 	set     settings
 	self    name
 	id      identity
-	sess    *session
-	server  *slim_rpc.Server
+	node    node
+	handler a2asrv.RequestHandler
+	stop    context.CancelFunc
+	watched chan struct{}
+
+	// lost is whether the provider reported the node lost. Only the watcher
+	// uses it.
+	lost bool
 }
 
-func newProvider(h *netprovider.Host) *provider {
-	p := &provider{host: h}
+func newProvider(h notifier, open opener) *provider {
+	p := &provider{host: h, open: open}
 	p.out = &outbound{peers: newPeers(maxPeers, p.peerTransport)}
 	return p
 }
@@ -87,14 +117,14 @@ func (p *provider) Join(ctx context.Context, req netprovider.JoinRequest) (netpr
 	case p.closed:
 		p.mu.Unlock()
 		return netprovider.JoinResult{}, errClosed
-	case p.joining || p.sess != nil:
+	case p.joining || p.node != nil:
 		p.mu.Unlock()
 		return netprovider.JoinResult{}, errors.New("join was already called")
 	}
 	p.joining = true
 	p.mu.Unlock()
 
-	s, err := openSession(ctx, set, id, self)
+	n, err := p.open(ctx, set, id, self)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -103,42 +133,27 @@ func (p *provider) Join(ctx context.Context, req netprovider.JoinRequest) (netpr
 		return netprovider.JoinResult{}, err
 	}
 	if p.closed {
-		return netprovider.JoinResult{}, errors.Join(errClosed, s.close())
+		return netprovider.JoinResult{}, errors.Join(errClosed, n.close())
 	}
-	p.set, p.self, p.id, p.sess = set, self, id, s
+	p.set, p.self, p.id, p.node = set, self, id, n
+	wctx, stop := context.WithCancel(context.Background())
+	p.stop, p.watched = stop, make(chan struct{})
+	go p.watch(wctx, p.watched)
 	return netprovider.JoinResult{Node: self.String()}, nil
 }
 
 func (p *provider) Listen(_ context.Context, in *netprovider.Inbound) (netprovider.ListenResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.sess == nil {
+	if p.node == nil {
 		return netprovider.ListenResult{}, errors.New("listen before join")
 	}
 	if !in.Private() {
 		return netprovider.ListenResult{}, errors.New("SLIM gives agents only a private URL")
 	}
-	srv := slim_rpc.ServerNewWithConnection(p.sess.app, p.sess.name, &p.sess.conn)
-	a2aslimrpc.NewHandler(newInbound(in, p.self, p.id)).RegisterWith(srv)
-	p.server = srv
-	go p.serve(srv)
+	p.handler = newInbound(in, p.self, p.id)
+	p.node.listen(p.handler)
 	return netprovider.ListenResult{PrivateURL: p.self.privateURL(), PrivateNote: "works only from other agents on the SLIM node"}, nil
-}
-
-func (p *provider) serve(srv *slim_rpc.Server) {
-	err := srv.ServeBlocking()
-	p.mu.Lock()
-	closed := p.closed
-	p.mu.Unlock()
-	if closed {
-		return
-	}
-	problem := "the agent stopped serving SLIM calls"
-	if err != nil {
-		problem += ": " + err.Error()
-	}
-	slog.Error(problem)
-	p.host.Health(netprovider.Health{State: netprovider.HealthDisconnected, Problem: problem, Fix: "restart the agent"})
 }
 
 func (p *provider) Member(context.Context, string) (netprovider.Caller, error) {
@@ -150,7 +165,7 @@ func (p *provider) Member(context.Context, string) (netprovider.Caller, error) {
 func (p *provider) Peers(context.Context) ([]netprovider.PeerInfo, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.sess == nil {
+	if p.node == nil {
 		return nil, nil
 	}
 	var peers []netprovider.PeerInfo
@@ -168,10 +183,177 @@ func (p *provider) Outbound() http.Handler { return p.out }
 
 func (p *provider) peerTransport(n name) (a2aclient.Transport, error) {
 	p.mu.Lock()
-	s := p.sess
+	cur := p.node
 	p.mu.Unlock()
-	if s == nil {
+	if cur == nil {
 		return nil, errors.New("the agent hasn't joined the SLIM network")
+	}
+	return cur.transport(n)
+}
+
+func (p *provider) Close() error {
+	p.mu.Lock()
+	p.closed = true
+	n, stop, watched := p.node, p.stop, p.watched
+	p.node = nil
+	p.mu.Unlock()
+	if stop != nil {
+		stop()
+		select {
+		case <-watched:
+		case <-time.After(closeTimeout):
+			slog.Warn("still joining the SLIM node again; leaving it anyway")
+		}
+	}
+	p.out.peers.close()
+	if n == nil {
+		return nil
+	}
+	return n.close()
+}
+
+// slimNode is the agent's app on the node, with a SLIM service of its own:
+// a service keeps a connection the bindings lost in its table, and refuses
+// to connect to the same node again.
+type slimNode struct {
+	svc  *slim_bindings.Service
+	app  *slim_bindings.App
+	name *slim_bindings.Name
+	conn uint64
+
+	// mu guards the app against use after close, which the bindings answer
+	// with a panic.
+	mu      sync.Mutex
+	server  *slim_rpc.Server
+	closing bool
+	stopped bool
+}
+
+var initSLIM = sync.OnceValue(func() error {
+	tracing := slim_bindings.NewTracingConfig()
+	tracing.LogLevel = "error"
+	return slim_bindings.InitializeWithConfigs(slim_bindings.NewRuntimeConfig(), tracing, []slim_bindings.ServiceConfig{slim_bindings.NewServiceConfig()})
+})
+
+// connectAttempts is how many times the bindings try to reach the node when
+// they connect or reconnect, a second apart. The watcher takes over after
+// that, so that the agent shows as disconnected while the node is down.
+const connectAttempts = 3
+
+func openNode(ctx context.Context, set settings, id identity, self name) (node, error) {
+	if err := initSLIM(); err != nil {
+		return nil, fmt.Errorf("starting SLIM: %w", err)
+	}
+	svc, err := slim_bindings.CreateServiceWithConfig("netprovider-slim", slim_bindings.NewServiceConfig())
+	if err != nil {
+		return nil, fmt.Errorf("starting SLIM: %w", err)
+	}
+	n := slim_bindings.NewName(self.org, self.ns, self.agent)
+	app, err := id.createApp(svc, n)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("creating the SLIM app %s: %w", self, err), stopService(svc))
+	}
+	cfg := slim_bindings.NewInsecureClientConfig(set.endpoint)
+	if set.tls {
+		cfg = slim_bindings.NewSecureClientConfig(set.endpoint)
+	}
+	var backoff slim_bindings.BackoffConfig = slim_bindings.BackoffConfigFixedInterval{Config: slim_bindings.FixedIntervalBackoff{Interval: time.Second, MaxAttempts: connectAttempts - 1}}
+	cfg.Backoff = &backoff
+	conn, err := connect(ctx, svc, cfg)
+	if err != nil {
+		app.Destroy()
+		return nil, errors.Join(fmt.Errorf("connecting to the SLIM node at %s: %w", set.endpoint, err), stopService(svc))
+	}
+	s := &slimNode{svc: svc, app: app, name: n, conn: conn}
+	if err := app.Subscribe(n, &conn); err != nil {
+		return nil, errors.Join(fmt.Errorf("subscribing to %s on the SLIM node: %w", self, err), s.close())
+	}
+	return s, nil
+}
+
+// connect connects to the node, and gives up after connectTimeout or once
+// ctx is done. Stopping svc ends an attempt it gave up on.
+func connect(ctx context.Context, svc *slim_bindings.Service, cfg slim_bindings.ClientConfig) (uint64, error) {
+	type result struct {
+		conn uint64
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		conn, err := svc.Connect(cfg)
+		done <- result{conn, err}
+	}()
+	timer := time.NewTimer(connectTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.conn, r.err
+	case <-timer.C:
+		return 0, fmt.Errorf("the node didn't answer in %v; check that it runs and that the URL is right", connectTimeout)
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func stopService(svc *slim_bindings.Service) error {
+	defer svc.Destroy()
+	if err := svc.Shutdown(); err != nil {
+		return fmt.Errorf("stopping SLIM: %w", err)
+	}
+	return nil
+}
+
+// connected reports whether the bindings still have the connection to the
+// node, and the agent's server still runs. The bindings drop a connection
+// they fail to reconnect, and never connect it again.
+func (s *slimNode) connected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closing && !s.stopped && s.hasConnLocked()
+}
+
+// hasConnLocked reports whether the connection is in the bindings' table.
+// Pinning it as the default gateway looks it up there, and the bindings
+// export no other lookup; another error, such as a connection of another
+// type, means the connection is there.
+func (s *slimNode) hasConnLocked() bool {
+	if err := s.app.SetDefaultGateway(s.conn); err != nil {
+		return !strings.Contains(err.Error(), "connection not found")
+	}
+	if err := s.app.ClearDefaultGateway(); err != nil {
+		slog.Debug("clearing the SLIM default gateway", "error", err)
+	}
+	return true
+}
+
+func (s *slimNode) listen(h a2asrv.RequestHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return
+	}
+	srv := slim_rpc.ServerNewWithConnection(s.app, s.name, &s.conn)
+	a2aslimrpc.NewHandler(h).RegisterWith(srv)
+	s.server = srv
+	go s.serve(srv)
+}
+
+func (s *slimNode) serve(srv *slim_rpc.Server) {
+	err := srv.ServeBlocking()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return
+	}
+	s.stopped = true
+	slog.Error("the agent stopped serving SLIM calls", "error", err)
+}
+
+func (s *slimNode) transport(n name) (a2aclient.Transport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return nil, errors.New("the agent left the SLIM node")
 	}
 	ch := slim_rpc.ChannelNewWithConnection(s.app, slim_bindings.NewName(n.org, n.ns, n.agent), &s.conn)
 	return &channelTransport{Transport: a2aslimrpc.NewTransport(ch), ch: ch}, nil
@@ -190,20 +372,30 @@ func (t *channelTransport) Destroy() error {
 	return errors.Join(err, t.Transport.Destroy())
 }
 
-func (p *provider) Close() error {
-	p.mu.Lock()
-	p.closed = true
-	srv, s := p.server, p.sess
-	p.server, p.sess = nil, nil
-	p.mu.Unlock()
+// close leaves the node. Disconnecting drops the app's subscriptions; a
+// connection the bindings dropped is gone already.
+func (s *slimNode) close() error {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closing = true
+	srv := s.server
+	s.mu.Unlock()
 	if srv != nil {
 		shutdown(srv)
 	}
-	p.out.peers.close()
-	if s == nil {
-		return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var err error
+	if s.hasConnLocked() {
+		if derr := s.svc.Disconnect(s.conn); derr != nil {
+			err = fmt.Errorf("disconnecting from the SLIM node: %w", derr)
+		}
 	}
-	return s.close()
+	s.app.Destroy()
+	return errors.Join(err, stopService(s.svc))
 }
 
 // shutdown stops srv, and gives up waiting for its calls after closeTimeout.
@@ -219,90 +411,4 @@ func shutdown(srv *slim_rpc.Server) {
 	case <-time.After(closeTimeout):
 		slog.Warn("SLIM calls still run; leaving the node anyway")
 	}
-}
-
-// session is the agent's app on the node.
-type session struct {
-	svc  *slim_bindings.Service
-	app  *slim_bindings.App
-	name *slim_bindings.Name
-	conn uint64
-}
-
-var initSLIM = sync.OnceValue(func() error {
-	tracing := slim_bindings.NewTracingConfig()
-	tracing.LogLevel = "error"
-	return slim_bindings.InitializeWithConfigs(slim_bindings.NewRuntimeConfig(), tracing, []slim_bindings.ServiceConfig{slim_bindings.NewServiceConfig()})
-})
-
-func openSession(ctx context.Context, set settings, id identity, self name) (*session, error) {
-	if err := initSLIM(); err != nil {
-		return nil, fmt.Errorf("starting SLIM: %w", err)
-	}
-	svc := slim_bindings.GetGlobalService()
-	n := slim_bindings.NewName(self.org, self.ns, self.agent)
-	app, err := id.createApp(svc, n)
-	if err != nil {
-		return nil, fmt.Errorf("creating the SLIM app %s: %w", self, err)
-	}
-	cfg := slim_bindings.NewInsecureClientConfig(set.endpoint)
-	if set.tls {
-		cfg = slim_bindings.NewSecureClientConfig(set.endpoint)
-	}
-	conn, err := connect(ctx, svc, cfg)
-	if err != nil {
-		app.Destroy()
-		return nil, fmt.Errorf("connecting to the SLIM node at %s: %w", set.endpoint, err)
-	}
-	s := &session{svc: svc, app: app, name: n, conn: conn}
-	if err := app.Subscribe(n, &conn); err != nil {
-		return nil, errors.Join(fmt.Errorf("subscribing to %s on the SLIM node: %w", self, err), s.close())
-	}
-	return s, nil
-}
-
-// connect connects to the node. The bindings retry an unreachable node
-// without end, so connect gives up after connectTimeout or once ctx is done,
-// and disconnects if the connection comes up later.
-func connect(ctx context.Context, svc *slim_bindings.Service, cfg slim_bindings.ClientConfig) (uint64, error) {
-	type result struct {
-		conn uint64
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		conn, err := svc.Connect(cfg)
-		done <- result{conn, err}
-	}()
-	timer := time.NewTimer(connectTimeout)
-	defer timer.Stop()
-	var err error
-	select {
-	case r := <-done:
-		return r.conn, r.err
-	case <-timer.C:
-		err = fmt.Errorf("the node didn't answer in %v; check that it runs and that the URL is right", connectTimeout)
-	case <-ctx.Done():
-		err = ctx.Err()
-	}
-	go func() {
-		r := <-done
-		if r.err != nil {
-			return
-		}
-		if err := svc.Disconnect(r.conn); err != nil {
-			slog.Warn("disconnecting from the SLIM node after giving up", "error", err)
-		}
-	}()
-	return 0, err
-}
-
-// close leaves the node. Disconnecting drops the app's subscriptions.
-func (s *session) close() error {
-	err := s.svc.Disconnect(s.conn)
-	s.app.Destroy()
-	if err != nil {
-		return fmt.Errorf("disconnecting from the SLIM node: %w", err)
-	}
-	return nil
 }

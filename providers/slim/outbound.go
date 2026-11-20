@@ -191,14 +191,27 @@ func (ps *peers) evictLocked(n name, idle []a2aclient.Transport) []a2aclient.Tra
 
 // close destroys the transports, each once no request uses it.
 func (ps *peers) close() {
-	var idle []a2aclient.Transport
 	ps.mu.Lock()
 	ps.closed = true
+	ps.mu.Unlock()
+	destroyAll(ps.evictAll())
+}
+
+// reset forgets the peers, so that new requests open new transports, and
+// destroys the old ones in the background, each once no request uses it.
+func (ps *peers) reset() {
+	go destroyAll(ps.evictAll())
+}
+
+// evictAll forgets the peers, and returns the transports no request uses.
+func (ps *peers) evictAll() []a2aclient.Transport {
+	var idle []a2aclient.Transport
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
 	for len(ps.order) > 0 {
 		idle = ps.evictLocked(ps.order[0], idle)
 	}
-	ps.mu.Unlock()
-	destroyAll(idle)
+	return idle
 }
 
 func destroyAll(ts []a2aclient.Transport) {
