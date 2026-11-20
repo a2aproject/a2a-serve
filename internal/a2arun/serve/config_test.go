@@ -50,7 +50,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "unparsable command", edit: func(c *serve.Config) { c.Command = `"unterminated` }, want: "invalid --command"},
 		{name: "custom agent in docker without an image", edit: func(c *serve.Config) { c.Agent, c.Command, c.Sandbox = "", "fakeacp", "" }, want: "--command without --agent needs --image"},
 		{name: "unknown sandbox", edit: func(c *serve.Config) { c.Sandbox = "podman" }, want: `invalid --sandbox "podman"`},
-		{name: "egress with local", edit: func(c *serve.Config) { c.Egress = "allowlist" }, want: "--egress need --sandbox docker"},
+		{name: "egress with local", edit: func(c *serve.Config) { c.Egress = "allowlist" }, want: "--egress needs --sandbox docker"},
 		{
 			name: "egress rules and model keys with local",
 			edit: func(c *serve.Config) { c.EgressAllow, c.ModelKeys = []string{"nas.lan"}, []string{"anthropic=KEY"} },

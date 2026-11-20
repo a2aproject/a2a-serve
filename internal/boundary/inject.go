@@ -48,7 +48,7 @@ type Injection struct {
 func (inj Injection) wrap(next http.RoundTripper) http.RoundTripper {
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		r = r.Clone(r.Context())
-		inj.apply(r)
+		inj.Apply(r)
 		return next.RoundTrip(r)
 	})
 }
@@ -57,8 +57,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// apply puts the header of inj on the outgoing request r.
-func (inj Injection) apply(r *http.Request) {
+// Apply puts the header of inj on the outgoing request r.
+func (inj Injection) Apply(r *http.Request) {
 	if !inj.Model {
 		r.Header.Del(inj.Header)
 		r.Header.Set(inj.Header, inj.Value)

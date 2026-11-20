@@ -51,6 +51,36 @@ func TestDockerRunnerStopSurvivesCancelledContext(t *testing.T) {
 	}
 }
 
+func TestContainerRemovalOutcomes(t *testing.T) {
+	tests := []struct {
+		name    string
+		script  string
+		wantErr bool
+	}{
+		{name: "removed", script: "exit 0"},
+		{name: "no such container", script: `echo "Error response from daemon: No such container: a2a-coder" >&2; exit 1`},
+		{name: "removal already in progress", script: `echo "Error response from daemon: removal of container a2a-coder is already in progress" >&2; exit 1`},
+		{name: "daemon error", script: `echo "Cannot connect to the Docker daemon" >&2; exit 1`, wantErr: true},
+	}
+	removals := map[string]func() error{
+		"RemoveContainer":   func() error { return RemoveContainer(context.Background(), "a2a-coder") },
+		"DockerRunner.Stop": func() error { return (&DockerRunner{Name: "a2a-coder"}).Stop(context.Background()) },
+	}
+	for _, tc := range tests {
+		for op, remove := range removals {
+			t.Run(tc.name+"/"+op, func(t *testing.T) {
+				sandboxtest.FakeDocker(t, tc.script)
+
+				err := remove()
+
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("%s() error = %v, want error %v", op, err, tc.wantErr)
+				}
+			})
+		}
+	}
+}
+
 func TestDockerRunnerStopRemovesEnvFiles(t *testing.T) {
 	sandboxtest.FakeDocker(t, "exit 0")
 	envDir := t.TempDir()

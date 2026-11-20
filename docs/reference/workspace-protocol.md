@@ -99,4 +99,4 @@ It works in a directory of its own in the tree, `a2a-run-conformance-` and a ran
 go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock --workspace
 ```
 
-Pass `unix:///tmp/host.sock` to `--workspace`, `--tools` and `--egress-proxy` alike. The reference host logs each change of its tree on stderr.
+Pass `unix:///tmp/host.sock` to `--workspace`, `--tools` and `--egress-proxy` alike. For the agent's model calls through `--egress-proxy`, start it with [`--model-key`](a2a-run-egress-proxy.md#trying-it). The reference host logs each change of its tree on stderr.

@@ -21,6 +21,13 @@
 // match a --deny or --ask glob, in which * matches any run of characters,
 // and logs every message on stderr. The egress proxy intercepts every
 // connection and forwards its requests, refusing private destinations.
+// The agent of a2a-run --egress-proxy has placeholder model keys; with
+// --model-key provider=NAME, the proxy replaces the placeholder in the
+// requests to the provider's inference endpoints with the key in the
+// variable NAME:
+//
+//	go run ./internal/a2arun/refhost/cmd/refhost --listen unix:///tmp/host.sock --model-key gemini=GEMINI_API_KEY
+//
 // With --workspace, the listener also serves a file tree in memory with
 // the workspace protocol, and logs each change of it on stderr.
 package main
@@ -40,6 +47,7 @@ import (
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/a2arun/refhost"
+	"github.com/a2aproject/a2a-serve/internal/egressrules"
 )
 
 type globs []string
@@ -51,17 +59,27 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:0", "unix:///path or host:port")
 	noHooks := flag.Bool("no-hooks", false, "advertise no hooks")
 	workspace := flag.Bool("workspace", false, "serve a file tree in memory for a2a-run --workspace")
-	var deny, ask globs
+	var deny, ask, modelKeys globs
 	flag.Var(&deny, "deny", "shell command `glob` that beforeTool denies, repeated")
 	flag.Var(&ask, "ask", "shell command `glob` that beforeTool leaves to the A2A caller, repeated")
+	flag.Var(&modelKeys, "model-key", "API key that the egress proxy puts in place of the agent's placeholder in its requests to a model provider: `provider=NAME`, with provider one of "+strings.Join(egressrules.ProviderNames(), ", ")+" and NAME a variable of your environment, repeated")
 	flag.Parse()
-	if err := run(*listen, !*noHooks, *workspace, deny, ask); err != nil {
+	keys := map[string]string{}
+	for _, arg := range modelKeys {
+		provider, key, err := refhost.ParseModelKey(arg, os.Getenv)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "refhost:", err)
+			os.Exit(2)
+		}
+		keys[provider] = key
+	}
+	if err := run(*listen, !*noHooks, *workspace, deny, ask, keys); err != nil {
 		fmt.Fprintln(os.Stderr, "refhost:", err)
 		os.Exit(1)
 	}
 }
 
-func run(listen string, hooks, workspace bool, deny, ask []string) error {
+func run(listen string, hooks, workspace bool, deny, ask []string, modelKeys map[string]string) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg := refhost.ToolsConfig{
 		Decide: func(p hosttools.BeforeToolParams) hosttools.BeforeToolResult {
@@ -76,7 +94,10 @@ func run(listen string, hooks, workspace bool, deny, ask []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	hostCfg := refhost.Config{Tools: refhost.NewTools(cfg)}
+	hostCfg := refhost.Config{Tools: refhost.NewTools(cfg), ModelKeys: modelKeys}
+	for provider := range modelKeys {
+		log.Info("the egress proxy adds a model key", "provider", provider)
+	}
 	if workspace {
 		tree := fsys.Memory()
 		hostCfg.Workspace = fsys.Handler(tree)

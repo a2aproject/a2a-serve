@@ -216,7 +216,11 @@ func resolveSandbox(cfg Config) (string, error) {
 		}
 		if len(sandboxed) > 0 {
 			slices.Sort(sandboxed)
-			return "", usagef("%s need --sandbox docker or bwrap: --sandbox local runs the agent on this machine, with its network", strings.Join(sandboxed, ", "))
+			verb := "needs"
+			if len(sandboxed) > 1 {
+				verb = "need"
+			}
+			return "", usagef("%s %s --sandbox docker or bwrap: --sandbox local runs the agent on this machine, with its network", strings.Join(sandboxed, ", "), verb)
 		}
 		return SandboxLocal, nil
 	}
