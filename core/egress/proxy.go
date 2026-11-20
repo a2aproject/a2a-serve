@@ -36,16 +36,16 @@ import (
 // Headers and values of the egress proxy protocol, which [ProxyRouter]
 // speaks. Names are case-insensitive, as all HTTP header names are.
 const (
-	// ProxyHeaderContext carries [Flow.Key], which a2a-run sets to the A2A
+	// ProxyHeaderContext carries [Flow.Key], which a2a-serve-sidecar sets to the A2A
 	// context ID, on the CONNECT request and on every forwarded request.
-	ProxyHeaderContext = "A2A-Run-Context"
+	ProxyHeaderContext = "A2A-Sidecar-Context"
 	// ProxyHeaderTask carries the task that the process works on, on
 	// forwarded requests, when [ProxyConfig.Task] knows it.
-	ProxyHeaderTask = "A2A-Run-Task"
+	ProxyHeaderTask = "A2A-Sidecar-Task"
 	// ProxyHeaderIntercept is ProxyInterceptOffered on the CONNECT
 	// request, and ProxyInterceptAccept on a 204 answer that asks for the
 	// connection's requests.
-	ProxyHeaderIntercept  = "A2A-Run-Intercept"
+	ProxyHeaderIntercept  = "A2A-Sidecar-Intercept"
 	ProxyInterceptOffered = "offered"
 	ProxyInterceptAccept  = "accept"
 )
@@ -89,7 +89,7 @@ type ProxyConfig struct {
 // an offer to intercept, and routes by the answer:
 //
 //   - 2xx tunnels the connection through the proxy.
-//   - 204 with A2A-Run-Intercept: accept terminates the client's TLS and
+//   - 204 with A2A-Sidecar-Intercept: accept terminates the client's TLS and
 //     sends each of its requests to the proxy in absolute form, such as
 //     POST https://api.anthropic.com/v1/messages, with the key. Answers
 //     stream back as they arrive.
@@ -277,7 +277,7 @@ func (p *ProxyRouter) forward(key string) func(http.RoundTripper) http.RoundTrip
 				// The client mustn't speak for another context, in any
 				// spelling that a proxy may read as one of these headers:
 				// CGI-style stacks read _ as -.
-				if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-run-") {
+				if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-sidecar-") {
 					delete(out.Header, name)
 				}
 			}

@@ -34,11 +34,11 @@ builds:
       - amd64
       - arm64
 
-  # a2a-run serves a sandboxed agent to a host process. It ships in the
-  # archive next to a2a-serve, and runs as `a2a run`.
-  - id: a2a-run
-    main: ./cmd/a2a-run
-    binary: a2a-run
+  # a2a-serve-sidecar serves a sandboxed agent to a host process. It ships in the
+  # archive next to a2a-serve, and runs as `a2a serve-sidecar`.
+  - id: a2a-serve-sidecar
+    main: ./cmd/a2a-serve-sidecar
+    binary: a2a-serve-sidecar
     env:
       - CGO_ENABLED=0
     flags:
@@ -77,7 +77,7 @@ archives:
   - id: a2a-serve
     ids:
       - a2a-serve
-      - a2a-run
+      - a2a-serve-sidecar
       - netprovider-agentmesh
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
@@ -107,7 +107,7 @@ brews:
     commit_msg_template: "release: update Homebrew formula for a2a-serve {{ .Tag }}"
     install: |
       bin.install "a2a-serve"
-      bin.install "a2a-run"
+      bin.install "a2a-serve-sidecar"
       (libexec/"a2a-serve").install "netprovider-agentmesh"
     caveats: |
       Enable the a2a CLI plugin and credential helper, and check Docker:

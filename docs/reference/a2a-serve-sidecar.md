@@ -1,0 +1,218 @@
+# a2a-serve-sidecar
+
+`a2a-serve-sidecar` serves a coding agent in a sandbox over A2A to a host process, such as an agent framework, an orchestrator or an eval harness, which starts it and talks to it.
+
+> [!NOTE]
+> `a2a-serve-sidecar` is new and planned for the next release. Its flags and its ready line may still change.
+
+`a2a-serve-sidecar` takes everything from flags. It reads no config file and keeps no database. It is an [a2a CLI command plugin](a2a-cli.md#command-plugin), so it also runs as `a2a serve-sidecar`.
+
+## Example
+
+Start opencode in Docker on a project directory, with the OpenRouter key from your environment:
+
+```console
+$ a2a-serve-sidecar --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","workspace_sync":"turn","egress":"policy"}
+```
+
+Send it a message with the `a2a` CLI:
+
+```console
+$ a2a send --unix-socket /tmp/a2a-serve-sidecar.sock -a http://a2a/ "List the files of the workspace"
+```
+
+The agent sees a placeholder in `OPENROUTER_API_KEY`, and `a2a-serve-sidecar` adds the real key to the agent's requests to OpenRouter. The task that the agent completes carries the files it changed, and the agent's changes reach `$PWD` when its turn ends. Stop `a2a-serve-sidecar` with SIGINT or SIGTERM.
+
+[Run a Sandboxed Agent for Your Program](../../examples/08-sidecar-host/README.md) walks through a host with tools, hooks and a contact.
+
+## Ready line
+
+Once the agent is up, `a2a-serve-sidecar` prints one JSON line on stdout. Logs go to stderr.
+
+| Field | Value |
+| --- | --- |
+| `ready` | `true` once the agent is up, `false` when it failed to start |
+| `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
+| `sandbox` | `docker`, `docker (rootless)`, `bwrap` or `local` |
+| `workspace` | `dir`, `memory` or `url` |
+| `workspace_sync` | `turn` or `live` |
+| `contacts` | With `--contact`, each contact's `name` and whether its agent card was fetched: `card` is `ok` or `failed`, with the `reason` |
+| `egress` | What decides the agent's connections, with `--sandbox docker` or `bwrap`: `policy` for `--egress` and `--egress-allow`, `proxy` for `--egress-proxy`, or `none` when Docker here can't route them through `a2a-serve-sidecar`, and the agent uses Docker's network. The log on stderr says why. |
+| `error` | Why it failed to start, with `ready` false |
+
+When it fails to start, it prints `{"ready":false,"error":"..."}` and exits with code 2 for invalid flags, or 1 for other errors.
+
+## Egress proxy
+
+With `--egress-proxy`, an HTTP proxy of the host decides every connection that the agent opens. For each connection, the proxy refuses it, tunnels it, or asks for its requests, such as the agent's model calls, and answers them itself or forwards them:
+
+```console
+$ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
+    --egress-proxy unix:///run/host/egress.sock \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"proxy"}
+```
+
+The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker` or `bwrap`, and replaces `--egress`, `--egress-allow` and `--inject-model-key`. [a2a-serve-sidecar egress proxy protocol](a2a-serve-sidecar-egress-proxy.md) specifies what the proxy gets and answers.
+
+## A2A endpoint
+
+The endpoint serves A2A over JSON-RPC at `/` and over REST, and the agent card at `/.well-known/agent-card.json`. It doesn't authenticate callers, so it listens only on a Unix socket or a loopback address.
+
+Each A2A context runs in an agent process of its own. A process stops when it is idle, and `--max-processes` bounds how many run at once. `a2a-serve-sidecar` keeps tasks in memory and forgets a context some time after its tasks ended. See [limits](limits.md#a2a-serve-sidecar).
+
+When the agent asks before a tool call, the task waits in `input-required`. Answer it on the same task, as [Approval Messages](approval-messages.md) describes.
+
+## Host tools
+
+`--tools` gives every agent session the host's MCP server, and lets the host decide tool calls:
+
+```console
+$ a2a-serve-sidecar --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --tools unix:///run/host/tools.sock --listen unix:///tmp/a2a-serve-sidecar.sock
+```
+
+The agent sees the host's tools as those of the MCP server `host`. When the host advertises hooks, `a2a-serve-sidecar` asks it about each tool call the agent asks permission for, and tells it the result of each tool call. [Tools endpoint](a2a-serve-sidecar-tools.md) specifies the protocol.
+
+## Contacts
+
+`--contact` gives the agent other A2A agents it may call. `--contact-auth` sets the `Authorization` header of the requests to a contact:
+
+```console
+$ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
+    --contact reviewer=https://reviewer.example.com \
+    --contact-auth reviewer="Bearer env:REVIEWER_TOKEN" \
+    --contact planner=unix:///run/host/planner.sock \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"policy","contacts":[{"name":"reviewer","card":"ok"},{"name":"planner","card":"ok"}]}
+```
+
+A contact is the `https://` URL of an agent card, or a `unix://` socket that serves an agent, so the host can offer agents of its own without opening a port. The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. The agent never sees it.
+
+The agent's instructions list each contact with the description and skills from its card, and the agent calls one with the `a2a` CLI:
+
+```console
+$ a2a send -a http://a2a/reviewer "Review the diff in PR 12"
+```
+
+`a2a-serve-sidecar` makes the call, so the agent needs no network access to the contact. With `--sandbox bwrap` or `local`, the agent runs the `a2a` CLI that this machine has on its `PATH`. The requests carry the A2A context ID of the conversation in the metadata key `a2a-sidecar/context`. Canceling a task cancels the tasks it started at contacts.
+
+A contact whose card can't be fetched shows as `failed` in the ready line. The agent doesn't see it until a later fetch succeeds. See [limits](limits.md#a2a-serve-sidecar) for how often `a2a-serve-sidecar` fetches the cards.
+
+When a contact asks for an approval, the task ends its turn in `input-required` with the contact's question, as [Approval Messages](approval-messages.md) describes. The status message metadata `a2a-sidecar/contact-approval` names the contact and its task. `a2a-serve-sidecar` sends your answer to the contact, waits for its task, and gives the agent the result.
+
+## Sandbox
+
+`--sandbox` picks where the agent runs:
+
+- `docker`, the default, runs the agent in a container of its image.
+- `bwrap` runs the agent that this machine has with [bubblewrap](https://github.com/containers/bubblewrap), on Linux. It needs `bwrap`, unprivileged user namespaces and `/dev/net/tun`, and `/dev/fuse` for a `memory` or URL workspace with `live` sync. Every connection of the agent goes through `a2a-serve-sidecar`, and it fails to start where that can't work. Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor by default; the error then names the setting and how to lift it, as [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes.
+- `local` runs the agent on this machine with no isolation.
+
+With `bwrap`, the agent sees the system directories, a few files of `/etc`, the workspace and its home. It finds its command, and the `a2a` CLI with `--contact`, on your `PATH`. An agent that needs other files of your home directory, such as one that npm installed under a version manager, doesn't start; use one that its own installer put in place, or `--sandbox docker`. [Sandboxing](../advanced/sandboxing.md#bubblewrap) describes the setup.
+
+```console
+$ a2a-serve-sidecar --sandbox bwrap --agent opencode --workspace dir:$PWD \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"bwrap","workspace":"dir","workspace_sync":"turn","egress":"policy"}
+```
+
+## Stopping
+
+On SIGINT or SIGTERM, `a2a-serve-sidecar` fails the tasks in progress, stops the agent processes, and removes the Unix socket and its temporary directories.
+
+## Workspace
+
+`--workspace` gives the agent its files:
+
+- `dir:<path>` is a directory on this machine.
+- `memory` starts empty and is held by `a2a-serve-sidecar`. It is lost at exit, so take the files from the tasks.
+- A URL is a file tree that the host serves with the [workspace protocol](workspace-protocol.md): `unix:///path` for a Unix socket, or `http://host:port` or `https://host:port` with an optional path prefix. The host keeps the files, in memory or wherever it likes.
+
+`--workspace-sync` decides how the agent changes them:
+
+- `turn`, the default, gives each A2A context a private copy of the workspace. Before each turn, the copy gets the changes of the workspace. After the turn, the agent's changes go back to the workspace, and the task gets them as an artifact. Other contexts see the changes from their next turn.
+- `live` lets every context change the workspace in place. Other contexts, and a host that serves the workspace, see each file as soon as the agent closes it, before the turn ends. The task gets no changes artifact. A `dir:` workspace is shared with the sandbox as it is. A `memory` or URL workspace needs `--sandbox docker` or `bwrap`, which mount it in the sandbox.
+
+Serve the workspace from the host and let the agent change it live:
+
+```console
+$ a2a-serve-sidecar --agent opencode --workspace unix:///run/host/fs.sock --workspace-sync live \
+    --inject-model-key openrouter=OPENROUTER_API_KEY \
+    --listen unix:///tmp/a2a-serve-sidecar.sock
+{"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"url","workspace_sync":"live","egress":"policy"}
+```
+
+At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet, and neither can rootful Docker under its default AppArmor profile. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
+
+With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets. A `dir:` workspace larger than `turn` sync copies fails at start with a hint to use `live`. A workspace that grows past the [limits](limits.md#a2a-serve-sidecar) fails the turn with a status message that says to remove files. The next turns still run, so the agent can remove them.
+
+When the host's file server stops answering, a turn with `turn` sync fails with a status message that names the server. The agent's changes stay in its copy and go back to the workspace at its next turn.
+
+Changes that the agent makes after its turn ended, such as by a process it left running, reach the workspace when its agent process stops. No task lists them, and `a2a-serve-sidecar` logs their paths on stderr.
+
+### Changes artifact
+
+After a turn with `turn` sync that changed files, the task gets an artifact named `a2a-sidecar/changes` before its final status. It lists the changes of that turn only:
+
+- The first part is a data part:
+
+  ```json
+  {
+    "removed": ["old.py"],
+    "symlinks": [{"path": "run", "target": "bin/run.sh"}],
+    "omitted": [{"path": "data.bin", "size": 5242880, "reason": "file-too-large"}],
+    "unlisted": 12
+  }
+  ```
+
+  `removed` lists the paths the agent removed, and is always there. The other fields appear only when they have entries. `omitted` lists the changed files whose content the artifact leaves out, with the reason: `file-too-large`, `total-too-large`, `changed-since-sync` when the workspace changed the file again after the sync, or `unreadable` when the file was gone or unreadable after the sync. `unlisted` counts the changes past the number of paths the artifact lists.
+- Each further part is a file part with the content of a file that the agent created or changed. Its `filename` is the path in the workspace, and its metadata `mode` has the permission bits, such as `0755`.
+
+Paths are relative to the workspace root and use `/`. New empty directories and the contents of `.git` directories aren't listed, though they sync. A turn that changed nothing else gets no artifact. See [limits](limits.md#a2a-serve-sidecar) for the sizes.
+
+A completed or failed task sends the artifact before its final status, so a stream shows it. A task whose final status comes before the sync, such as a canceled one, or one that failed for a question with no answer or because `a2a-serve-sidecar` stopped, gets the artifact added afterwards. Read it with `GetTask`.
+
+### Conflicts
+
+When the workspace changed a file during a turn that the agent also changed, the workspace keeps its own version. The agent's version is dropped, and the agent's copy gets the workspace's version. The agent's other changes go back as usual. When both wrote the same content and permissions, the file counts as unchanged.
+
+The task then fails, even when the agent completed it. Its status message says which files conflicted, and the message's metadata key `a2a-serve/conflicts` lists their paths. The status of such a task:
+
+```json
+{"state": "TASK_STATE_FAILED", "message": {"metadata": {"a2a-serve/conflicts": ["main.go"]}, "parts": [{"text": "The workspace changed these files while the agent worked on them, ..."}]}}
+```
+
+The key is the same for every embedder of the core, so a host reads one key whether it runs `a2a-serve-sidecar` or embeds the core in Go. A canceled or failed task keeps its state, and has the key when its final status comes after the sync.
+
+## Flags
+
+<!-- generated:a2a-serve-sidecar-flags -->
+| Flag | Default | Description |
+|---|---|---|
+| `--agent name` |  | Agent to serve, a name: claude or opencode |
+| `--command words` |  | Command line of the agent, as shell words: replaces the command of --agent, or without --agent starts any agent that speaks ACP on stdio |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
+| `--image string` |  | Container image of the agent (default: the image of --agent); only applies to --sandbox docker |
+| `--sandbox string` | `docker` | Where the agent runs: docker, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
+| `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts and the hosts of --inject-model-key) (default internet) |
+| `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port |
+| `--egress-proxy URL` |  | HTTP proxy that decides every connection of the sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow and --inject-model-key |
+| `--env NAME=value` |  | Variable for the agent: NAME=value, such as DEBUG=1 |
+| `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
+| `--inject-model-key provider=NAME` |  | API key that a2a-serve-sidecar adds to the sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
+| `--workspace source` |  | Files of the agent, a source: dir:path for a directory, memory for files that a2a-serve-sidecar keeps in memory and drops at exit, or the URL of a file server of the host: http://, https:// or unix:///path |
+| `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker or bwrap unless the workspace is a dir: |
+| `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-serve-sidecar calls the hooks it advertises |
+| `--contact name=url` |  | Other A2A agent the agent may call, through a2a-serve-sidecar: name=url, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
+| `--contact-auth name=value` |  | Authorization header of the requests to a --contact, which the agent never sees: name=value; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer="Bearer env:REVIEWER_TOKEN" |
+| `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
+| `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-serve-sidecar, started to check that the agent starts |
+| `--home directory` |  | Agent home directory, which every agent process shares (default: a temporary directory, removed at exit) |
+| `--state-dir directory` |  | State directory for the files of the agent processes that no process may see, such as their sockets (default: a temporary directory, removed at exit) |
+<!-- /generated:a2a-serve-sidecar-flags -->

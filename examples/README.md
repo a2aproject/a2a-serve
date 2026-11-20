@@ -30,6 +30,6 @@ Connect the agent to a Telegram bot and give the server a speech service, either
 
 Run a SLIM node in Docker and join two agents to it with the SLIM network provider. Let one call the other over SLIMRPC, and call an agent by its SLIM name from a SLIM client that knows nothing about a2a-serve.
 
-### 8. Run a Sandboxed Agent for Your Program: [`08-a2a-run-host/`](08-a2a-run-host/)
+### 8. Run a Sandboxed Agent for Your Program: [`08-sidecar-host/`](08-sidecar-host/)
 
-Serve opencode in Docker to a program with `a2a-run`. The program serves the agent's tools and decides its tool calls, gets the files the agent changed back with each task, and offers it another agent to call.
+Serve opencode in Docker to a program with `a2a-serve-sidecar`. The program serves the agent's tools and decides its tool calls, gets the files the agent changed back with each task, and offers it another agent to call.

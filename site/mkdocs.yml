@@ -96,7 +96,7 @@ nav:
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
       - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
       - SLIM Network: examples/07-slim-network/index.md
-      - Run a Sandboxed Agent for Your Program: examples/08-a2a-run-host/index.md
+      - Run a Sandboxed Agent for Your Program: examples/08-sidecar-host/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
@@ -136,6 +136,6 @@ nav:
       - Audio Messages: reference/audio-messages.md
       - Limits: reference/limits.md
       - The a2a CLI: reference/a2a-cli.md
-      - a2a-run: reference/a2a-run.md
-      - a2a-run Egress Proxy Protocol: reference/a2a-run-egress-proxy.md
-      - a2a-run Tools Endpoint: reference/a2a-run-tools.md
+      - a2a-serve-sidecar: reference/a2a-serve-sidecar.md
+      - a2a-serve-sidecar Egress Proxy Protocol: reference/a2a-serve-sidecar-egress-proxy.md
+      - a2a-serve-sidecar Tools Endpoint: reference/a2a-serve-sidecar-tools.md
