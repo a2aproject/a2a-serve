@@ -71,7 +71,10 @@ func CheckBubblewrap(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, bwrapTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/", "/", "true").CombinedOutput()
+	// Binding all of / would copy the mounts of other processes, such as
+	// FUSE mounts in /tmp, and fail when one goes away meanwhile.
+	args := append([]string{"--unshare-all", "--die-with-parent"}, hostSystemView().args...)
+	out, err := exec.CommandContext(ctx, "bwrap", append(args, "true")...).CombinedOutput()
 	if err == nil {
 		return nil
 	}

@@ -19,11 +19,13 @@ package sandboxrt
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	fusefs "github.com/hanwen/go-fuse/v2/fs"
 
 	"github.com/a2aproject/a2a-serve/internal/boundary"
 )
@@ -290,5 +292,51 @@ func TestUserNamespaceFix(t *testing.T) {
 				t.Fatalf("appArmorFix() = %q, want %q", got, tc.wantNetwork)
 			}
 		})
+	}
+}
+
+// TestCheckBubblewrapWhileMountsChange checks bwrap while mounts of this
+// machine come and go, as FUSE mounts of other processes and the overlay
+// mounts of rootful Docker's containers do.
+func TestCheckBubblewrapWhileMountsChange(t *testing.T) {
+	t.Parallel()
+	if err := CheckBubblewrap(t.Context()); err != nil {
+		t.Skipf("bubblewrap isn't available: %v", err)
+	}
+	if _, err := exec.LookPath("fusermount3"); err != nil {
+		t.Skip("needs fusermount3")
+	}
+	dir := t.TempDir()
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				done <- nil
+				return
+			default:
+			}
+			srv, err := fusefs.Mount(dir, &fusefs.Inode{}, nil)
+			if err != nil {
+				done <- err
+				return
+			}
+			if err := srv.Unmount(); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		if err := <-done; err != nil {
+			t.Errorf("mounting and unmounting %s error = %v", dir, err)
+		}
+	}()
+	for range 100 {
+		if err := CheckBubblewrap(t.Context()); err != nil {
+			t.Fatalf("CheckBubblewrap() error = %v, want nil", err)
+		}
 	}
 }
