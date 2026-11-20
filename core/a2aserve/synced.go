@@ -15,11 +15,13 @@
 package a2aserve
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -111,6 +113,9 @@ const (
 // after the sync. A change of the directory between turns, such as by a
 // process the agent left running, goes back at the end of the next turn.
 // The turns of the process run one at a time, as [Attachment] describes.
+// An entry that is the same on both sides, such as a file that the tree
+// and the agent wrote with the same permissions and bytes, is neither a
+// conflict nor a change.
 //
 // When the tree's changes would take the directory past the limits of
 // opts, a turn runs without them, so that the agent can remove files, and
@@ -532,7 +537,15 @@ func (st *syncState) pull(ctx context.Context, info fsys.Info) error {
 		return err
 	}
 	bothDirs := there && l.Mode.IsDir() && info.Mode.IsDir()
-	if !bothDirs && (there && (!ok || version(l) != b.Local) || !there && ok) {
+	if !bothDirs && there && (!ok || version(l) != b.Local) {
+		same, err := st.sameEntry(ctx, info, l)
+		if err != nil || !same {
+			return err
+		}
+		st.base.Entries[p] = syncEntry{Tree: version(info), Local: version(l)}
+		return nil
+	}
+	if !there && ok {
 		return nil
 	}
 	if there && l.Mode.IsDir() && !info.Mode.IsDir() && st.changedUnder(ctx, p) {
@@ -748,8 +761,16 @@ func (st *syncState) push(ctx context.Context, l fsys.Info, b syncEntry, ok bool
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
+	same := l.Mode.IsDir() && there && cur.Mode.IsDir()
+	if !same && there {
+		// The same entry on both sides is neither a conflict nor a change,
+		// such as a file both wrote with the same bytes.
+		if same, err = st.sameEntry(ctx, cur, l); err != nil {
+			return false, err
+		}
+	}
 	switch {
-	case l.Mode.IsDir() && there && cur.Mode.IsDir():
+	case same:
 		st.base.Entries[p] = syncEntry{Tree: version(cur), Local: version(l)}
 		return true, nil
 	case ok && (!there || version(cur) != b.Tree), !ok && there:
@@ -895,6 +916,60 @@ func writeFrom(ctx context.Context, src, dst fsys.FS, p string, mode fs.FileMode
 	}
 	defer func() { err = errors.Join(err, rc.Close()) }()
 	return dst.Write(ctx, p, rc, mode.Perm(), ifVersion)
+}
+
+// sameEntry reports whether the tree's entry t and the directory's entry l
+// are the same: files with the same permissions and bytes, or symlinks to
+// the same target. It compares the bytes of files within the size limit.
+func (st *syncState) sameEntry(ctx context.Context, t, l fsys.Info) (bool, error) {
+	switch {
+	case t.Mode.Type() != l.Mode.Type():
+		return false, nil
+	case t.Mode&fs.ModeSymlink != 0:
+		return t.Target == l.Target, nil
+	case !t.Mode.IsRegular(), t.Mode.Perm() != l.Mode.Perm(), t.Size != l.Size, t.Size > st.limits.bytes:
+		return false, nil
+	}
+	return sameContent(ctx, st.tree, st.local, t.Path)
+}
+
+// sameContent reports whether the file p has the same bytes in a and b.
+// A file missing on either side isn't the same.
+func sameContent(ctx context.Context, a, b fsys.FS, p string) (same bool, err error) {
+	ra, err := a.Open(ctx, p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, ra.Close()) }()
+	rb, err := b.Open(ctx, p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, rb.Close()) }()
+	bufA, bufB := make([]byte, 32<<10), make([]byte, 32<<10)
+	for {
+		na, errA := io.ReadFull(ra, bufA)
+		nb, errB := io.ReadFull(rb, bufB)
+		if !bytes.Equal(bufA[:na], bufB[:nb]) {
+			return false, nil
+		}
+		endA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		endB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		switch {
+		case errA != nil && !endA:
+			return false, errA
+		case errB != nil && !endB:
+			return false, errB
+		case endA || endB:
+			return endA && endB, nil
+		}
+	}
 }
 
 func (st *syncState) replaceSymlink(ctx context.Context, dst fsys.FS, p, target string, there bool) error {
