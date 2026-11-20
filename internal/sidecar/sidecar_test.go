@@ -39,6 +39,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentrun"
+	"github.com/a2aproject/a2a-serve/internal/sandboxrt"
 	"github.com/a2aproject/a2a-serve/internal/sidecar"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -287,6 +288,31 @@ func TestMainPrintsPluginInfo(t *testing.T) {
 	want := `{"name":"serve-sidecar","version":"1.2.3","description":"Serve a coding agent in a sandbox over A2A"}` + "\n"
 	if code != 0 || stdout.String() != want {
 		t.Fatalf("sidecar.Main(info) = %d with stdout %q, want 0 and %q", code, stdout.String(), want)
+	}
+}
+
+func TestAppArmorProfileCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		args       []string
+		wantCode   int
+		wantStdout string
+	}{
+		{name: "prints the profile", args: []string{"apparmor-profile"}, wantStdout: sandboxrt.LiveAppArmor()},
+		{name: "refuses arguments", args: []string{"apparmor-profile", "extra"}, wantCode: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+
+			code := sidecar.Main(context.Background(), tc.args, sidecar.IO{Stdout: &stdout, Stderr: &stderr, StdoutIsTerminal: true})
+
+			if code != tc.wantCode || stdout.String() != tc.wantStdout {
+				t.Fatalf("sidecar.Main(%q) = %d with stdout %q, want %d and %q; stderr: %s", tc.args, code, stdout.String(), tc.wantCode, tc.wantStdout, stderr.String())
+			}
+		})
 	}
 }
 

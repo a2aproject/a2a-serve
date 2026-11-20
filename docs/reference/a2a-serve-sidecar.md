@@ -148,7 +148,15 @@ $ a2a-serve-sidecar --agent opencode --workspace unix:///run/host/fs.sock --work
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"url","workspace_sync":"live","egress":"policy"}
 ```
 
-At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet, and neither can rootful Docker under its default AppArmor profile. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
+At start, `a2a-serve-sidecar` checks that the host's file server answers and serves a directory. With `live`, it also checks that the sandbox here can mount the workspace. Docker Desktop can't yet. Bubblewrap needs `/dev/fuse`. When the check fails, `a2a-serve-sidecar` prints `ready` false with the reason, and suggests `--workspace-sync turn`, which works on every sandbox. [Sandboxing](../advanced/sandboxing.md#live-workspaces) explains how the container shows a live workspace.
+
+Rootful Docker on Ubuntu and other systems with AppArmor needs an AppArmor profile that allows the mount. Load it once after each boot, on the machine where the Docker daemon runs:
+
+```console
+$ a2a-serve-sidecar apparmor-profile | sudo apparmor_parser -r
+```
+
+`a2a-serve-sidecar` then gives the profile to the containers with a live workspace.
 
 With `turn` sync, the agent works in a directory under the state directory, which `--state-dir` sets. A `dir:` workspace larger than `turn` sync copies fails at start with a hint to use `live`. A workspace that grows past the [limits](limits.md#a2a-serve-sidecar) fails the turn with a status message that says to remove files. The next turns still run, so the agent can remove them.
 

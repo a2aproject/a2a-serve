@@ -15,7 +15,6 @@
 package sandboxrt
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -97,7 +96,7 @@ func checkServed(ctx context.Context, spec Spec, appArmor string) error {
 
 // errAppArmor is the problem of Docker's AppArmor profile, which denies
 // the FUSE mount of a live workspace.
-var errAppArmor = errors.New("the containers get the default AppArmor profile of Docker, which denies the FUSE mount; give live workspaces an AppArmor profile that allows it, or sync the workspace at turn boundaries")
+var errAppArmor = errors.New("the containers get the default AppArmor profile of Docker, which denies the FUSE mount; give live workspaces an AppArmor profile that allows it, such as " + LiveAppArmorProfile + ", or sync the workspace at turn boundaries")
 
 // appArmorProblem returns errAppArmor when Docker applies AppArmor and
 // profile, the profile of containers with live workspaces, is empty.
@@ -105,16 +104,17 @@ func appArmorProblem(ctx context.Context, profile string) error {
 	if profile != "" {
 		return nil
 	}
-	out, err := DockerQuery(ctx, "info", "--format", "{{.SecurityOptions}}")
+	applies, err := dockerAppArmor(ctx)
 	if err != nil {
 		return err
 	}
-	if bytes.Contains(out, []byte("name=apparmor")) {
+	if applies {
 		return errAppArmor
 	}
 	return nil
 }
 
 // servedRefusals are what the output of docker run names when the runtime
-// refuses the device or the capability that a live workspace takes.
-var servedRefusals = []string{"/dev/fuse", "SYS_ADMIN"}
+// refuses the device, the capability or the AppArmor profile that a live
+// workspace takes, such as a profile that the daemon's kernel hasn't loaded.
+var servedRefusals = []string{"/dev/fuse", "SYS_ADMIN", "apparmor"}
