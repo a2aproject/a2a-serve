@@ -26,6 +26,7 @@ import (
 )
 
 func main() {
+	ignoreSIGPIPE()
 	if err := protocolStdout(); err != nil {
 		fmt.Fprintf(os.Stderr, "netprovider-slim: %v\n", err)
 		os.Exit(1)

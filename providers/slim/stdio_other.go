@@ -19,3 +19,5 @@ package main
 // protocolStdout does nothing here, so the SLIM library logs to stdout too.
 // The server skips the lines that aren't messages.
 func protocolStdout() error { return nil }
+
+func ignoreSIGPIPE() {}

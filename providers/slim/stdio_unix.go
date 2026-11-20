@@ -19,6 +19,8 @@ package main
 import (
 	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,4 +39,12 @@ func protocolStdout() error {
 	}
 	os.Stdout = os.NewFile(uintptr(fd), "/dev/stdout")
 	return nil
+}
+
+// ignoreSIGPIPE keeps a write to a closed socket from killing the provider.
+// The Go runtime turns SIGPIPE into an error only for its own writes, and
+// the SLIM library writes to the node's socket itself, which a restarting
+// node closes.
+func ignoreSIGPIPE() {
+	signal.Ignore(syscall.SIGPIPE)
 }
