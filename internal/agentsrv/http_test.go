@@ -761,20 +761,30 @@ func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
 	}
 
 	writeRPC(t, conn, `{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"`+string(task.ID)+`"}}`, http.Header{"Authorization": {"Bearer " + token}})
-	time.Sleep(3 * timeout)
-	// A connection the server closed keeps the unsent part of the response
-	// and never ends it, but the next request on it gets a reset.
-	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + token}})
-
-	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	// The idle timeout starts with the first write, which follows encoding
+	// the whole task: that alone can take tens of seconds in a race build
+	// on a loaded machine.
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	if err == nil {
-		_, err = io.Copy(io.Discard, resp.Body)
+	if err != nil {
+		t.Fatalf("reading the start of GetTask of a large task error = %v", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GetTask of a large task status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	// A connection the server closed keeps the unsent part of the response
+	// and never ends it, but the server resets it once it closes with the
+	// next request unread.
+	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + token}})
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.Copy(io.Discard, resp.Body)
 	if !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("reading GetTask of a large task %s after the idle timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
+		t.Fatalf("reading GetTask of a large task after the idle timeout of %s error = %v, want %v from a connection the server closed", timeout, err, syscall.ECONNRESET)
 	}
 }
 
