@@ -38,6 +38,31 @@ type SessionStore struct {
 // Sessions returns the ACP session store.
 func (s *Store) Sessions() SessionStore { return SessionStore{s: s} }
 
+// HomeReferences returns the agent keys of retained sessions and the
+// owners of retained tasks whose sessions do not identify an agent key.
+func (s *Store) HomeReferences(ctx context.Context) (keys, owners []string, err error) {
+	rows, err := s.reads.QueryContext(ctx, `SELECT 1, agent_key FROM sessions WHERE agent_key != ''
+		UNION SELECT 0, t.owner FROM tasks t WHERE t.owner != '' AND NOT EXISTS (
+			SELECT 1 FROM sessions WHERE context_id = t.context_id AND agent_key != '')`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer closeRows(rows)
+	for rows.Next() {
+		var session bool
+		var value string
+		if err := rows.Scan(&session, &value); err != nil {
+			return nil, nil, err
+		}
+		if session {
+			keys = append(keys, value)
+		} else {
+			owners = append(owners, value)
+		}
+	}
+	return keys, owners, rows.Err()
+}
+
 // In returns the session store that records the workspace of new sessions,
 // and that doesn't return a session created in another workspace. Agents
 // such as opencode load such a session but fail its prompts.

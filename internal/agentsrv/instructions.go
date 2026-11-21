@@ -150,22 +150,13 @@ func callableAgents(ctx context.Context, st *store.Store, peers []AgentRef) ([]A
 // that don't run included, so that a process starts with current
 // instructions.
 func (s *Server) writeInstructions(ctx context.Context) error {
-	homes := []string{s.dir.HomeDir()}
-	entries, err := os.ReadDir(s.dir.UserHomesDir())
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			homes = append(homes, filepath.Join(s.dir.UserHomesDir(), e.Name()))
-		}
-	}
-	return s.writeInstructionsIn(ctx, homes...)
+	return s.writeInstructionsIn(ctx)
 }
 
 // writeInstructionsIn writes the instruction files into homes. A local
 // harness uses your own home, which is left alone. A home that fails the
-// sandbox checks is skipped, since the agent may have redirected it.
+// sandbox checks is skipped, since the agent may have redirected it. With
+// no paths given, it writes the owner's and every existing member home.
 func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
 	cfg := s.rt.Config()
 	if cfg.Sandbox == agentprofile.SandboxLocal {
@@ -177,6 +168,18 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	}
 	s.instructionsMu.Lock()
 	defer s.instructionsMu.Unlock()
+	if len(homes) == 0 {
+		homes = []string{s.dir.HomeDir()}
+		entries, err := os.ReadDir(s.dir.UserHomesDir())
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				homes = append(homes, filepath.Join(s.dir.UserHomesDir(), e.Name()))
+			}
+		}
+	}
 	callsPeers := s.clients != nil && s.clients.CallsPeers()
 	var peers []AgentRef
 	if callsPeers {

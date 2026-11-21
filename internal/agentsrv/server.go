@@ -840,6 +840,9 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		}
 		s.claims.forgetPruned(ctx)
 		s.pruneWorkspaces(ctx)
+		if err := s.pruneMemberHomes(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("pruning member agent homes", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return

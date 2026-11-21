@@ -616,6 +616,16 @@ func (r *Runner) Processes() []ProcessStatus {
 	return out
 }
 
+// HoldPoolStarts prevents new process starts in pool until release. It
+// returns the keys with running, starting or stopping processes or turns.
+// For an unknown pool, release is nil.
+func (r *Runner) HoldPoolStarts(pool string) (keys []string, release func()) {
+	if p := r.pools[pool]; p != nil {
+		return p.holdStarts()
+	}
+	return nil, nil
+}
+
 // Egress reports the egress of the containers.
 func (r *Runner) Egress() EgressState { return r.egress.state() }
 
