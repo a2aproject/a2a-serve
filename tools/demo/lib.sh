@@ -218,13 +218,13 @@ until_ok() {
   done
 }
 
-# reply_pending <pane> <reply> [flags] answers the task the pane's last
+# reply_pending <pane> <reply> [flags] [limit] answers the task the pane's last
 # a2a send left in input-required with reply, such as approve or reject, and
-# the ones that follow, up to three. Flags such as "-a <url>" are repeated on
-# each a2a send.
+# the ones that follow, up to limit (three by default). Flags such as
+# "-a <url>" are repeated on each a2a send.
 reply_pending() {
-  local i task
-  for i in 1 2 3; do
+  local i task limit="${4:-3}"
+  for ((i = 0; i < limit; i++)); do
     [[ "$(last_match "$1" 'Status: +[a-z-]+')" == *input-required ]] || return 0
     pause 3
     task="$(last_match "$1" 'a2a send --task-id [^ ]+')"
@@ -233,9 +233,9 @@ reply_pending() {
   done
 }
 
-# approve_pending <pane> [flags] approves what reply_pending answers.
+# approve_pending <pane> [flags] [limit] approves what reply_pending answers.
 approve_pending() {
-  reply_pending "$1" approve "${2:-}"
+  reply_pending "$1" approve "${2:-}" "${3:-}"
 }
 
 # expect_status <pane> <status> fails the recording unless the pane's last

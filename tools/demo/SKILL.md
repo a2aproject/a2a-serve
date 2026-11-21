@@ -60,7 +60,7 @@ tools/demo/record.sh 01-agent-server --build --gif # real agents, local build, p
 | --- | --- |
 | `01-agent-server` | Docker and a model key. `--fake` works. |
 | `02-tailscale-telegram-grok` | Tailscale with HTTPS and Funnel (example step 1), `CODER_BOT_TOKEN`, Telegram Web sign-in. Grok steps run when `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_TOKEN` are set. No `--fake`. The first run asks you to approve the `coder` machine; later runs reuse it from `~/.cache/a2a-demo/tsnet-coder`. |
-| `03-agentmesh-relay` | `--build` (builds the Agent Mesh network provider next to a2a-serve), free port 8443. Installs `agentmesh-one` if missing. `--fake` works. |
+| `03-agentmesh-relay` | `--build` (builds the Agent Mesh network provider next to a2a-serve), free port 8443, and `jq`. The relay downloads its pinned Agent Mesh binary if missing. `--fake` works. |
 | `04-observability-agent` | Docker, a model key, `jq`, and free ports 3000, 4317 and 4318. Runs `grafana/otel-lgtm` with generated telemetry off camera, and fetches the recipe from GitHub with your git credentials. No `--fake`. |
 | `inspector` | Docker and a model key, plus the browser setup. `--fake` works. |
 | `05-relay-cloud-run` | `--build`, `gcloud` signed in, and `DEMO_PROJECT`, a project where Cloud Run may serve the public and Cloud SQL may have a public IP. `05-relay-cloud-run/setup.sh` runs steps 1-3 of the example off camera first, so a new Cloud SQL instance's 10 minutes stay out of the recording. It creates billed resources named as in the example, which you delete afterwards. A Cloud SQL instance name can't be reused for a week after deletion; `DEMO_SQL_INSTANCE` picks another. Before a release, set `DEMO_RELAY_IMAGE` to an image repository you pushed the relay image to, tagged `v0.1.0`. `--fake` works. |
@@ -134,7 +134,7 @@ Helpers from `lib.sh`, where `<pane>` is a pane name:
 | `paste_run <pane> <cmd> [timeout]` | Pastes a long command at once, runs it and waits for the prompt. |
 | `start <pane> <cmd>` | Types and runs a command that keeps running, such as `a2a-serve start`. |
 | `answer <pane> <ERE> <reply>` | Waits for a command's question and types the reply; an empty reply takes the default. |
-| `reply_pending <pane> <reply> [flags]`, `approve_pending <pane> [flags]` | Answers the approvals the last `a2a send` left open, such as with `reject`. Flags such as `-a <url>` are repeated on each send. |
+| `reply_pending <pane> <reply> [flags] [limit]`, `approve_pending <pane> [flags] [limit]` | Answers the approvals the last `a2a send` left open, such as with `reject`. Flags such as `-a <url>` are repeated on each send. |
 | `say <pane> <text>` | Types a `# text` comment as narration. |
 | `wait_text <pane> <ERE> [timeout]` | Waits until the pane shows a match. |
 | `last_match <pane> <ERE>` | Prints the last match on the pane, to reuse a task ID or code. |
