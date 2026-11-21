@@ -81,14 +81,22 @@ a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-o
 
 ## 3. Describe your environment
 
-The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment. Give `a2a` time to wait for the answer:
+The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment. This can take several minutes, so start the task with `--async`.
 
 ```bash
 cd ~/o11y
 a2a-serve start --detach
-export A2ACLI_TIMEOUT=5m
-a2a send --history 0 -a "$(a2a-serve status --url=local)" "Learn the environment."
+a2a send --async --history 0 -a "$(a2a-serve status --url=local)" "Learn the environment."
 ```
+
+Copy the ID from the `Task:` line and check the same task until it completes.
+
+```bash
+TASK_ID='paste-the-task-id-here'
+a2a task get -a "$(a2a-serve status --url=local)" "$TASK_ID"
+```
+
+If the task shows `input-required`, [answer the approval](../../docs/guide/approvals.md) on that task. Add `--async` to the reply so you can keep checking by ID while the agent works.
 
 It answers with a proposed `ENVIRONMENT.md`. Review it, then save it to the file. The agent can't edit its workspace.
 
@@ -122,10 +130,12 @@ a2a-serve schedule add morning-digest --cron "0 9 * * 1-5" \
 
 ## 6. Ask it
 
+Start one of these investigations, then check its task by ID as in [step 3](#3-describe-your-environment).
+
 ```bash
-a2a send --history 0 -a "$(a2a-serve status --url=local)" "Why is checkout slow since 14:00?"
-a2a send --history 0 -a "$(a2a-serve status --url=local)" "Which services return the most errors this hour?"
-a2a send --history 0 -a "$(a2a-serve status --url=local)" "Did yesterday's deploy change the memory use of api?"
+a2a send --async --history 0 -a "$(a2a-serve status --url=local)" "Why is checkout slow since 14:00?"
+a2a send --async --history 0 -a "$(a2a-serve status --url=local)" "Which services return the most errors this hour?"
+a2a send --async --history 0 -a "$(a2a-serve status --url=local)" "Did yesterday's deploy change the memory use of api?"
 ```
 
 Each answer starts with the conclusion, followed by the queries, time ranges and Grafana links behind it.
