@@ -459,9 +459,9 @@ func TestProxyRouterSurvivesMisbehavingProxies(t *testing.T) {
 
 func TestProxyRouterRefusesWhenTheProxyIsDown(t *testing.T) {
 	t.Parallel()
-	ln := listenTCP(t)
-	url := "http://" + ln.Addr().String()
-	closeLog(t, ln)
+	// A socket that nothing creates stays down; a closed TCP port can be
+	// handed to a listener of a parallel test.
+	url := "unix://" + filepath.Join(testutil.ShortTempDir(t), "down.sock")
 	addr, _ := proxyEndpoint(t, egress.ProxyConfig{URL: url}, time.Second, "ctx-1")
 
 	if got := connect(t, addr, "example.test:443"); got != http.StatusBadGateway {
