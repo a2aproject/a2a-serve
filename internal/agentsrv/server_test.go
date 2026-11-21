@@ -25,6 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
+	"github.com/a2aproject/a2a-serve/internal/freeport"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -83,6 +84,19 @@ func TestRunCanceledDuringStartup(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the server did not stop")
+	}
+}
+
+func TestFirstRunSavesPortBelowTheEphemeralRange(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{configure: func(c *agentdir.Config) { c.Port = 0 }})
+
+	cfg, err := ts.dir.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Port < freeport.Min || cfg.Port >= freeport.Max {
+		t.Fatalf("the saved port = %d, want one in [%d, %d), below the ephemeral ranges", cfg.Port, freeport.Min, freeport.Max)
 	}
 }
 
