@@ -569,8 +569,8 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 }
 
 // stopGrace bounds how long the stream of a turn lasts once the server began
-// to stop and the turns ended, and then how long it may take to show the end
-// in its chat.
+// to stop and the turns ended, and how long each event it streams after the
+// stop may take to show in its chat.
 const stopGrace = 5 * time.Second
 
 // outlive returns a context with the values of ctx that ends grace after
@@ -588,26 +588,35 @@ func outlive(ctx context.Context, ended func(context.Context), grace time.Durati
 }
 
 // graceContext is ctx until it ends, and then a context with the values of
-// ctx that lasts grace from the first call of get after that.
+// ctx and a deadline about grace after the latest call of get. Each event
+// that a turn streams after the stop gets the grace to show, so that its
+// final status still shows when it ends long after its last output. An
+// earlier context stays valid until its own deadline, for the edits it
+// scheduled, so a new one is made at most every tenth of grace.
 type graceContext struct {
-	ctx    context.Context
-	grace  time.Duration
-	after  context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	grace   time.Duration
+	after   context.Context
+	cancels []context.CancelFunc
 }
 
 func (g *graceContext) get() context.Context {
 	if g.ctx.Err() == nil {
 		return g.ctx
 	}
-	if g.after == nil {
-		g.after, g.cancel = context.WithTimeout(context.WithoutCancel(g.ctx), g.grace)
+	if g.after != nil {
+		if deadline, _ := g.after.Deadline(); time.Until(deadline) > g.grace-g.grace/10 {
+			return g.after
+		}
 	}
+	var cancel context.CancelFunc
+	g.after, cancel = context.WithTimeout(context.WithoutCancel(g.ctx), g.grace)
+	g.cancels = append(g.cancels, cancel)
 	return g.after
 }
 
 func (g *graceContext) stop() {
-	if g.cancel != nil {
-		g.cancel()
+	for _, cancel := range g.cancels {
+		cancel()
 	}
 }

@@ -65,6 +65,8 @@ type fakeTurnSender struct {
 	// stopped ends a held stream with a failed status, as the server's
 	// executor ends the turns when the server stops.
 	stopped <-chan struct{}
+	// stoppedOutput is what a stopped turn streams before it ends.
+	stoppedOutput []a2a.Event
 	// turnEnd, if set, delays the end of a stopped turn until it is
 	// closed, as on a busy server.
 	turnEnd   chan struct{}
@@ -104,6 +106,11 @@ func (s *fakeTurnSender) SendStreamingMessage(ctx context.Context, req *a2a.Send
 			select {
 			case <-s.hold:
 			case <-s.stopped:
+				for _, ev := range s.stoppedOutput {
+					if !yield(ev, nil) {
+						return
+					}
+				}
 				if s.turnEnd != nil {
 					select {
 					case <-s.turnEnd:
@@ -1115,6 +1122,23 @@ func TestChatTurnsShowsTheEndOfATurnThatEndedLongAfterTheStop(t *testing.T) {
 	fx.sender.nextStream(t)
 
 	fx.cancel()
+	time.Sleep(stopGrace + time.Second)
+	close(fx.sender.turnEnd)
+
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
+}
+
+func TestChatTurnsShowsTheEndOfATurnThatEndedLongAfterItsLastOutput(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.sender.turnEnd = make(chan struct{})
+	fx.sender.stoppedOutput = []a2a.Event{&a2a.TaskArtifactUpdateEvent{TaskID: "stopped", Artifact: &a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart("Working")}}}}
+	fx.ch.Write("telegram:1", "dm1", "slow")
+	fx.sender.nextStream(t)
+
+	fx.cancel()
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText("Working"))
 	time.Sleep(stopGrace + time.Second)
 	close(fx.sender.turnEnd)
 
