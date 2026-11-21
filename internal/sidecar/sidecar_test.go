@@ -353,6 +353,7 @@ func TestStopFailsTheTasksOfWaitingCallers(t *testing.T) {
 	streaming := make(chan result, 1)
 	go func() {
 		var last result
+		var closeWorking sync.Once
 		for ev, err := range c.SendStreamingMessage(ctx, stall("streaming")) {
 			if err != nil {
 				last = result{err: err}
@@ -360,9 +361,8 @@ func TestStopFailsTheTasksOfWaitingCallers(t *testing.T) {
 			}
 			if s, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
 				last = result{status: &s.Status}
-				if s.Status.State == a2a.TaskStateWorking && working != nil {
-					close(working)
-					working = nil
+				if s.Status.State == a2a.TaskStateWorking {
+					closeWorking.Do(func() { close(working) })
 				}
 			}
 		}
