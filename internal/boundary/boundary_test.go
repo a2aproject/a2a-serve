@@ -424,6 +424,38 @@ func TestBoundaryClosesEmptyConnectionsQuietly(t *testing.T) {
 	}
 }
 
+func TestBoundaryCloseLogsNoBlockForConnectionsWithoutARequest(t *testing.T) {
+	t.Parallel()
+	logs := &logRecords{}
+	b, sock := listen(t, BoundaryConfig{
+		Sandbox: "test",
+		Router:  PolicyRouter(func() egressrules.Policy { return mustPolicy(t, egressrules.ModeAllowlist) }, nil),
+		Log:     slog.New(logs),
+		Blocks:  &Blocks{},
+	})
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dialing the boundary error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("closing the connection error = %v", err)
+		}
+	})
+	if _, _, resp := connect(t, sock, "192.0.2.1:22"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("CONNECT 192.0.2.1:22 status = %d, want 403", resp.StatusCode)
+	}
+
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	want := []string{"egress blocked destination=192.0.2.1:22 reason=ip-not-on-allowlist"}
+	if diff := cmp.Diff(want, logs.all()); diff != "" {
+		t.Fatalf("log records wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestBoundaryAppliesChangedPolicy(t *testing.T) {
 	t.Parallel()
 	echo := echoServer(t)

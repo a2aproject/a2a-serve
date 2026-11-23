@@ -21,9 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -241,12 +244,49 @@ func (u *user) newAgent(name string) *agent {
 	return &agent{u: u, name: name, dir: dir}
 }
 
-// start runs `a2a-serve start <kind>` with flags in the background.
+// start runs `a2a-serve start <kind>` with flags in the background, on a
+// port of its own.
 func (a *agent) start(kind string, flags ...string) {
 	a.u.t.Helper()
 	a.u.t.Cleanup(a.cleanup)
-	a.serve(append([]string{"start", kind, "--name", a.name, "--detach"}, flags...)...)
+	a.serve(append([]string{"start", kind, "--name", a.name, "--detach", "--port", strconv.Itoa(agentPort(a.u.t))}, flags...)...)
 	a.url = strings.TrimSpace(a.serve("status", "--url=local"))
+}
+
+// Agents keep their port across restarts. The server picks a random free
+// port from 10000 up to 20000, so two agents of this process could pick the
+// same one, and the second take it while the first restarts. Agents of the
+// tests get ports from this range instead, each one once.
+const (
+	minAgentPort = 30000
+	maxAgentPort = 32000
+)
+
+var nextAgentPort = struct {
+	sync.Mutex
+	n int
+}{n: rand.IntN(maxAgentPort - minAgentPort)}
+
+// agentPort returns a free port for an agent, never the same one twice in
+// this process.
+func agentPort(t *testing.T) int {
+	t.Helper()
+	nextAgentPort.Lock()
+	defer nextAgentPort.Unlock()
+	for range maxAgentPort - minAgentPort {
+		port := minAgentPort + nextAgentPort.n
+		nextAgentPort.n = (nextAgentPort.n + 1) % (maxAgentPort - minAgentPort)
+		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		if err := ln.Close(); err != nil {
+			t.Fatalf("closing the listener on port %d: %v", port, err)
+		}
+		return port
+	}
+	t.Fatalf("no free port in [%d, %d)", minAgentPort, maxAgentPort)
+	return 0
 }
 
 func sandboxFlags() []string {

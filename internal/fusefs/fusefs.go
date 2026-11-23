@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -93,6 +94,10 @@ type mountState struct {
 	opts    Options
 	budget  *budget
 	mounted time.Time
+	// paths is held shared by the writes of open files, and exclusively by
+	// the removals and renames, which change where files are, so that a
+	// write can't land at a path its file left.
+	paths sync.RWMutex
 }
 
 // fill describes info in out.

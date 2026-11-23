@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/freeport"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
@@ -124,7 +125,7 @@ func (b *Backend) Start(ctx context.Context, s relay.Start) (relay.Running, erro
 }
 
 func (b *Backend) start(ctx context.Context, s relay.Start) (relay.Running, error) {
-	port, err := relay.FreePort()
+	port, err := freeport.Pick()
 	if err != nil {
 		return nil, err
 	}

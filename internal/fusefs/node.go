@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
@@ -41,6 +42,18 @@ type node struct {
 	mu sync.Mutex
 	// handles are the open handles of a file that write it.
 	handles []*handle
+
+	// moved is where the last rename put n, which the tree of inodes shows
+	// only after the rename returns. removed is set once n was removed,
+	// which a lookup that raced with the removal could hide.
+	moved   atomic.Pointer[place]
+	removed atomic.Bool
+}
+
+// place is an entry name in a directory.
+type place struct {
+	parent *gofs.Inode
+	name   string
 }
 
 var (
@@ -65,6 +78,14 @@ func (n *node) path() (string, bool) {
 	var names []string
 	for p := &n.Inode; p != root; {
 		name, parent := p.Parent()
+		if pn, ok := p.Operations().(*node); ok {
+			if pn.removed.Load() {
+				return "", false
+			}
+			if mv := pn.moved.Load(); mv != nil {
+				name, parent = mv.name, mv.parent
+			}
+		}
 		if parent == nil {
 			return "", false
 		}
@@ -90,13 +111,24 @@ func (n *node) child(name string) (string, syscall.Errno) {
 	return p + "/" + name, 0
 }
 
+// childNode returns the node of the entry name in the directory n that the
+// kernel knows, or nil.
+func (n *node) childNode(name string) *node {
+	ch := n.GetChild(name)
+	if ch == nil {
+		return nil
+	}
+	cn, _ := ch.Operations().(*node)
+	return cn
+}
+
 // inode returns the inode of the entry that info describes, named name in
 // the directory n, the one it already has when its type didn't change.
 func (n *node) inode(ctx context.Context, name string, info fsys.Info, out *fuse.EntryOut) *gofs.Inode {
 	n.m.fill(info, &out.Attr)
 	mode := typeBits(info.Mode)
-	if ch := n.GetChild(name); ch != nil && ch.Mode() == mode {
-		return ch
+	if ch := n.childNode(name); ch != nil && ch.Mode() == mode && !ch.removed.Load() {
+		return &ch.Inode
 	}
 	return n.NewInode(ctx, &node{m: n.m}, gofs.StableAttr{Mode: mode})
 }
@@ -317,6 +349,8 @@ func (n *node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 }
 
 func (n *node) Unlink(ctx context.Context, name string) syscall.Errno {
+	n.m.paths.Lock()
+	defer n.m.paths.Unlock()
 	p, e := n.child(name)
 	if e != 0 {
 		return e
@@ -328,10 +362,18 @@ func (n *node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if info.Mode.IsDir() {
 		return syscall.EISDIR
 	}
-	return errno(n.m.tree.Remove(ctx, p))
+	if err := n.m.tree.Remove(ctx, p); err != nil {
+		return errno(err)
+	}
+	if ch := n.childNode(name); ch != nil {
+		ch.removed.Store(true)
+	}
+	return 0
 }
 
 func (n *node) Rmdir(ctx context.Context, name string) syscall.Errno {
+	n.m.paths.Lock()
+	defer n.m.paths.Unlock()
 	p, e := n.child(name)
 	if e != 0 {
 		return e
@@ -339,7 +381,13 @@ func (n *node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if e := n.removableDir(ctx, p); e != 0 {
 		return e
 	}
-	return errno(n.m.tree.Remove(ctx, p))
+	if err := n.m.tree.Remove(ctx, p); err != nil {
+		return errno(err)
+	}
+	if ch := n.childNode(name); ch != nil {
+		ch.removed.Store(true)
+	}
+	return 0
 }
 
 // removableDir returns the error of rmdir of p unless p is an empty
@@ -372,6 +420,8 @@ func (n *node) Rename(ctx context.Context, name string, newParent gofs.InodeEmbe
 	if flags&renameExchange != 0 {
 		return syscall.EINVAL
 	}
+	n.m.paths.Lock()
+	defer n.m.paths.Unlock()
 	from, e := n.child(name)
 	if e != 0 {
 		return e
@@ -383,6 +433,9 @@ func (n *node) Rename(ctx context.Context, name string, newParent gofs.InodeEmbe
 	to, e := dst.child(newName)
 	if e != 0 {
 		return e
+	}
+	if from == to {
+		return 0
 	}
 	src, err := n.m.tree.Stat(ctx, from)
 	if err != nil {
@@ -407,7 +460,16 @@ func (n *node) Rename(ctx context.Context, name string, newParent gofs.InodeEmbe
 			return errno(err)
 		}
 	}
-	return errno(n.m.tree.Rename(ctx, from, to))
+	if err := n.m.tree.Rename(ctx, from, to); err != nil {
+		return errno(err)
+	}
+	if replaced := dst.childNode(newName); replaced != nil {
+		replaced.removed.Store(true)
+	}
+	if moved := n.childNode(name); moved != nil {
+		moved.moved.Store(&place{parent: &dst.Inode, name: newName})
+	}
+	return 0
 }
 
 func (n *node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {

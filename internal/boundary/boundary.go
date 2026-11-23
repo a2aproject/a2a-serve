@@ -337,6 +337,10 @@ func (b *Boundary) handle(guest net.Conn) {
 		return
 	}
 	host, port, rerr := readConnect(br)
+	if rerr != nil && b.ctx.Err() != nil {
+		// Close ended the read of a connection that sent no request.
+		return
+	}
 	if rerr != nil {
 		b.log.write(slog.LevelWarn, "egress blocked", "reason", rerr.reason)
 		writeRefusal(guest, rerr)

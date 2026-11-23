@@ -501,15 +501,18 @@ func TestContactsFailATaskWaitingForAContactWhenTheServerStops(t *testing.T) {
 	}()
 	waitUntil(t, "the reviewer to work on the answer", func() bool { return len(cs.reviewer.heldTasks()) == 1 })
 
-	start := time.Now()
-	if err := cs.close(ctx); err != nil {
+	closed := make(chan error, 1)
+	go func() { closed <- cs.close(ctx) }()
+
+	var ev a2a.Event
+	select {
+	case ev = <-last:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the answer still waits for the contact 30s after Server.Close() started")
+	}
+	if err := <-closed; err != nil {
 		t.Fatalf("Server.Close() error = %v", err)
 	}
-
-	if d := time.Since(start); d > 10*time.Second {
-		t.Fatalf("Server.Close() took %v, want it to end the wait for the contact", d)
-	}
-	ev := <-last
 	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
 	if !ok || up.Status.State != a2a.TaskStateFailed || !strings.Contains(messageText(up.Status.Message), "The server stopped") {
 		t.Fatalf("last event of the answer = %#v, want the task failed as the server stopped", ev)

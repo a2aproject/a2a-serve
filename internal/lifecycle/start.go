@@ -142,8 +142,11 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 		defer lw.flush()
 		srvOpts.ImageProgress = lw
 	}
-	if ready := opts.Ready; ready != nil {
-		srvOpts.Ready = func(*agentsrv.Server) { ready() }
+	srvOpts.Ready = func(*agentsrv.Server) {
+		logReady(slog.Default(), os.Getpid())
+		if opts.Ready != nil {
+			opts.Ready()
+		}
 	}
 	err = agentsrv.Run(ctx, srvOpts)
 	// A stop that arrives while the server starts cancels the step it is
@@ -335,10 +338,9 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exi
 		// taking over once the other server stops.
 		other := statusErr == nil && pid != 0 && st.PID != pid
 		if statusErr == nil && !other {
-			// Print what the server logged while becoming ready.
-			if _, err := r.read(dir.LogPath(), offset); err != nil {
-				slog.Debug("reading the startup log", "error", err)
-			}
+			// The server answers before it prints its summary, such as how
+			// to link the owner, and logs its ready record after it.
+			r.relaySummary(ctx, dir.LogPath(), offset, exited)
 			return st, nil
 		}
 		if r.stopped || isClosed(exited) {
@@ -369,6 +371,32 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exi
 		}
 	}
 }
+
+// relaySummary relays the lines the server logs after it answers, until
+// its ready record, its exit, or summaryWait.
+func (r *relay) relaySummary(ctx context.Context, path string, offset int64, exited <-chan struct{}) {
+	deadline := time.Now().Add(summaryWait)
+	for {
+		next, err := r.read(path, offset)
+		if err != nil {
+			slog.Debug("reading the startup log", "error", err)
+			return
+		}
+		offset = next
+		if r.ready || r.stopped || isClosed(exited) || time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// summaryWait bounds how long waitReady relays the summary of a server
+// that answers.
+const summaryWait = 30 * time.Second
 
 // exitWait is how long waitReady waits for a server that logged its stop
 // record to exit.
@@ -404,6 +432,8 @@ type relay struct {
 	// clean is set when the server stopped without an error before it was
 	// ready, as when `a2a-serve stop` stopped it.
 	clean bool
+	// ready is set once the server logged its ready record.
+	ready bool
 }
 
 // read relays the lines of the log at path after offset, and returns the
@@ -434,6 +464,9 @@ func (r *relay) line(l string) error {
 		}
 		if isCleanStop(l) && r.own(l) {
 			r.stopped, r.clean = true, true
+		}
+		if isReady(l) && r.own(l) {
+			r.ready = true
 		}
 		return nil
 	}

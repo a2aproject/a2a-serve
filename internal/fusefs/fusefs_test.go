@@ -22,6 +22,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -201,6 +202,99 @@ func TestMountDropsWritesOfRemovedFiles(t *testing.T) {
 	if len(infos) != 0 {
 		t.Fatalf("FS.ReadDir(.) after closing a removed file = %v, want nothing", infos)
 	}
+}
+
+// runWhileFlushed calls step while processes start, each of which inherits
+// the open files of the test until it execs and closes them, which flushes
+// them.
+func runWhileFlushed(t *testing.T, rounds int, step func(round int)) {
+	t.Helper()
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				done <- nil
+				return
+			default:
+			}
+			if err := exec.Command("true").Run(); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		if err := <-done; err != nil {
+			t.Errorf("running true error = %v", err)
+		}
+	}()
+	for i := range rounds {
+		step(i)
+	}
+}
+
+func TestMountDropsWritesOfFilesRemovedWhileOthersClose(t *testing.T) {
+	t.Parallel()
+	dir, tree := mountTree(t, Options{})
+	runWhileFlushed(t, 500, func(round int) {
+		f, err := os.Create(filepath.Join(dir, "tmp"))
+		if err != nil {
+			t.Fatalf("os.Create(tmp) error = %v", err)
+		}
+		if _, err := f.WriteString("scratch"); err != nil {
+			closeQuietly(t, f)
+			t.Fatalf("writing tmp error = %v", err)
+		}
+		if err := os.Remove(filepath.Join(dir, "tmp")); err != nil {
+			closeQuietly(t, f)
+			t.Fatalf("os.Remove(tmp) error = %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("closing tmp error = %v", err)
+		}
+		infos, err := tree.ReadDir(context.Background(), ".")
+		if err != nil {
+			t.Fatalf("FS.ReadDir(.) error = %v", err)
+		}
+		if len(infos) != 0 {
+			t.Fatalf("FS.ReadDir(.) after closing a removed file, round %d = %v, want nothing", round, infos)
+		}
+	})
+}
+
+func TestMountWritesFilesRenamedWhileOthersClose(t *testing.T) {
+	t.Parallel()
+	dir, tree := mountTree(t, Options{})
+	runWhileFlushed(t, 500, func(round int) {
+		f, err := os.Create(filepath.Join(dir, "a"))
+		if err != nil {
+			t.Fatalf("os.Create(a) error = %v", err)
+		}
+		if _, err := f.WriteString("scratch"); err != nil {
+			closeQuietly(t, f)
+			t.Fatalf("writing a error = %v", err)
+		}
+		if err := os.Rename(filepath.Join(dir, "a"), filepath.Join(dir, "b")); err != nil {
+			closeQuietly(t, f)
+			t.Fatalf("os.Rename(a, b) error = %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("closing b error = %v", err)
+		}
+		infos, err := tree.ReadDir(context.Background(), ".")
+		if err != nil {
+			t.Fatalf("FS.ReadDir(.) error = %v", err)
+		}
+		if len(infos) != 1 || infos[0].Path != "b" || get(t, tree, "b") != "scratch" {
+			t.Fatalf("FS.ReadDir(.) after closing a renamed file, round %d = %v, want b with what was written", round, infos)
+		}
+		if err := tree.Remove(context.Background(), "b"); err != nil {
+			t.Fatalf("FS.Remove(b) error = %v", err)
+		}
+	})
 }
 
 func TestMountBoundsBuffers(t *testing.T) {

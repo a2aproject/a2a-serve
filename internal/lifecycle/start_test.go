@@ -333,7 +333,8 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 	log := stopRecord(7, "the server is already running in /a (a2a-serve status)") +
 		"Error: the server is already running in /a (a2a-serve status)\n" +
 		"hint: run a2a-serve status\n" +
-		"✓ opencode is running (ACP)\n"
+		"✓ opencode is running (ACP)\n" +
+		readyRecord(42)
 	if err := os.WriteFile(dir.LogPath(), []byte(log), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -346,6 +347,42 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 		t.Fatalf("waitReady() error = %v", err)
 	}
 	if want := "✓ opencode is running (ACP)\n"; out.String() != want {
+		t.Fatalf("waitReady() output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestWaitReadyRelaysTheSummaryPrintedAfterTheServerAnswers(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	if err := os.WriteFile(dir.LogPath(), []byte("✓ opencode is running (ACP)\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	serveControl(t, dir, &fakeControl{pid: 42})
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		f, err := os.OpenFile(dir.LogPath(), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Errorf("OpenFile() error = %v", err)
+			return
+		}
+		if _, err := f.WriteString("→ link yourself as owner: https://t.me/bot?start=CODE   (15 min)\n" + readyRecord(42)); err != nil {
+			t.Errorf("WriteString() error = %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+
+	if _, err := waitReady(ctx, dir, 0, 42, nil, &out); err != nil {
+		t.Fatalf("waitReady() error = %v", err)
+	}
+	if want := "✓ opencode is running (ACP)\n→ link yourself as owner: https://t.me/bot?start=CODE   (15 min)\n"; out.String() != want {
 		t.Fatalf("waitReady() output = %q, want %q", out.String(), want)
 	}
 }
@@ -387,6 +424,12 @@ func TestWaitReadyWaitsForItsServerWhenAnotherAnswers(t *testing.T) {
 func cleanStopRecord(pid int) string {
 	var b bytes.Buffer
 	logCleanStop(slog.New(slog.NewTextHandler(&b, nil)), pid)
+	return b.String()
+}
+
+func readyRecord(pid int) string {
+	var b bytes.Buffer
+	logReady(slog.New(slog.NewTextHandler(&b, nil)), pid)
 	return b.String()
 }
 

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -751,27 +752,66 @@ func TestUnreadResponsesEndAfterTheIdleTimeout(t *testing.T) {
 	const timeout = time.Second
 	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.IdleTimeout = timeout }})
 	token := ts.pair("anna", auth.RoleMember)
-	task := send(t, ts.client(token), userText("big 8000000", "", ""))
+	c := ts.client(token)
+	task := sendAsync(t, c, userText("big 8000000", "", ""))
+	waitListed(t, c, task.ID, a2a.TaskStateCompleted)
 	conn := dialRaw(t, ts.localURL())
 	if err := conn.(*net.TCPConn).SetReadBuffer(4 << 10); err != nil {
 		t.Fatal(err)
 	}
 
 	writeRPC(t, conn, `{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"`+string(task.ID)+`"}}`, http.Header{"Authorization": {"Bearer " + token}})
-	time.Sleep(3 * timeout)
-	// A connection the server closed keeps the unsent part of the response
-	// and never ends it, but the next request on it gets a reset.
-	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + token}})
-
-	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	// The idle timeout starts with the first write, which follows encoding
+	// the whole task: that alone can take tens of seconds in a race build
+	// on a loaded machine.
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	if err == nil {
-		_, err = io.Copy(io.Discard, resp.Body)
+	if err != nil {
+		t.Fatalf("reading the start of GetTask of a large task error = %v", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GetTask of a large task status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	// A connection the server closed keeps the unsent part of the response
+	// and never ends it, but the server resets it once it closes with the
+	// next request unread.
+	writeRPC(t, conn, listTasksRPC, http.Header{"Authorization": {"Bearer " + token}})
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.Copy(io.Discard, resp.Body)
 	if !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("reading GetTask of a large task %s after the idle timeout error = %v, want %v from a connection the server closed", 3*timeout, err, syscall.ECONNRESET)
+		t.Fatalf("reading GetTask of a large task after the idle timeout of %s error = %v, want %v from a connection the server closed", timeout, err, syscall.ECONNRESET)
+	}
+}
+
+// waitListed polls the task list until task id reaches state. The list
+// leaves out artifacts and history, so a large task doesn't stall the
+// responses past a short idle timeout of the server.
+func waitListed(t *testing.T, c *a2aclient.Client, id a2a.TaskID, state a2a.TaskState) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var last a2a.TaskState
+	for {
+		list, err := c.ListTasks(context.Background(), &a2a.ListTasksRequest{HistoryLength: new(0)})
+		if err != nil {
+			t.Fatalf("ListTasks() error = %v", err)
+		}
+		for _, task := range list.Tasks {
+			if task.ID == id {
+				last = task.Status.State
+			}
+		}
+		if last == state {
+			return
+		}
+		if last.Terminal() || time.Now().After(deadline) {
+			t.Fatalf("task %s state = %s, want %s", id, last, state)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

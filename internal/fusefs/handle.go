@@ -108,6 +108,8 @@ func (h *handle) loadLocked(ctx context.Context) syscall.Errno {
 	if h.buf != nil {
 		return 0
 	}
+	h.n.m.paths.RLock()
+	defer h.n.m.paths.RUnlock()
 	p, ok := h.n.path()
 	if !ok {
 		return syscall.ENOENT
@@ -257,6 +259,8 @@ func (h *handle) flushLocked(ctx context.Context) syscall.Errno {
 	if !h.dirty {
 		return 0
 	}
+	h.n.m.paths.RLock()
+	defer h.n.m.paths.RUnlock()
 	p, ok := h.n.path()
 	if !ok {
 		h.dirty = false

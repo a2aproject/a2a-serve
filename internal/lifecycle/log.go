@@ -56,6 +56,21 @@ func logCleanStop(l *slog.Logger, pid int) {
 	l.Info(cleanStopMsg, "pid", pid)
 }
 
+// readyMsg is the message of the record the server logs once it serves and
+// printed its summary.
+const readyMsg = "the server is ready"
+
+// logReady logs the record of the server with pid that is ready.
+func logReady(l *slog.Logger, pid int) {
+	l.Info(readyMsg, "pid", pid)
+}
+
+// isReady reports whether a log line is the record of a server that is
+// ready.
+func isReady(line string) bool {
+	return !isProgress(line) && strings.Contains(line, " msg="+strconv.Quote(readyMsg))
+}
+
 // isCleanStop reports whether a log line is the record of a server that
 // stopped without an error.
 func isCleanStop(line string) bool {

@@ -55,6 +55,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/freeport"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
@@ -694,10 +695,17 @@ func (s *Server) logf(format string, args ...any) {
 }
 
 // listenLocal opens the localhost listener. The first run picks a free port
-// and saves it, so the local URL stays the same.
+// below the ephemeral range and saves it, so the local URL stays the same
+// and the port stays free while the server restarts.
 func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- error) error {
 	port := s.rt.Config().Port
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	var ln net.Listener
+	var err error
+	if port == 0 {
+		ln, err = freeport.Listen("127.0.0.1")
+	} else {
+		ln, err = net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	}
 	if errors.Is(err, syscall.EADDRINUSE) {
 		return agenterr.WithHint(fmt.Errorf("listening on localhost:%d: %w", port, err), agenterr.HintPortInUse, "")
 	}

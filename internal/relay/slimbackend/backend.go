@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/freeport"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/relay"
@@ -224,7 +225,7 @@ services:
 }
 
 func (b *Backend) startNode(ctx context.Context, dir string) (*nodeProcess, error) {
-	port, err := relay.FreePort()
+	port, err := freeport.Pick()
 	if err != nil {
 		return nil, err
 	}

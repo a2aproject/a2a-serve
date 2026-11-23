@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -59,9 +60,8 @@ func TestRoutesKeepTheBounds(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, sock := listen(t, BoundaryConfig{Router: fixedRouter(tc.route), Log: slog.New(slog.DiscardHandler), MaxTunnels: 1, IdleTimeout: 200 * time.Millisecond})
-			c, br, resp := connect(t, sock, "any.test:22")
-			if resp.StatusCode != http.StatusOK {
+			_, sock := listen(t, BoundaryConfig{Router: fixedRouter(tc.route), Log: slog.New(slog.DiscardHandler), MaxTunnels: 1})
+			if _, _, resp := connect(t, sock, "any.test:22"); resp.StatusCode != http.StatusOK {
 				t.Fatalf("CONNECT status = %d, want 200", resp.StatusCode)
 			}
 			over, err := net.Dial("unix", sock)
@@ -77,10 +77,15 @@ func TestRoutesKeepTheBounds(t *testing.T) {
 			if err != nil || busy.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("connection over the tunnel limit = %v, %v, want 503", busy, err)
 			}
+			_, idleSock := listen(t, BoundaryConfig{Router: fixedRouter(tc.route), Log: slog.New(slog.DiscardHandler), IdleTimeout: 200 * time.Millisecond})
+			c, br, resp := connect(t, idleSock, "any.test:22")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("CONNECT status = %d, want 200", resp.StatusCode)
+			}
 			if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := br.ReadByte(); err == nil || errors.Is(err, context.DeadlineExceeded) {
+			if _, err := br.ReadByte(); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
 				t.Fatalf("reading an idle tunnel error = %v, want it closed by the idle timeout", err)
 			}
 		})
