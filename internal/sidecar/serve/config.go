@@ -75,8 +75,8 @@ type Config struct {
 	// individual hosts.
 	EgressMiddleware []string
 	// EgressProxy is the URL of the proxy that decides every connection
-	// of the sandbox, in place of Egress, EgressAllow, EgressMiddleware
-	// and ModelKeys.
+	// of the sandbox, in place of Egress, EgressAllow, EgressMiddleware,
+	// ModelKeys and InjectHeaders.
 	EgressProxy string
 	// Env are NAME=value pairs the agent gets.
 	Env []string
@@ -86,6 +86,9 @@ type Config struct {
 	// ModelKeys are provider=NAME pairs: the boundary adds the key in the
 	// variable NAME of this process to the requests to the provider.
 	ModelKeys []string
+	// InjectHeaders are host[:port]=Name: value pairs: the boundary adds
+	// the header to HTTPS requests to that host.
+	InjectHeaders []string
 	// Workspace is dir:<path> or memory.
 	Workspace string
 	// WorkspaceSync is turn or live; "" is turn.
@@ -142,6 +145,7 @@ type settings struct {
 	egressProxy      string
 	env              []string
 	credentials      []egress.Credential
+	hasInjectHeaders bool
 	workspace        workspace
 	tools            *hosttools.Endpoint
 	contacts         []contact.Entry
@@ -179,10 +183,16 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.env, err = resolveEnv(cfg); err != nil {
 		return settings{}, err
 	}
-	var credTargets map[string]string
-	if s.credentials, credTargets, err = resolveModelKeys(cfg); err != nil {
+	modelCreds, credTargets, err := resolveModelKeys(cfg)
+	if err != nil {
 		return settings{}, err
 	}
+	headerCreds, headerPlaceholders, err := resolveInjectHeaders(cfg, credTargets)
+	if err != nil {
+		return settings{}, err
+	}
+	s.credentials = append(modelCreds, headerCreds...)
+	s.hasInjectHeaders = len(headerCreds) > 0
 	var mwPlaceholders []string
 	if s.egressMiddleware, mwPlaceholders, err = resolveEgressMiddleware(cfg, credTargets); err != nil {
 		return settings{}, err
@@ -190,7 +200,7 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.egressProxy != "" {
 		s.env = prependPlaceholders(s.env, placeholderKeys(s.env))
 	} else {
-		s.env = prependPlaceholders(s.env, mwPlaceholders)
+		s.env = prependPlaceholders(s.env, append(headerPlaceholders, mwPlaceholders...))
 	}
 	if s.workspace, err = parseWorkspace(cfg.Workspace, cfg.WorkspaceSync, s.sandbox); err != nil {
 		return settings{}, err
@@ -229,11 +239,12 @@ func resolveSandbox(cfg Config) (string, error) {
 		}
 		var sandboxed []string
 		for flag, set := range map[string]bool{
-			"--egress":            cfg.Egress != "",
-			"--egress-allow":      len(cfg.EgressAllow) > 0,
-			"--egress-middleware": len(cfg.EgressMiddleware) > 0,
-			"--inject-model-key":  len(cfg.ModelKeys) > 0,
-			"--egress-proxy":      cfg.EgressProxy != "",
+			"--egress":               cfg.Egress != "",
+			"--egress-allow":         len(cfg.EgressAllow) > 0,
+			"--egress-middleware":    len(cfg.EgressMiddleware) > 0,
+			"--inject-model-key":     len(cfg.ModelKeys) > 0,
+			"--egress-inject-header": len(cfg.InjectHeaders) > 0,
+			"--egress-proxy":         cfg.EgressProxy != "",
 		} {
 			if set {
 				sandboxed = append(sandboxed, flag)

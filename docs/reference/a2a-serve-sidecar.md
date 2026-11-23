@@ -56,20 +56,23 @@ $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"proxy"}
 ```
 
-The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker`, `gvisor` or `bwrap`, and replaces `--egress`, `--egress-allow`, `--egress-middleware` and `--inject-model-key`. [a2a-serve-sidecar egress proxy protocol](a2a-serve-sidecar-egress-proxy.md) specifies what the proxy gets and answers.
+The agent gets placeholder model keys, and the proxy adds the real ones. `--egress-proxy` needs `--sandbox docker`, `gvisor` or `bwrap`, and replaces `--egress`, `--egress-allow`, `--egress-middleware`, `--inject-model-key` and `--egress-inject-header`. [a2a-serve-sidecar egress proxy protocol](a2a-serve-sidecar-egress-proxy.md) specifies what the proxy gets and answers.
 
-## Egress middleware
+## Egress middleware and header injection
 
-`--egress-middleware` routes requests for a chosen host to an HTTP endpoint of the host, and composes with `--egress`, `--egress-allow` and `--inject-model-key`:
+`--egress-middleware` routes requests for a chosen host to an HTTP endpoint of the host, and composes with `--egress`, `--egress-allow`, `--inject-model-key` and `--egress-inject-header`:
 
 ```console
 $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
     --egress allowlist \
     --egress-middleware api.anthropic.com=http://127.0.0.1:8080/anthropic \
+    --egress-inject-header api.github.com="Authorization:Bearer env:GH_TOKEN" \
     --listen unix:///tmp/a2a-serve-sidecar.sock
 ```
 
-For each `--egress-middleware` host, `a2a-serve-sidecar` terminates TLS and forwards each request in origin form to the `http://host:port[/path]` or `unix:///path` endpoint. Forwarded requests preserve the target `Host` header and carry `A2A-Sidecar-Context` and `A2A-Sidecar-Task` headers, stripping any `A2A-Sidecar-*` headers sent by the agent. Responses stream through as they arrive. When the host matches a known model provider, the agent gets that provider's placeholder API key unless `--env` or `--secret` sets it. `--egress-middleware` needs `--sandbox docker`, `gvisor` or `bwrap`.
+For each `--egress-middleware` host, `a2a-serve-sidecar` terminates TLS and forwards each request in origin form to the `http://host:port[/path]` or `unix:///path` endpoint. Forwarded requests preserve the target `Host` header and carry `A2A-Sidecar-Context` and `A2A-Sidecar-Task` headers, stripping any `A2A-Sidecar-*` headers sent by the agent. Responses stream through as they arrive. When the host matches a known model provider, the agent gets that provider's placeholder API key unless `--env` or `--secret` sets it.
+
+`--egress-inject-header` adds a header to HTTPS requests for a host. A value ending in `env:VAR` or referencing `$VAR` reads the secret from your environment and gives the agent a placeholder in `VAR`. Both flags need `--sandbox docker`, `gvisor` or `bwrap`.
 
 ## A2A endpoint
 
@@ -229,13 +232,14 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--image string` |  | Container image of the agent (default: the image of --agent); only applies to --sandbox docker and gvisor |
 | `--sandbox string` | `docker` | Where the agent runs: docker, gvisor for Docker containers under gVisor's runtime runsc, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
-| `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts, the hosts of --inject-model-key and the --egress-middleware hosts) (default internet) |
+| `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts, the hosts of --inject-model-key and --egress-inject-header, and the --egress-middleware hosts) (default internet) |
 | `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port |
 | `--egress-middleware host[:port]=URL` |  | HTTP middleware for a host: host[:port]=URL, with http://host:port[/path] or unix:///path; a2a-serve-sidecar terminates TLS for that host and forwards its requests in origin form with A2A-Sidecar-Context and A2A-Sidecar-Task headers |
-| `--egress-proxy URL` |  | HTTP proxy that decides every connection of the sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow, --egress-middleware and --inject-model-key |
+| `--egress-proxy URL` |  | HTTP proxy that decides every connection of the sandbox and may intercept its requests, such as its model calls, a URL: http://host:port or unix:///path; the agent gets placeholder model keys, and the proxy adds the real ones. Replaces --egress, --egress-allow, --egress-middleware, --inject-model-key and --egress-inject-header |
 | `--env NAME=value` |  | Variable for the agent: NAME=value, such as DEBUG=1 |
 | `--secret NAME` |  | Variable of your environment to pass to the agent, such as an API key: a NAME; the agent can read it |
 | `--inject-model-key provider=NAME` |  | API key that a2a-serve-sidecar adds to the sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY |
+| `--egress-inject-header host[:port]=Name: value` |  | Header that a2a-serve-sidecar adds to the sandbox's HTTPS requests to a host: host[:port]=Name: value, such as api.github.com="Authorization:Bearer env:GH_TOKEN"; env:VAR and $VAR read from your environment and give the agent a placeholder |
 | `--workspace source` |  | Files of the agent, a source: dir:path for a directory, memory for files that a2a-serve-sidecar keeps in memory and drops at exit, or the URL of a file server of the host: http://, https:// or unix:///path |
 | `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker or bwrap unless the workspace is a dir: |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-serve-sidecar calls the hooks it advertises |

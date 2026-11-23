@@ -38,7 +38,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"KEY": "secret-value"}
+	env := map[string]string{"KEY": "secret-value", "BAD": "bad\r\nsecret-value"}
 	valid := serve.Config{Agent: "opencode", Workspace: "dir:" + dir, Sandbox: serve.SandboxLocal}
 	tests := []struct {
 		name string
@@ -80,6 +80,38 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "egress middleware overlaps model key", edit: func(c *serve.Config) {
 			c.Sandbox, c.ModelKeys, c.EgressMiddleware = "", []string{"anthropic=KEY"}, []string{"api.anthropic.com=http://127.0.0.1:9000"}
 		}, want: "--egress-middleware and --inject-model-key both name api.anthropic.com"},
+		{name: "egress middleware overlaps inject header", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders, c.EgressMiddleware = "", []string{"api.github.com=Authorization:Bearer env:KEY"}, []string{"api.github.com=http://127.0.0.1:9000"}
+		}, want: "--egress-middleware and --egress-inject-header both name api.github.com"},
+		{name: "egress inject header with local", edit: func(c *serve.Config) { c.InjectHeaders = []string{"api.github.com=Authorization:Bearer env:KEY"} }, want: "--egress-inject-header needs --sandbox docker"},
+		{name: "egress inject header without equals", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"Authorization: Bearer secret-value"} }, want: "invalid --egress-inject-header: want host[:port]=Name: value"},
+		{name: "egress inject header IP host", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"127.0.0.1=Authorization:Bearer env:KEY"}
+		}, want: "is an IP address"},
+		{name: "egress inject header missing colon", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization"} }, want: "want a header Name: value after ="},
+		{name: "egress inject header reserved header", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Host: evil.example"} }, want: "can't set the header Host"},
+		{name: "egress inject header empty value", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:   "} }, want: "empty header value"},
+		{name: "egress inject header invalid env name", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:1BAD"}
+		}, want: "env: needs the name of a variable"},
+		{name: "egress inject header unset env var", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:MISSING"}
+		}, want: "the variable MISSING is unset or empty"},
+		{name: "egress inject header unset dollar var", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization: Bearer $MISSING"}
+		}, want: "the variable MISSING is unset or empty"},
+		{name: "egress inject header bad dollar syntax", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization: Bearer $1BAD"}
+		}, want: "invalid --egress-inject-header"},
+		{name: "egress inject header control character in secret", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:BAD"}
+		}, want: "has a character that a header can't carry"},
+		{name: "egress inject header duplicate host", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:KEY", "API.GITHUB.COM:443=X-Token: env:KEY"}
+		}, want: "--egress-inject-header names api.github.com twice"},
+		{name: "egress inject header overlaps model key", edit: func(c *serve.Config) {
+			c.Sandbox, c.ModelKeys, c.InjectHeaders = "", []string{"anthropic=KEY"}, []string{"api.anthropic.com=X-Api-Key: env:KEY"}
+		}, want: "--egress-inject-header and --inject-model-key both name api.anthropic.com"},
 		{name: "no workspace", edit: func(c *serve.Config) { c.Workspace = "" }, want: "no workspace: pass --workspace dir:<path>, --workspace memory, or the URL of your file server"},
 		{name: "unknown workspace kind", edit: func(c *serve.Config) { c.Workspace = "nfs:/x" }, want: `invalid --workspace "nfs:/x": want dir:<path>, memory, or an http://, https:// or unix:///path URL`},
 		{name: "workspace URL with user info", edit: func(c *serve.Config) { c.Workspace = "http://user:secret-value@127.0.0.1:1" }, want: "invalid --workspace: the file server URL can't have user info"},
