@@ -84,8 +84,7 @@ func expandInjectHeaderValue(cfg Config, raw, shownTarget, valExpr string) (stri
 	if i := strings.LastIndexByte(valExpr, ' '); i >= 0 {
 		head, last = valExpr[:i+1], valExpr[i+1:]
 	}
-	if strings.HasPrefix(last, "env:") {
-		v := strings.TrimPrefix(last, "env:")
+	if v, ok := strings.CutPrefix(last, "env:"); ok {
 		if !envName.MatchString(v) {
 			return "", nil, usagef("invalid --egress-inject-header for %s: env: needs the name of a variable, such as env:GH_TOKEN", shownTarget)
 		}
