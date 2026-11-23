@@ -75,9 +75,9 @@ type Server struct {
 	proxy      *egress.ProxyRouter
 	middleware *egress.MiddlewareRouter
 	tools      *hostTools
-	contacts *contacts
-	ln       net.Listener
-	http     *http.Server
+	contacts   *contacts
+	ln         net.Listener
+	http       *http.Server
 	// cancelRequests ends the requests that Close didn't see finish.
 	cancelRequests context.CancelFunc
 	served         chan error
