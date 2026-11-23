@@ -44,10 +44,11 @@ func resolveEgressProxy(cfg Config) (string, error) {
 	}
 	var conflicts []string
 	for flag, set := range map[string]bool{
-		"--egress":            cfg.Egress != "",
-		"--egress-allow":      len(cfg.EgressAllow) > 0,
-		"--egress-middleware": len(cfg.EgressMiddleware) > 0,
-		"--inject-model-key":  len(cfg.ModelKeys) > 0,
+		"--egress":               cfg.Egress != "",
+		"--egress-allow":         len(cfg.EgressAllow) > 0,
+		"--egress-middleware":    len(cfg.EgressMiddleware) > 0,
+		"--inject-model-key":     len(cfg.ModelKeys) > 0,
+		"--egress-inject-header": len(cfg.InjectHeaders) > 0,
 	} {
 		if set {
 			conflicts = append(conflicts, flag)
@@ -55,7 +56,7 @@ func resolveEgressProxy(cfg Config) (string, error) {
 	}
 	if len(conflicts) > 0 {
 		slices.Sort(conflicts)
-		return "", usagef("--egress-proxy can't be used with %s: the proxy decides every connection of the agent and adds the model keys", strings.Join(conflicts, ", "))
+		return "", usagef("--egress-proxy can't be used with %s: the proxy decides every connection of the agent and adds the credentials", strings.Join(conflicts, ", "))
 	}
 	if _, err := egress.NewProxyRouter(egress.ProxyConfig{URL: cfg.EgressProxy}); err != nil {
 		return "", usagef("invalid --egress-proxy: %w", err)

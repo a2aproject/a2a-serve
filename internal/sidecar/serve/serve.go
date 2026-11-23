@@ -321,6 +321,9 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	if !caps.Boundary && len(set.egressMiddleware) > 0 {
 		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-middleware needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which %s can't: %s", here, caps.Problem)
 	}
+	if !caps.Boundary && set.hasInjectHeaders {
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-inject-header needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which %s can't: %s", here, caps.Problem)
+	}
 	if !caps.Boundary && set.tools != nil {
 		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--tools with --sandbox %s needs a sandbox that routes the agent's connections through a2a-serve-sidecar, which %s can't: %s; use --sandbox local with an http:// URL", set.sandbox, here, caps.Problem)
 	}
