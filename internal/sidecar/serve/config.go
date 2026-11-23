@@ -71,8 +71,12 @@ type Config struct {
 	// Egress is the egress mode; "" when unset, which is internet.
 	Egress      string
 	EgressAllow []string
+	// EgressMiddleware are host[:port]=URL pairs of HTTP middlewares for
+	// individual hosts.
+	EgressMiddleware []string
 	// EgressProxy is the URL of the proxy that decides every connection
-	// of the sandbox, in place of Egress, EgressAllow and ModelKeys.
+	// of the sandbox, in place of Egress, EgressAllow, EgressMiddleware
+	// and ModelKeys.
 	EgressProxy string
 	// Env are NAME=value pairs the agent gets.
 	Env []string
@@ -129,21 +133,22 @@ func usagef(format string, args ...any) error {
 
 // settings are a Config resolved into what the core takes.
 type settings struct {
-	profile      a2aserve.Profile
-	image        string
-	model        string
-	sandbox      string
-	policy       egress.Policy
-	egressProxy  string
-	env          []string
-	credentials  []egress.Credential
-	workspace    workspace
-	tools        *hosttools.Endpoint
-	contacts     []contact.Entry
-	listen       address
-	maxProcesses int
-	home         string
-	stateDir     string
+	profile          a2aserve.Profile
+	image            string
+	model            string
+	sandbox          string
+	policy           egress.Policy
+	egressMiddleware []egress.MiddlewareEntry
+	egressProxy      string
+	env              []string
+	credentials      []egress.Credential
+	workspace        workspace
+	tools            *hosttools.Endpoint
+	contacts         []contact.Entry
+	listen           address
+	maxProcesses     int
+	home             string
+	stateDir         string
 }
 
 // address is where the A2A endpoint listens.
@@ -174,11 +179,18 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.env, err = resolveEnv(cfg); err != nil {
 		return settings{}, err
 	}
-	if s.egressProxy != "" {
-		s.env = append(placeholderKeys(s.env), s.env...)
-	}
-	if s.credentials, err = resolveModelKeys(cfg); err != nil {
+	var credTargets map[string]string
+	if s.credentials, credTargets, err = resolveModelKeys(cfg); err != nil {
 		return settings{}, err
+	}
+	var mwPlaceholders []string
+	if s.egressMiddleware, mwPlaceholders, err = resolveEgressMiddleware(cfg, credTargets); err != nil {
+		return settings{}, err
+	}
+	if s.egressProxy != "" {
+		s.env = prependPlaceholders(s.env, placeholderKeys(s.env))
+	} else {
+		s.env = prependPlaceholders(s.env, mwPlaceholders)
 	}
 	if s.workspace, err = parseWorkspace(cfg.Workspace, cfg.WorkspaceSync, s.sandbox); err != nil {
 		return settings{}, err
@@ -216,7 +228,13 @@ func resolveSandbox(cfg Config) (string, error) {
 			return SandboxBwrap, nil
 		}
 		var sandboxed []string
-		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--egress-proxy": cfg.EgressProxy != ""} {
+		for flag, set := range map[string]bool{
+			"--egress":            cfg.Egress != "",
+			"--egress-allow":      len(cfg.EgressAllow) > 0,
+			"--egress-middleware": len(cfg.EgressMiddleware) > 0,
+			"--inject-model-key":  len(cfg.ModelKeys) > 0,
+			"--egress-proxy":      cfg.EgressProxy != "",
+		} {
 			if set {
 				sandboxed = append(sandboxed, flag)
 			}
@@ -312,28 +330,48 @@ func resolveEnv(cfg Config) ([]string, error) {
 	return out, nil
 }
 
-func resolveModelKeys(cfg Config) ([]egress.Credential, error) {
+func resolveModelKeys(cfg Config) ([]egress.Credential, map[string]string, error) {
 	var out []egress.Credential
 	var seen []string
+	targets := map[string]string{}
 	for _, kv := range cfg.ModelKeys {
 		provider, name, ok := strings.Cut(kv, "=")
 		if !ok || !envName.MatchString(name) {
-			return nil, usagef("invalid --inject-model-key %q: want provider=NAME, with NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY", kv)
+			return nil, nil, usagef("invalid --inject-model-key %q: want provider=NAME, with NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY", kv)
 		}
-		if _, ok := egressrules.LookupProvider(provider); !ok {
-			return nil, usagef("invalid --inject-model-key %q: %w", kv, egressrules.UnknownProvider(provider))
+		p, ok := egressrules.LookupProvider(provider)
+		if !ok {
+			return nil, nil, usagef("invalid --inject-model-key %q: %w", kv, egressrules.UnknownProvider(provider))
 		}
 		if slices.Contains(seen, provider) {
-			return nil, usagef("--inject-model-key names %s twice; give each provider one key", provider)
+			return nil, nil, usagef("--inject-model-key names %s twice; give each provider one key", provider)
 		}
 		seen = append(seen, provider)
 		key := cfg.getenv(name)
 		if key == "" {
-			return nil, usagef("--inject-model-key %s: the variable %s is unset or empty; export it before you start a2a-serve-sidecar", kv, name)
+			return nil, nil, usagef("--inject-model-key %s: the variable %s is unset or empty; export it before you start a2a-serve-sidecar", kv, name)
 		}
 		out = append(out, egress.ModelKey{Provider: provider, Key: key})
+		targets[net.JoinHostPort(p.Host, strconv.Itoa(egressrules.HTTPSPort))] = "--inject-model-key"
 	}
-	return out, nil
+	return out, targets, nil
+}
+
+func prependPlaceholders(env, placeholders []string) []string {
+	var add []string
+	for _, kv := range placeholders {
+		name, _, _ := strings.Cut(kv, "=")
+		prefix := name + "="
+		if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, prefix) }) ||
+			slices.ContainsFunc(add, func(e string) bool { return strings.HasPrefix(e, prefix) }) {
+			continue
+		}
+		add = append(add, kv)
+	}
+	if len(add) == 0 {
+		return env
+	}
+	return append(add, env...)
 }
 
 func (cfg Config) getenv(name string) string {

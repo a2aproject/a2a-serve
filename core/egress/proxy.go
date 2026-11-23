@@ -273,14 +273,7 @@ func (p *ProxyRouter) forward(key string) func(http.RoundTripper) http.RoundTrip
 			}
 			out := r.Clone(r.Context())
 			out.RequestURI = ""
-			for name := range out.Header {
-				// The client mustn't speak for another context, in any
-				// spelling that a proxy may read as one of these headers:
-				// CGI-style stacks read _ as -.
-				if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-sidecar-") {
-					delete(out.Header, name)
-				}
-			}
+			stripSidecarHeaders(out.Header)
 			if key != "" {
 				out.Header.Set(ProxyHeaderContext, key)
 			}
@@ -308,6 +301,16 @@ func (p *ProxyRouter) CloseIdleConnections() { p.transport.CloseIdleConnections(
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// stripSidecarHeaders removes client-sent A2A-Sidecar-* headers in any
+// spelling (CGI-style stacks normalize _ to -).
+func stripSidecarHeaders(h http.Header) {
+	for name := range h {
+		if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-sidecar-") {
+			delete(h, name)
+		}
+	}
+}
 
 // refusalReason returns the printable text of body on one line, at most
 // maxProxyReason bytes long.

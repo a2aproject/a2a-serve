@@ -43,7 +43,12 @@ func resolveEgressProxy(cfg Config) (string, error) {
 		return "", nil
 	}
 	var conflicts []string
-	for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0} {
+	for flag, set := range map[string]bool{
+		"--egress":            cfg.Egress != "",
+		"--egress-allow":      len(cfg.EgressAllow) > 0,
+		"--egress-middleware": len(cfg.EgressMiddleware) > 0,
+		"--inject-model-key":  len(cfg.ModelKeys) > 0,
+	} {
 		if set {
 			conflicts = append(conflicts, flag)
 		}
@@ -74,37 +79,47 @@ func placeholderKeys(env []string) []string {
 }
 
 // newBoundary returns the egress boundary of the Docker sandbox: one whose
-// router is the egress proxy, with the proxy router, or one of the policy.
-// A non-nil wrap wraps the router, which makes the policy a router too.
-func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Router) egress.Router) (*egress.Boundary, *egress.ProxyRouter, error) {
-	if s.egressProxy == "" && wrap == nil {
+// router is the egress proxy, with the proxy router, or one of the policy
+// (wrapped by any --egress-middleware). A non-nil wrap wraps the router,
+// which makes the policy a router too.
+func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Router) egress.Router) (*egress.Boundary, *egress.ProxyRouter, *egress.MiddlewareRouter, error) {
+	if s.egressProxy == "" && len(s.egressMiddleware) == 0 && wrap == nil {
 		policy := s.policy
 		b, err := egress.New(egress.Config{Policy: func() egress.Policy { return policy }, Log: log})
-		return b, nil, err
+		return b, nil, nil, err
 	}
 	var (
 		r     egress.Router
 		proxy *egress.ProxyRouter
+		mw    *egress.MiddlewareRouter
 		err   error
 	)
 	if s.egressProxy != "" {
 		if proxy, err = egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task}); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		r = proxy
-	} else if r, err = s.policy.Router(s.credentials...); err != nil {
-		// The router allows the hosts of the credentials in every mode; the
-		// endpoints of the processes add the credentials themselves.
-		return nil, nil, err
+	} else {
+		if r, err = s.policy.Router(s.credentials...); err != nil {
+			// The router allows the hosts of the credentials in every mode; the
+			// endpoints of the processes add the credentials themselves.
+			return nil, nil, nil, err
+		}
+		if len(s.egressMiddleware) > 0 {
+			if mw, err = egress.NewMiddlewareRouter(egress.MiddlewareConfig{Entries: s.egressMiddleware, Next: r, Task: turns.task}); err != nil {
+				return nil, nil, nil, err
+			}
+			r = mw
+		}
 	}
 	if wrap != nil {
 		r = wrap(r)
 	}
 	b, err := egress.New(egress.Config{Router: r, Log: log})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return b, proxy, nil
+	return b, proxy, mw, nil
 }
 
 // turns knows the task that each context's process works on, for the
