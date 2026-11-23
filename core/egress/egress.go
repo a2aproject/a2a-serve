@@ -213,6 +213,9 @@ func injections(creds []Credential) (inject []boundary.Injection, env, allow []s
 func (b *Boundary) endpointCA(inject []boundary.Injection) (*boundary.CA, error) {
 	hosts := injectHosts(inject)
 	if b.router != nil {
+		if u, ok := b.router.(interface{ unconstrained() bool }); ok && u.unconstrained() {
+			return b.unconstrainedCA()
+		}
 		ih, ok := b.router.(InterceptHosts)
 		if !ok {
 			return b.unconstrainedCA()

@@ -69,11 +69,12 @@ type Ready struct {
 
 // Server serves the agent over A2A until Close.
 type Server struct {
-	log      *slog.Logger
-	agent    *a2aserve.Agent
-	boundary *egress.Boundary
-	proxy    *egress.ProxyRouter
-	tools    *hostTools
+	log        *slog.Logger
+	agent      *a2aserve.Agent
+	boundary   *egress.Boundary
+	proxy      *egress.ProxyRouter
+	middleware *egress.MiddlewareRouter
+	tools      *hostTools
 	contacts *contacts
 	ln       net.Listener
 	http     *http.Server
@@ -131,7 +132,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		return nil, err
 	}
 	if s.sandbox != SandboxLocal {
-		if srv.boundary, srv.proxy, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
+		if srv.boundary, srv.proxy, srv.middleware, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
 			return nil, err
 		}
 	}
@@ -251,6 +252,9 @@ func (s *Server) release() error {
 	if s.proxy != nil {
 		s.proxy.CloseIdleConnections()
 	}
+	if s.middleware != nil {
+		s.middleware.CloseIdleConnections()
+	}
 	errs = append(errs, s.contacts.close())
 	ctx, cancel := context.WithTimeout(context.Background(), toolsCloseTimeout)
 	defer cancel()
@@ -258,7 +262,7 @@ func (s *Server) release() error {
 	for _, dir := range s.temp {
 		errs = append(errs, fsutil.RemoveAll(dir))
 	}
-	s.agent, s.ln, s.boundary, s.proxy, s.contacts, s.temp = nil, nil, nil, nil, nil, nil
+	s.agent, s.ln, s.boundary, s.proxy, s.middleware, s.contacts, s.temp = nil, nil, nil, nil, nil, nil, nil
 	return errors.Join(errs...)
 }
 
@@ -313,6 +317,9 @@ func (s *Server) runtime(ctx context.Context, set settings, stderr io.Writer) (_
 	}
 	if !caps.Boundary && set.egressProxy != "" {
 		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-proxy needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which %s can't: %s", here, caps.Problem)
+	}
+	if !caps.Boundary && len(set.egressMiddleware) > 0 {
+		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--egress-middleware needs a sandbox that routes every connection of the agent through a2a-serve-sidecar, which %s can't: %s", here, caps.Problem)
 	}
 	if !caps.Boundary && set.tools != nil {
 		return nil, "", sandbox.Capabilities{}, fmt.Errorf("--tools with --sandbox %s needs a sandbox that routes the agent's connections through a2a-serve-sidecar, which %s can't: %s; use --sandbox local with an http:// URL", set.sandbox, here, caps.Problem)

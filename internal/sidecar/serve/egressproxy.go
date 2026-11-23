@@ -17,7 +17,9 @@ package serve
 import (
 	"context"
 	"log/slog"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -43,7 +45,12 @@ func resolveEgressProxy(cfg Config) (string, error) {
 		return "", nil
 	}
 	var conflicts []string
-	for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0} {
+	for flag, set := range map[string]bool{
+		"--egress":            cfg.Egress != "",
+		"--egress-allow":      len(cfg.EgressAllow) > 0,
+		"--egress-middleware": len(cfg.EgressMiddleware) > 0,
+		"--inject-model-key":  len(cfg.ModelKeys) > 0,
+	} {
 		if set {
 			conflicts = append(conflicts, flag)
 		}
@@ -73,38 +80,86 @@ func placeholderKeys(env []string) []string {
 	return out
 }
 
+func resolveEgressMiddleware(cfg Config, targets map[string]string) ([]egress.MiddlewareEntry, []string, error) {
+	if len(cfg.EgressMiddleware) == 0 {
+		return nil, nil, nil
+	}
+	entries := make([]egress.MiddlewareEntry, 0, len(cfg.EgressMiddleware))
+	for _, raw := range cfg.EgressMiddleware {
+		host, rawURL, ok := strings.Cut(strings.TrimSpace(raw), "=")
+		host, rawURL = strings.TrimSpace(host), strings.TrimSpace(rawURL)
+		if !ok || host == "" || rawURL == "" {
+			return nil, nil, usagef("invalid --egress-middleware: want host[:port]=URL, such as api.anthropic.com=http://127.0.0.1:8080/anthropic")
+		}
+		entries = append(entries, egress.MiddlewareEntry{Host: host, URL: rawURL})
+	}
+	if _, err := egress.NewMiddlewareRouter(egress.MiddlewareConfig{Entries: entries}); err != nil {
+		return nil, nil, usagef("invalid --egress-middleware: %w", err)
+	}
+	var placeholders []string
+	for _, e := range entries {
+		h, port, _ := egressrules.ParseInjectTarget(e.Host)
+		targetKey := net.JoinHostPort(h, strconv.Itoa(int(port)))
+		shownTarget := h
+		if port != egressrules.HTTPSPort {
+			shownTarget = targetKey
+		}
+		if owner, exists := targets[targetKey]; exists {
+			return nil, nil, usagef("--egress-middleware and %s both name %s; give each host one", owner, shownTarget)
+		}
+		if port == egressrules.HTTPSPort {
+			for _, name := range egressrules.ProviderNames() {
+				if p, _ := egressrules.LookupProvider(name); p.Host == h {
+					placeholders = append(placeholders, p.KeyEnv+"="+p.Placeholder(p.KeyEnv))
+				}
+			}
+		}
+	}
+	return entries, placeholders, nil
+}
+
 // newBoundary returns the egress boundary of the Docker sandbox: one whose
-// router is the egress proxy, with the proxy router, or one of the policy.
-// A non-nil wrap wraps the router, which makes the policy a router too.
-func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Router) egress.Router) (*egress.Boundary, *egress.ProxyRouter, error) {
-	if s.egressProxy == "" && wrap == nil {
+// router is the egress proxy, with the proxy router, or one of the policy
+// (wrapped by any --egress-middleware). A non-nil wrap wraps the router,
+// which makes the policy a router too.
+func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Router) egress.Router) (*egress.Boundary, *egress.ProxyRouter, *egress.MiddlewareRouter, error) {
+	if s.egressProxy == "" && len(s.egressMiddleware) == 0 && wrap == nil {
 		policy := s.policy
 		b, err := egress.New(egress.Config{Policy: func() egress.Policy { return policy }, Log: log})
-		return b, nil, err
+		return b, nil, nil, err
 	}
 	var (
 		r     egress.Router
 		proxy *egress.ProxyRouter
+		mw    *egress.MiddlewareRouter
 		err   error
 	)
 	if s.egressProxy != "" {
 		if proxy, err = egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task}); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		r = proxy
-	} else if r, err = s.policy.Router(s.credentials...); err != nil {
-		// The router allows the hosts of the credentials in every mode; the
-		// endpoints of the processes add the credentials themselves.
-		return nil, nil, err
+	} else {
+		if r, err = s.policy.Router(s.credentials...); err != nil {
+			// The router allows the hosts of the credentials in every mode; the
+			// endpoints of the processes add the credentials themselves.
+			return nil, nil, nil, err
+		}
+		if len(s.egressMiddleware) > 0 {
+			if mw, err = egress.NewMiddlewareRouter(egress.MiddlewareConfig{Entries: s.egressMiddleware, Next: r, Task: turns.task}); err != nil {
+				return nil, nil, nil, err
+			}
+			r = mw
+		}
 	}
 	if wrap != nil {
 		r = wrap(r)
 	}
 	b, err := egress.New(egress.Config{Router: r, Log: log})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return b, proxy, nil
+	return b, proxy, mw, nil
 }
 
 // turns knows the task that each context's process works on, for the
