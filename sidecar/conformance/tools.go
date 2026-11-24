@@ -29,7 +29,34 @@ import (
 // timeout.
 const toolsTimeout = 30 * time.Second
 
-func testTools(t *testing.T, ep hosttools.Endpoint) {
+func testTools(t *testing.T, ep hosttools.Endpoint, token string) {
+	if token != "" {
+		t.Run("refuses missing or wrong token", func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				tok  string
+			}{
+				{name: "missing", tok: ""},
+				{name: "wrong", tok: token + "-wrong"},
+			} {
+				bad, err := ep.WithToken(tc.tok)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err := hosttools.Dial(toolsCtx(t), bad, "conformance")
+				if err == nil {
+					if cerr := c.Close(context.Background()); cerr != nil {
+						t.Errorf("closing unexpected session: %v", cerr)
+					}
+					t.Fatalf("initialize with %s token succeeded, want 401", tc.name)
+				}
+			}
+		})
+		var err error
+		if ep, err = ep.WithToken(token); err != nil {
+			t.Fatalf("Endpoint.WithToken() error = %v", err)
+		}
+	}
 	c := dialTools(t, ep)
 	t.Run("lists tools", func(t *testing.T) { testListTools(t, c) })
 	t.Run("refuses unknown methods", func(t *testing.T) { testUnknownMethod(t, c) })

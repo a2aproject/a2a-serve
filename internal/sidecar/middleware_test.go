@@ -40,13 +40,14 @@ func TestEgressMiddlewareInDockerSandbox(t *testing.T) {
 	bin, image := dockerTestEnv(t)
 	dir := testutil.ShortTempDir(t)
 
+	const hostToken = "docker-mw-host-token"
 	var (
 		mu   sync.Mutex
 		seen []string
 	)
 	mwHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		seen = append(seen, r.Method+" "+r.RequestURI+" host="+r.Host+" ctx="+r.Header.Get(egress.ProxyHeaderContext)+" task="+r.Header.Get(egress.ProxyHeaderTask))
+		seen = append(seen, r.Method+" "+r.RequestURI+" host="+r.Host+" ctx="+r.Header.Get(egress.ProxyHeaderContext)+" task="+r.Header.Get(egress.ProxyHeaderTask)+" token="+r.Header.Get(egress.ProxyHeaderToken))
 		mu.Unlock()
 		if _, err := io.WriteString(w, "mw "+r.RequestURI); err != nil {
 			t.Errorf("writing middleware answer error = %v", err)
@@ -76,7 +77,7 @@ func TestEgressMiddlewareInDockerSandbox(t *testing.T) {
 	}
 
 	sock := filepath.Join(dir, "a2a.sock")
-	ready := startBinary(t, bin,
+	ready := startBinaryWithIO(t, bin, hostToken+"\n", nil,
 		"--sandbox", dockerSandbox(), "--image", image, "--command", "/usr/local/bin/fakeacp",
 		"--workspace", "dir:"+t.TempDir(), "--listen", "unix://"+sock,
 		"--egress", "allowlist",
@@ -113,8 +114,8 @@ func TestEgressMiddlewareInDockerSandbox(t *testing.T) {
 	gotSeen := append([]string(nil), seen...)
 	mu.Unlock()
 	wantSeen := []string{
-		"GET /v1/models host=api.anthropic.com ctx=ctx-mw task=" + string(anthropicTask.ID),
-		"GET /openai/v1/responses host=api.openai.com ctx=ctx-mw task=" + string(openaiTask.ID),
+		"GET /v1/models host=api.anthropic.com ctx=ctx-mw task=" + string(anthropicTask.ID) + " token=",
+		"GET /openai/v1/responses host=api.openai.com ctx=ctx-mw task=" + string(openaiTask.ID) + " token=" + hostToken,
 	}
 	if diff := cmp.Diff(wantSeen, gotSeen); diff != "" {
 		t.Fatalf("middleware requests wrong result (-want +got) diff = %s", diff)

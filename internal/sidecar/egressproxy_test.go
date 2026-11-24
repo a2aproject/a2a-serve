@@ -193,7 +193,15 @@ func startBinary(t *testing.T, bin string, args ...string) serve.Ready {
 
 func startBinaryWithEnv(t *testing.T, bin string, extraEnv []string, args ...string) serve.Ready {
 	t.Helper()
+	return startBinaryWithIO(t, bin, "", extraEnv, args...)
+}
+
+func startBinaryWithIO(t *testing.T, bin, stdin string, extraEnv []string, args ...string) serve.Ready {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}

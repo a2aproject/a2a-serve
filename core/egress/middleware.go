@@ -40,6 +40,9 @@ type MiddlewareEntry struct {
 	Host string
 	// URL is the middleware endpoint: http://host:port[/path] or unix:///path.
 	URL string
+	// Token, when non-empty, is sent in [ProxyHeaderToken] on every
+	// forwarded request to URL.
+	Token string
 }
 
 // MiddlewareConfig configures a [MiddlewareRouter].
@@ -58,6 +61,7 @@ type middlewareTarget struct {
 	port      uint16
 	urlHost   string
 	basePath  string
+	token     string
 	transport *http.Transport
 }
 
@@ -89,6 +93,9 @@ func NewMiddlewareRouter(cfg MiddlewareConfig) (*MiddlewareRouter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid egress middleware for %s: %w", net.JoinHostPort(host, strconv.Itoa(int(port))), err)
 		}
+		if e.Token != "" && !httpguts.ValidHeaderFieldValue(e.Token) {
+			return nil, fmt.Errorf("invalid egress middleware token for %s: has a character that a header can't carry", net.JoinHostPort(host, strconv.Itoa(int(port))))
+		}
 		urlHost := addr
 		if network == "unix" {
 			urlHost = middlewareHostKey
@@ -110,6 +117,7 @@ func NewMiddlewareRouter(cfg MiddlewareConfig) (*MiddlewareRouter, error) {
 			port:      port,
 			urlHost:   urlHost,
 			basePath:  basePath,
+			token:     e.Token,
 			transport: tr,
 		})
 	}
@@ -207,6 +215,9 @@ func (m *MiddlewareRouter) forward(key string, target *middlewareTarget) func(ht
 				if task := m.task(key); task != "" && httpguts.ValidHeaderFieldValue(task) {
 					out.Header.Set(ProxyHeaderTask, task)
 				}
+			}
+			if target.token != "" {
+				out.Header.Set(ProxyHeaderToken, target.token)
 			}
 			escapedPath := r.URL.EscapedPath()
 			if escapedPath == "" {

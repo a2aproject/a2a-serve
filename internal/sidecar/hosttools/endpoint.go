@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // dialTimeout bounds a connection to the endpoint.
@@ -40,6 +42,8 @@ type Endpoint struct {
 	socket string
 	// url is the URL of the requests, with the host "tools" for a socket.
 	url *url.URL
+	// token, when non-empty, is sent in [HeaderToken] on every request.
+	token string
 }
 
 // Parse parses an http://, https:// or unix:///path URL.
@@ -62,6 +66,20 @@ func Parse(v string) (Endpoint, error) {
 
 // Unix reports whether the endpoint is a Unix socket.
 func (e Endpoint) Unix() bool { return e.socket != "" }
+
+// WithToken returns a copy of e that sends token in [HeaderToken] on every
+// request.
+func (e Endpoint) WithToken(token string) (Endpoint, error) {
+	if token != "" && !httpguts.ValidHeaderFieldValue(token) {
+		return Endpoint{}, errors.New("invalid tools endpoint token: has a character that a header can't carry")
+	}
+	e.token = token
+	return e, nil
+}
+
+// Token returns the token that the endpoint's requests carry in
+// [HeaderToken], or "".
+func (e Endpoint) Token() string { return e.token }
 
 // URL returns the URL of the endpoint's requests, which reaches it only
 // through [Endpoint.Transport] for a Unix socket.
@@ -126,6 +144,9 @@ func (e Endpoint) Proxy() http.RoundTripper {
 			}
 		}
 		r.Header.Set(HeaderOrigin, OriginSandbox)
+		if e.token != "" {
+			r.Header.Set(HeaderToken, e.token)
+		}
 		r.URL.Scheme, r.URL.Host, r.Host, r.URL.RawQuery = e.url.Scheme, e.url.Host, e.url.Host, e.url.RawQuery
 		return t.RoundTrip(r)
 	})

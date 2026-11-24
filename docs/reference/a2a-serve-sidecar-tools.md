@@ -7,7 +7,7 @@ This page specifies the tools endpoint that a host gives `a2a-serve-sidecar` wit
 
 ## Endpoint
 
-The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) server over streamable HTTP. `--tools` takes one of:
+The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) server over streamable HTTP. Over loopback `http://`, every request to the endpoint carries the host's token in `A2A-Sidecar-Token`; see [Loopback authentication](a2a-serve-sidecar.md#loopback-authentication). `--tools` takes one of:
 
 | Value | Endpoint |
 | --- | --- |
@@ -16,7 +16,7 @@ The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/202
 
 Every new agent session gets the endpoint as the MCP server `host`. The agent names its tools as it names other MCP tools: `host_echo` in opencode, `mcp__host__echo` in Claude Code.
 
-In a Docker sandbox, the agent reaches the server at `http://tools.sidecar.internal` with the path of the URL. `a2a-serve-sidecar` sends these requests to the endpoint with the endpoint's own host in `Host` and the query of the URL, so the sandbox needs no port of the host machine and never sees the query. It answers requests to other paths with 403, and methods other than `POST`, `GET` and `DELETE` with 405, without sending them. With `--egress-proxy`, these requests don't reach the egress proxy. With `--sandbox local`, the agent connects to the URL itself, so `--tools` must be an `http://` or `https://` URL there.
+In a Docker sandbox, the agent reaches the server at `http://tools.sidecar.internal` with the path of the URL. `a2a-serve-sidecar` sends these requests to the endpoint with the endpoint's own host in `Host` and the query of the URL, so the sandbox needs no port of the host machine and never sees the query. It answers requests to other paths with 403, and methods other than `POST`, `GET` and `DELETE` with 405, without sending them. With `--egress-proxy`, these requests don't reach the egress proxy. With `--sandbox local`, the agent connects to the URL itself, so `--tools` must be an `http://` or `https://` URL there. The agent then gets the host's token in the headers of the MCP server `host`.
 
 ## Origin
 

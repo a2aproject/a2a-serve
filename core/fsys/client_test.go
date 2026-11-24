@@ -369,3 +369,38 @@ func TestHandlerHidesTheTextOfServerErrors(t *testing.T) {
 		t.Fatalf("Client.Stat() of a failing tree error = %v, want an error without its inner text", err)
 	}
 }
+
+func TestClientWithOptionsSendsHeaders(t *testing.T) {
+	t.Parallel()
+	const token = "fs-host-token"
+	var got string
+	h := fsys.Handler(fsys.Memory())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("A2A-Sidecar-Token")
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := fsys.ClientWithOptions(srv.URL, fsys.ClientOptions{
+		Header: http.Header{"A2A-Sidecar-Token": {token}},
+	})
+	if err != nil {
+		t.Fatalf("fsys.ClientWithOptions() error = %v", err)
+	}
+	if _, err := c.Stat(context.Background(), "."); err != nil {
+		t.Fatalf("Client.Stat() error = %v", err)
+	}
+	if got != token {
+		t.Fatalf("file server got A2A-Sidecar-Token = %q, want %q", got, token)
+	}
+}
+
+func TestClientWithOptionsRejectsInvalidHeader(t *testing.T) {
+	t.Parallel()
+	_, err := fsys.ClientWithOptions("http://127.0.0.1:9000", fsys.ClientOptions{
+		Header: http.Header{"A2A-Sidecar-Token": {"secret\r\nX-Bad: 1"}},
+	})
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("fsys.ClientWithOptions() error = %v, want an error without echoing the header value", err)
+	}
+}

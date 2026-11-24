@@ -7,7 +7,7 @@ This page specifies how `a2a-serve-sidecar --egress-proxy` asks a host's HTTP pr
 
 With `--egress-proxy`, every TCP connection that the agent opens in the Docker sandbox reaches `a2a-serve-sidecar`, which asks the proxy what to do with it. The proxy can refuse it, tunnel it, or ask for its requests. A Go program that embeds the core gets the same behavior from `egress.NewProxyRouter`.
 
-The proxy URL is `http://host:port` or `unix:///path`. It can't carry credentials or a path.
+The proxy URL is `http://host:port` or `unix:///path`. It can't carry credentials or a path. Over loopback `http://`, `a2a-serve-sidecar` sends the host's token in `A2A-Sidecar-Token` on `CONNECT` and forwarded requests; see [Loopback authentication](a2a-serve-sidecar.md#loopback-authentication).
 
 ## Deciding a connection
 

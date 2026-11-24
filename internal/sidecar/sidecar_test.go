@@ -100,12 +100,23 @@ type running struct {
 // start runs a2a-serve-sidecar with args and reads its ready line.
 func start(t *testing.T, args ...string) *running {
 	t.Helper()
+	return startWithStdin(t, "", args...)
+}
+
+// startWithStdin runs a2a-serve-sidecar with stdin and args and reads its ready
+// line.
+func startWithStdin(t *testing.T, stdin string, args ...string) *running {
+	t.Helper()
 	pr, pw := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &running{stdout: bufio.NewReader(pr), stderr: &syncBuffer{}, cancel: cancel, done: make(chan struct{})}
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	}
 	go func() {
 		defer close(r.done)
-		r.code = sidecar.Main(ctx, args, sidecar.IO{Stdout: pw, Stderr: r.stderr, StdoutIsTerminal: true, Getenv: func(string) string { return "" }, Version: "test"})
+		r.code = sidecar.Main(ctx, args, sidecar.IO{Stdin: in, Stdout: pw, Stderr: r.stderr, StdoutIsTerminal: true, Getenv: func(string) string { return "" }, Version: "test"})
 		if err := pw.Close(); err != nil {
 			t.Errorf("PipeWriter.Close() error = %v", err)
 		}
@@ -207,11 +218,46 @@ func TestServesTheAgentCardOverTCP(t *testing.T) {
 	if !ok || base == "0" {
 		t.Fatalf("ready line a2a = %q, want http://127.0.0.1 with the bound port", r.ready.A2A)
 	}
+	if r.ready.Token == "" {
+		t.Fatalf("ready line token = %q, want a run-scoped bearer token for TCP", r.ready.Token)
+	}
 
 	hc := &http.Client{Transport: &http.Transport{}}
 	t.Cleanup(hc.CloseIdleConnections)
 
-	resp, err := hc.Get(r.ready.A2A + "/.well-known/agent-card.json")
+	for _, tc := range []struct {
+		name string
+		auth string
+	}{
+		{name: "missing auth", auth: ""},
+		{name: "wrong token", auth: "Bearer wrong-token"},
+		{name: "wrong scheme", auth: "Basic " + r.ready.Token},
+	} {
+		req, err := http.NewRequest(http.MethodGet, r.ready.A2A+"/.well-known/agent-card.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.auth != "" {
+			req.Header.Set("Authorization", tc.auth)
+		}
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatalf("GET agent card (%s) error = %v", tc.name, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") != "Bearer" {
+			t.Fatalf("GET agent card (%s) = %d with WWW-Authenticate %q, want 401 Bearer", tc.name, resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodGet, r.ready.A2A+"/.well-known/agent-card.json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+r.ready.Token)
+	resp, err := hc.Do(req)
 	if err != nil {
 		t.Fatalf("http.Get(agent card) error = %v", err)
 	}
@@ -220,6 +266,9 @@ func TestServesTheAgentCardOverTCP(t *testing.T) {
 			t.Error(err)
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET agent card with token status = %d, want 200", resp.StatusCode)
+	}
 	var card a2a.AgentCard
 	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
 		t.Fatalf("decoding the agent card error = %v", err)
@@ -229,6 +278,38 @@ func TestServesTheAgentCardOverTCP(t *testing.T) {
 	if diff := cmp.Diff(want, card.SupportedInterfaces); diff != "" {
 		t.Fatalf("agent card interfaces wrong result (-want +got) diff = %s", diff)
 	}
+
+	unauthPost, err := hc.Post(r.ready.A2A+"/", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"message/send"}`))
+	if err != nil {
+		t.Fatalf("POST / without token error = %v", err)
+	}
+	if err := unauthPost.Body.Close(); err != nil {
+		t.Error(err)
+	}
+	if unauthPost.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("POST / without token status = %d, want 401", unauthPost.StatusCode)
+	}
+
+	authClient := &http.Client{Transport: bearerRoundTripper{base: &http.Transport{}, token: r.ready.Token}}
+	t.Cleanup(authClient.CloseIdleConnections)
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface(r.ready.A2A, a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(authClient))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
+	if got := send(t, c, "tcp-ctx", "pid"); !strings.HasPrefix(got, "pid ") {
+		t.Fatalf("Client.SendMessage(pid) over authenticated TCP = %q, want a pid", got)
+	}
+}
+
+type bearerRoundTripper struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (b bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return b.base.RoundTrip(r)
 }
 
 func TestMainReportsInvalidFlags(t *testing.T) {

@@ -36,6 +36,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/a2aproject/a2a-serve/core/contact"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
@@ -529,4 +530,41 @@ func messageText(m *a2a.Message) string {
 		out = append(out, p.Text())
 	}
 	return strings.Join(out, "")
+}
+
+func TestLoopbackHTTPContactSendsHostToken(t *testing.T) {
+	t.Parallel()
+	const hostToken = "contact-host-token"
+	fc := newFakeContact()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(egress.ProxyHeaderToken) != hostToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fc.serveHTTP(srv.URL).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+	r := startWithStdin(t, hostToken+"\n",
+		"--sandbox", "local", "--command", fakeACP,
+		"--workspace", "dir:"+t.TempDir(),
+		"--contact", "reviewer="+srv.URL,
+		"--listen", "unix://"+sock,
+	)
+	if !r.ready.Ready {
+		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
+	}
+	wantContacts := []serve.ContactStatus{{Name: "reviewer", Card: serve.ContactCardOK}}
+	if diff := cmp.Diff(wantContacts, r.ready.Contacts); diff != "" {
+		t.Fatalf("ready contacts wrong result (-want +got) diff = %s", diff)
+	}
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
+	if got := send(t, c, "ctx-loopback-contact", "call reviewer done"); !strings.Contains(got, "fake result") {
+		t.Fatalf("call reviewer done = %q, want fake result", got)
+	}
 }

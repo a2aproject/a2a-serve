@@ -265,12 +265,13 @@ func TestNewStaticRefusesInvalidContacts(t *testing.T) {
 		contacts []Entry
 		want     string
 	}{
-		{name: "plain http", contacts: []Entry{{Name: "a", URL: "http://a.example"}}, want: "must start with https:// or unix:///"},
-		{name: "file", contacts: []Entry{{Name: "a", URL: "file:///etc/card.json"}}, want: "must start with https:// or unix:///"},
-		{name: "relative socket", contacts: []Entry{{Name: "a", URL: "unix://run/a.sock"}}, want: "must start with https:// or unix:///"},
+		{name: "plain http", contacts: []Entry{{Name: "a", URL: "http://a.example"}}, want: "must start with https://, loopback http://, or unix:///"},
+		{name: "file", contacts: []Entry{{Name: "a", URL: "file:///etc/card.json"}}, want: "must start with https://, loopback http://, or unix:///"},
+		{name: "relative socket", contacts: []Entry{{Name: "a", URL: "unix://run/a.sock"}}, want: "must start with https://, loopback http://, or unix:///"},
 		{name: "invalid name", contacts: []Entry{{Name: "a b", URL: "https://a.example"}}, want: "invalid name"},
 		{name: "same name twice", contacts: []Entry{{Name: "a", URL: "https://a.example"}, {Name: "A", URL: "https://b.example"}}, want: "listed twice"},
 		{name: "auth with a line break", contacts: []Entry{{Name: "a", URL: "https://a.example", Auth: "Bearer x\r\nX-Evil: 1"}}, want: "line break"},
+		{name: "header with a line break", contacts: []Entry{{Name: "a", URL: "http://127.0.0.1:8080", Headers: http.Header{"A2A-Sidecar-Token": {"x\r\nX-Evil: 1"}}}}, want: "line break"},
 		{name: "too many", contacts: make([]Entry, MaxContacts+1), want: "at most"},
 	}
 	for _, tc := range tests {
@@ -343,3 +344,54 @@ func TestStaticSendsAuthOnlyOverHTTPSToTheCardsHost(t *testing.T) {
 		})
 	}
 }
+
+func TestStaticSendsHeadersOnlyToLoopbackContactsOrigin(t *testing.T) {
+	t.Parallel()
+	const token = "loopback-host-token"
+	tests := []struct {
+		name    string
+		contact string
+		request string
+		want    string
+	}{
+		{name: "same loopback origin", contact: "http://127.0.0.1:8080/card.json", request: "http://127.0.0.1:8080/", want: token},
+		{name: "different port", contact: "http://127.0.0.1:8080/card.json", request: "http://127.0.0.1:9090/"},
+		{name: "remote host", contact: "http://127.0.0.1:8080/card.json", request: "https://b.example/"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got string
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				got = req.Header.Get("A2A-Sidecar-Token")
+				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+			})
+			c, err := newStaticContact(Entry{
+				Name:    "host",
+				URL:     tc.contact,
+				Headers: http.Header{"A2A-Sidecar-Token": {token}},
+			}, rt)
+			if err != nil {
+				t.Fatalf("newStaticContact() error = %v", err)
+			}
+			req, err := http.NewRequest(http.MethodGet, tc.request, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := c.http.Do(req)
+			if err != nil {
+				t.Fatalf("GET %s error = %v", tc.request, err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("A2A-Sidecar-Token of GET %s = %q, want %q", tc.request, got, tc.want)
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

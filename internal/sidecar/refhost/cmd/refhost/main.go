@@ -57,6 +57,7 @@ func (g *globs) Set(v string) error { *g = append(*g, v); return nil }
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:0", "unix:///path or host:port")
+	token := flag.String("token", "", "run-scoped token required in A2A-Sidecar-Token on every request")
 	noHooks := flag.Bool("no-hooks", false, "advertise no hooks")
 	workspace := flag.Bool("workspace", false, "serve a file tree in memory for a2a-serve-sidecar --workspace")
 	var deny, ask, modelKeys globs
@@ -73,13 +74,13 @@ func main() {
 		}
 		keys[provider] = key
 	}
-	if err := run(*listen, !*noHooks, *workspace, deny, ask, keys); err != nil {
+	if err := run(*listen, *token, !*noHooks, *workspace, deny, ask, keys); err != nil {
 		fmt.Fprintln(os.Stderr, "refhost:", err)
 		os.Exit(1)
 	}
 }
 
-func run(listen string, hooks, workspace bool, deny, ask []string, modelKeys map[string]string) error {
+func run(listen, token string, hooks, workspace bool, deny, ask []string, modelKeys map[string]string) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg := refhost.ToolsConfig{
 		Decide: func(p hosttools.BeforeToolParams) hosttools.BeforeToolResult {
@@ -94,7 +95,7 @@ func run(listen string, hooks, workspace bool, deny, ask []string, modelKeys map
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	hostCfg := refhost.Config{Tools: refhost.NewTools(cfg), ModelKeys: modelKeys}
+	hostCfg := refhost.Config{Tools: refhost.NewTools(cfg), ModelKeys: modelKeys, Token: token}
 	for provider := range modelKeys {
 		log.Info("the egress proxy adds a model key", "provider", provider)
 	}

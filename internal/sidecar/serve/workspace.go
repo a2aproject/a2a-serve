@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
@@ -169,6 +171,19 @@ func parseWorkspaceURL(v, sync string) (workspace, error) {
 		shown = "unix://" + u.Path
 	}
 	return workspace{kind: WorkspaceURL, client: client, shown: shown, sync: sync}, nil
+}
+
+// withToken rebuilds the URL workspace client to attach token in
+// [egress.ProxyHeaderToken] on every request.
+func (w *workspace) withToken(rawURL, token string) error {
+	client, err := fsys.ClientWithOptions(rawURL, fsys.ClientOptions{
+		Header: http.Header{egress.ProxyHeaderToken: {token}},
+	})
+	if err != nil {
+		return usagef("invalid --workspace: %w", err)
+	}
+	w.client = client
+	return nil
 }
 
 // check checks that the host serves the workspace of a URL: that its root
