@@ -65,6 +65,7 @@ func TestLookup(t *testing.T) {
 		{name: "opencode", want: Command{Path: "opencode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "claude", want: Command{Path: "claude-agent-acp", Dir: "/w"}, image: ImageRepo + "claude:" + ImageTag},
+		{name: "copilot", want: Command{Path: "copilot", Args: []string{"--acp"}, Dir: "/w", Env: copilotEnv}, image: ImageRepo + "copilot:" + ImageTag},
 		{name: "opencode", command: []string{"opencode", "acp", "--print-logs"}, want: Command{Path: "opencode", Args: []string{"acp", "--print-logs"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, want: Command{Path: "gemini", Args: []string{"--experimental-acp"}, Dir: "/w"}},
@@ -102,6 +103,8 @@ func TestSessionSettings(t *testing.T) {
 		{name: "opencode", command: []string{"opencode", "acp", "--print-logs"}, model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
 		{name: "opencode"},
 		{name: "claude", model: "sonnet"},
+		{name: "copilot", model: "gpt-6.2-sol", want: map[string]any{"model": "gpt-6.2-sol"}},
+		{name: "copilot"},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, model: "gemini-pro"},
 	}
 	for _, tc := range tests {
@@ -131,6 +134,7 @@ func TestBootstrap(t *testing.T) {
 			harness: "claude", file: ".claude/settings.json", want: `"defaultMode": "default"`,
 			wantKept: "{\n  \"enableAllProjectMcpServers\": false,\n  \"theme\": \"dark\"\n}\n",
 		},
+		{harness: "copilot", file: ".copilot/mcp-config.json", want: `"mcpServers": {}`, wantKept: `{"theme": "dark"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {
@@ -176,6 +180,7 @@ func TestBootstrapRefusesSymlinksOutOfHome(t *testing.T) {
 	}{
 		{harness: "opencode", link: ".config"},
 		{harness: "claude", link: ".claude"},
+		{harness: "copilot", link: ".copilot"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {

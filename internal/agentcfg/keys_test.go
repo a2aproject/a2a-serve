@@ -79,6 +79,33 @@ func TestMissingKey(t *testing.T) {
 	}
 }
 
+func TestModelKeyWithheld(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		cfg          agentdir.Config
+		granted      []string
+		wantProvider string
+		wantKey      string
+	}{
+		{name: "claude", cfg: agentdir.Config{Harness: "claude", Secrets: []string{"ANTHROPIC_API_KEY"}}, wantProvider: "anthropic", wantKey: "ANTHROPIC_API_KEY"},
+		{name: "copilot", cfg: agentdir.Config{Harness: "copilot", Secrets: []string{"GH_TOKEN"}}, wantProvider: "github", wantKey: "GH_TOKEN"},
+		{name: "copilot with its key granted", cfg: agentdir.Config{Harness: "copilot", Secrets: []string{"COPILOT_GITHUB_TOKEN"}}, granted: []string{"COPILOT_GITHUB_TOKEN"}},
+		{name: "copilot without a key", cfg: agentdir.Config{Harness: "copilot"}},
+		{name: "opencode", cfg: agentdir.Config{Harness: "opencode", Model: "openrouter/a/b", Secrets: []string{"OPENROUTER_API_KEY"}}, wantProvider: "openrouter", wantKey: "OPENROUTER_API_KEY"},
+		{name: "acp", cfg: agentdir.Config{Harness: "acp", Command: []string{"x"}, Secrets: []string{"GH_TOKEN"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider, key := ModelKeyWithheld(&tc.cfg, tc.granted)
+			if provider != tc.wantProvider || key != tc.wantKey {
+				t.Fatalf("ModelKeyWithheld() = %q, %q, want %q, %q", provider, key, tc.wantProvider, tc.wantKey)
+			}
+		})
+	}
+}
+
 func TestProfileNamesAreNotReserved(t *testing.T) {
 	t.Parallel()
 	for _, name := range agentprofile.ProfileNames() {

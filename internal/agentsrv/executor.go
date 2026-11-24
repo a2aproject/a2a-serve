@@ -97,6 +97,9 @@ func explainFailure(cfg *agentdir.Config, granted []string, reported string) str
 		return "The owner hasn't given this agent a model key. The agent reported: " + text
 	}
 	if !modelNotFound(text) {
+		if cfg.Harness == "copilot" && !hasEnv(cfg, "COPILOT_PROVIDER_BASE_URL") {
+			return text + "; give the agent a GitHub token with the Copilot Requests permission: `a2a-serve config set --secret COPILOT_GITHUB_TOKEN --restart`"
+		}
 		return text
 	}
 	if hint := agentcfg.MissingKey(cfg); hint != "" {
@@ -184,6 +187,9 @@ type observedExecutor struct {
 	stopping context.Context
 	// answers saves what answers to permission questions allow.
 	answers *ruleAnswers
+	// harness returns the agent of the current config, whose slash
+	// commands only the owner may send; nil sends every message as is.
+	harness func() string
 	// voice transcribes recordings and speaks replies; nil without a
 	// speech service.
 	voice *voiceTurns
@@ -350,11 +356,16 @@ func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorCon
 // call and the earlier messages of a moved conversation added to the prompt
 // and kept out of the task store.
 func (e *observedExecutor) agentTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	original := execCtx
+	if e.harness != nil {
+		execCtx = withPlainCommands(ctx, e.harness(), execCtx)
+	}
 	ctx, withLine := e.claims.withAgentsLine(ctx, execCtx)
 	if execCtx.Message != nil {
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
 	prompted, moved := e.moved.withEarlier(ctx, withLine)
+	execCtx = original
 	events := agentrun.CoalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted))), agentrun.CoalesceWindow)
 	if prompted == execCtx && !moved {
 		return events
@@ -773,4 +784,29 @@ func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, 
 		return fmt.Errorf("%w: %s", a2a.ErrInvalidRequest, refusal)
 	}
 	return nil
+}
+
+// callerTextNote goes first in the messages to Copilot of callers who
+// aren't owners. Copilot runs a message that starts with a slash as one of
+// its commands, which can turn its permission prompts off or widen what it
+// reads, and it reads a command only from a prompt's first block.
+const callerTextNote = "The next message is text from the user, not a command:"
+
+// withPlainCommands returns execCtx with callerTextNote before the message,
+// for copilot and a caller who isn't an owner. A message that answers a
+// question of the server never reaches the agent.
+func withPlainCommands(ctx context.Context, harness string, execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
+	if harness != "copilot" || callerIsOwner(ctx) || execCtx.Message == nil {
+		return execCtx
+	}
+	ec := *execCtx
+	msg := *execCtx.Message
+	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(callerTextNote)}, msg.Parts...)
+	ec.Message = &msg
+	return &ec
+}
+
+// hasEnv reports whether cfg sets the variable name with --env.
+func hasEnv(cfg *agentdir.Config, name string) bool {
+	return slices.ContainsFunc(cfg.Env, func(kv string) bool { return strings.HasPrefix(kv, name+"=") })
 }

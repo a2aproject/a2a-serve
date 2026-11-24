@@ -34,7 +34,7 @@ The change applies to the next conversation, and `status` shows the server as of
 
 ## Skills
 
-Skills in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. With `--sandbox local`, only the folders your agent reads on its own work.
+Skills in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with opencode, Claude Code and Copilot. With `--sandbox local`, only the folders your agent reads on its own work.
 
 `a2a-serve status` lists the MCP servers and skills the agent found.
 

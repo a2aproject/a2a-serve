@@ -74,6 +74,7 @@ func ProfileNames() []string { return slices.Sorted(maps.Keys(profiles)) }
 var profiles = map[string]func() Profile{
 	"opencode": Opencode,
 	"claude":   Claude,
+	"copilot":  Copilot,
 }
 
 // Lookup returns the profile of a harness. A non-empty command replaces the
@@ -98,6 +99,9 @@ func Opencode() Profile { return opencode{} }
 
 // Claude returns the profile of Claude Code.
 func Claude() Profile { return claude{} }
+
+// Copilot returns the profile of GitHub Copilot CLI.
+func Copilot() Profile { return copilot{} }
 
 // Custom returns a profile that starts argv, with no image and no home
 // setup.
@@ -126,6 +130,10 @@ func ProviderKeys(provider string) []string { return slices.Clone(providerKeys[p
 
 // ClaudeKeys are the variables claude reads its Anthropic credentials from.
 func ClaudeKeys() []string { return []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} }
+
+// CopilotKeys are the variables copilot reads its GitHub token from, in the
+// order it prefers them.
+func CopilotKeys() []string { return []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} }
 
 // withProviderKeys returns env with the key of each opencode provider also
 // in the variable opencode reads, when env holds it only in another of the

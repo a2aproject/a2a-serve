@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -76,6 +77,15 @@ func TestWritePolicy(t *testing.T) {
 			},
 		},
 		{
+			name:    "copilot",
+			profile: copilot{},
+			policy:  Policy{AskCommands: true, LockHome: true, MCPServers: []string{"github"}},
+			want: map[string]any{
+				"allowManagedHooksOnly": true,
+				"permissions":           map[string]any{"disableBypassPermissionsMode": "disable", "disableAssistedPermissionsMode": true},
+			},
+		},
+		{
 			name:    "opencode",
 			profile: opencode{},
 		},
@@ -120,6 +130,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 		{name: "claude", profile: claude{}, want: true},
 		{name: "agent of unknown kind", profile: custom{name: "acp", argv: []string{"fakeacp"}}, want: true},
 		{name: "opencode", profile: opencode{}},
+		{name: "copilot, whose image has its policy", profile: copilot{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,7 +156,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 				}
 			})
 
-			if got := slices.Contains(bindMounts(output(t, p)), policy+":/etc/claude-code:ro"); got != tc.want {
+			if got := slices.ContainsFunc(bindMounts(output(t, p)), func(m string) bool { return strings.HasPrefix(m, policy+":") }); got != tc.want {
 				t.Fatalf("Prepare() mounts %q, want the policy mounted: %t", bindMounts(output(t, p)), tc.want)
 			}
 		})
@@ -168,5 +179,31 @@ func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
 
 	if want := filepath.Join(policy, "managed-settings.json"); err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Prepare() error = %v, want it to name %s", err, want)
+	}
+}
+
+func TestCopilotImageHasThePolicy(t *testing.T) {
+	t.Parallel()
+	df, ok := Dockerfile("copilot")
+	if !ok {
+		t.Fatal("Dockerfile(copilot) missing")
+	}
+	want, err := copilot{}.policy(Policy{})
+	if err != nil {
+		t.Fatalf("policy() error = %v", err)
+	}
+	m := regexp.MustCompile(`echo '(\{.*\})'`).FindSubmatch(df)
+	if m == nil {
+		t.Fatalf("the copilot image writes no managed settings: %s", df)
+	}
+	var got, wantJSON any
+	if err := json.Unmarshal(m[1], &got); err != nil {
+		t.Fatalf("parsing the managed settings of the copilot image %s: %v", m[1], err)
+	}
+	if err := json.Unmarshal(want, &wantJSON); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(wantJSON, got); diff != "" {
+		t.Fatalf("managed settings of the copilot image wrong result (-want +got) diff = %s", diff)
 	}
 }

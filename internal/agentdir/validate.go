@@ -41,7 +41,7 @@ const HarnessACP = "acp"
 
 // Harnesses are the harnesses with a profile, which need no command. They
 // mirror the profiles of the harness package, which imports this one.
-var Harnesses = []string{"claude", "opencode"}
+var Harnesses = []string{"claude", "copilot", "opencode"}
 
 // ReservedHarnesses are the names of the test servers, `a2a-serve <name>`,
 // which no harness may take.
@@ -115,7 +115,7 @@ func (c *Config) Validate() error {
 		add("unknown agent %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
 	if c.Model != "" && !slices.Contains(Harnesses, c.Harness) {
-		invalid("model", c.Model, "needs the agent %s; set the model of agent %s in its --command", strings.Join(Harnesses, " or "), c.Harness)
+		invalid("model", c.Model, "needs the agent %s or %s; set the model of agent %s in its --command", strings.Join(Harnesses[:len(Harnesses)-1], ", "), Harnesses[len(Harnesses)-1], c.Harness)
 	}
 	if c.Name == "" {
 		add("no name: set one with --name")

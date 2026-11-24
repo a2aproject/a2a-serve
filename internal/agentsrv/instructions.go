@@ -52,6 +52,7 @@ const peerKind = "private network"
 var instructionFiles = []string{
 	filepath.Join(".config", "opencode", "AGENTS.md"),
 	filepath.Join(".claude", "CLAUDE.md"),
+	filepath.Join(".copilot", "copilot-instructions.md"),
 }
 
 const (

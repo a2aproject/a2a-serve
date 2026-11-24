@@ -125,7 +125,7 @@ func TestLookupProfileArgvIsCopied(t *testing.T) {
 func TestProfileNames(t *testing.T) {
 	t.Parallel()
 	got := a2aserve.ProfileNames()
-	if diff := cmp.Diff([]string{"claude", "opencode"}, got); diff != "" {
+	if diff := cmp.Diff([]string{"claude", "copilot", "opencode"}, got); diff != "" {
 		t.Errorf("a2aserve.ProfileNames() wrong result (-want +got) diff = %s", diff)
 	}
 	if !slices.IsSorted(got) {

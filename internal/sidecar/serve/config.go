@@ -277,7 +277,7 @@ func resolveProfile(cfg Config, sandbox string) (a2aserve.Profile, error) {
 	}
 	if cfg.Agent == "" {
 		if len(argv) == 0 {
-			return a2aserve.Profile{}, usagef("no agent: pass --agent %s, or --command with the command line of an ACP agent", strings.Join(a2aserve.ProfileNames(), " or --agent "))
+			return a2aserve.Profile{}, usagef("no agent: pass --agent with %s, or --command with the command line of an ACP agent", strings.Join(a2aserve.ProfileNames(), ", "))
 		}
 		if containers(sandbox) && cfg.Image == "" {
 			return a2aserve.Profile{}, usagef("--command without --agent needs --image with --sandbox %s, or --sandbox bwrap or local", sandbox)

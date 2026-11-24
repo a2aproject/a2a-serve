@@ -42,6 +42,9 @@ func (opencode) homeSkillDir() string       { return filepath.Join(".config", "o
 func (claude) projectSkillDirs() []string { return []string{".claude/skills"} }
 func (claude) homeSkillDir() string       { return filepath.Join(".claude", "skills") }
 
+func (copilot) projectSkillDirs() []string { return []string{".claude/skills", ".agents/skills"} }
+func (copilot) homeSkillDir() string       { return filepath.Join(".copilot", "skills") }
+
 // LinkSkills links the project skills which p doesn't read from the
 // project into the skill folder of its home, so every harness gets every
 // project skill. It removes the links of skills which are gone, and leaves

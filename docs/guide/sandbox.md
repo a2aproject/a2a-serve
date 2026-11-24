@@ -113,6 +113,7 @@ The agent then reaches only the hosts you list. Include the API of its model pro
 | --- | --- |
 | opencode | `models.opencode.ai:443`, `registry.npmjs.org:443`, and the API of its provider |
 | Claude Code | `api.anthropic.com:443` |
+| GitHub Copilot CLI | `api.github.com:443`, `api.githubcopilot.com:443`, `api.individual.githubcopilot.com:443` |
 | Google (Gemini) | `generativelanguage.googleapis.com:443` |
 | OpenAI | `api.openai.com:443` |
 | Anthropic | `api.anthropic.com:443` |

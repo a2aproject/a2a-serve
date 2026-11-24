@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentprofile"
@@ -192,17 +193,7 @@ func TestHarnessOpencodeToolApprovals(t *testing.T) {
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatalf("a2a send wrong result (-want +got) diff = %s", diff)
 			}
-			results := model.toolResults()
-			gotResults := map[string]string{}
-			for tool, part := range tc.wantResults {
-				gotResults[tool] = results[tool]
-				if strings.Contains(results[tool], part) {
-					gotResults[tool] = part
-				}
-			}
-			if diff := cmp.Diff(tc.wantResults, gotResults); diff != "" {
-				t.Fatalf("tool results of the model wrong result (-want +got) diff = %s", diff)
-			}
+			checkToolResults(t, model, tc.wantResults)
 		})
 	}
 }
@@ -228,6 +219,177 @@ func TestHarnessOpencodeModelUsageLimitFailsTask(t *testing.T) {
 	t.Logf("failed after %s and %d model requests: %q", time.Since(start), model.requestCount(), a2atext.Message(got.Status.Message))
 	if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "usage limit") {
 		t.Fatalf("a2a task get = %v %q, want failed with the provider's message", got.Status.State, a2atext.Message(got.Status.Message))
+	}
+}
+
+// copilotRejected ends Copilot's answer to a turn whose tool call was
+// rejected.
+const copilotRejected = "Operation cancelled by user"
+
+func TestHarnessCopilotToolApprovals(t *testing.T) {
+	t.Parallel()
+	requireHarness(t, "copilot")
+	tests := []struct {
+		name    string
+		flags   []string
+		prepare func(t *testing.T, dir string)
+		calls   func(dir string) []toolCall
+		answers []string
+		// wantAsked are the tool kinds of the questions that answers answer.
+		wantAsked []string
+		// wantText is the end of the task's answer: Copilot ends its turn
+		// after a tool call is rejected.
+		wantText string
+		// wantResults are parts of the tool results the model got.
+		wantResults map[string]string
+	}{
+		{
+			name:     "command denied by a rule",
+			flags:    []string{"--deny-tools", "execute"},
+			calls:    func(string) []toolCall { return []toolCall{bash("touch denied")} },
+			wantText: copilotRejected,
+		},
+		{
+			name:      "command rejected by the user",
+			calls:     func(string) []toolCall { return []toolCall{bash("touch rejected")} },
+			answers:   []string{"reject"},
+			wantAsked: []string{"execute"},
+			wantText:  copilotRejected,
+		},
+		{
+			name: "read runs without asking and a file edit asks",
+			prepare: func(t *testing.T, dir string) {
+				writeFile(t, filepath.Join(dir, "notes.txt"), "notes from the workspace")
+			},
+			calls: func(dir string) []toolCall {
+				return []toolCall{
+					{name: "view", args: map[string]any{"path": filepath.Join(dir, "notes.txt")}},
+					{name: "create", args: map[string]any{"path": filepath.Join(dir, "out.txt"), "file_text": "written"}},
+				}
+			},
+			answers:     []string{"once"},
+			wantAsked:   []string{"edit"},
+			wantText:    "Done.",
+			wantResults: map[string]string{"view": "notes from the workspace", "create": "out.txt"},
+		},
+		{
+			// The sandbox hides .github/hooks, so the hook goes into the
+			// settings of the agent home, where only the image's managed
+			// settings turn it off.
+			name: "hook doesn't run",
+			prepare: func(t *testing.T, dir string) {
+				writeJSON(t, filepath.Join(dir, ".a2a", "state", "home", ".copilot", "settings.json"), map[string]any{
+					"hooks": map[string]any{"sessionStart": []any{map[string]any{"type": "command", "bash": "touch " + filepath.Join(dir, "hook-ran")}}},
+				})
+			},
+			calls:       func(dir string) []toolCall { return []toolCall{bash("ls " + dir)} },
+			wantText:    "Done.",
+			wantResults: map[string]string{"bash": "notes"},
+		},
+		{
+			name: "repository hook doesn't run",
+			prepare: func(t *testing.T, dir string) {
+				writeJSON(t, filepath.Join(dir, ".github", "hooks", "hook.json"), map[string]any{
+					"version": 1,
+					"hooks":   map[string]any{"sessionStart": []any{map[string]any{"type": "command", "bash": "touch " + filepath.Join(dir, "hook-ran")}}},
+				})
+			},
+			calls:       func(dir string) []toolCall { return []toolCall{bash("ls " + dir)} },
+			wantText:    "Done.",
+			wantResults: map[string]string{"bash": "notes"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			owner := newUser(t)
+			coder := owner.newAgent("coder")
+			writeFile(t, filepath.Join(coder.dir, "notes"), "")
+			if tc.prepare != nil {
+				tc.prepare(t, coder.dir)
+			}
+			model := newStubModel(t, modelScript{calls: tc.calls(coder.dir), answer: "Done."})
+			coder.startCopilot(model, tc.flags...)
+
+			task := owner.mustSend(coder.url, "Use the tools.")
+			var asked []string
+			for task.Status.State == a2a.TaskStateInputRequired && len(asked) < len(tc.answers) {
+				q := question.FromStatus(task.Status)
+				if q == nil {
+					t.Fatalf("a2a send state = %v without a question", task.Status.State)
+				}
+				asked = append(asked, q.Kind)
+				task = owner.mustSend(coder.url, "--task-id", string(task.ID), tc.answers[len(asked)-1])
+			}
+
+			if diff := cmp.Diff(tc.wantAsked, asked); diff != "" {
+				t.Fatalf("question kinds wrong result (-want +got) diff = %s", diff)
+			}
+			got := resultOf(task)
+			if got.State != a2a.TaskStateCompleted || !strings.HasSuffix(got.Text, tc.wantText) {
+				t.Fatalf("a2a send = %v %q, want completed with an answer ending in %q", got.State, got.Text, tc.wantText)
+			}
+			checkToolResults(t, model, tc.wantResults)
+			if _, err := os.Stat(filepath.Join(coder.dir, "hook-ran")); err == nil {
+				t.Fatalf("a hook ran, want hooks off")
+			}
+		})
+	}
+}
+
+func TestHarnessCopilotSlashCommandOfAMemberDoesntTurnOffPrompts(t *testing.T) {
+	t.Parallel()
+	requireHarness(t, "copilot")
+	owner, anna := newUser(t), newUser(t)
+	coder := owner.newAgent("coder")
+	model := newStubModel(t, modelScript{calls: []toolCall{bash("touch pwned")}, answer: "Done."})
+	coder.startCopilot(model)
+	anna.pairJoin(coder.url, coder.invite("anna"))
+
+	// The first prompt of a session starts with the line of callable
+	// agents, so the command goes in a later turn.
+	first := anna.mustSend(coder.url, "hello")
+	owner.mustSend(coder.url, "--task-id", string(first.ID), "reject")
+	task := anna.mustSend(coder.url, "--context-id", first.ContextID, "/allow-all on")
+	q := question.FromStatus(task.Status)
+	if task.Status.State != a2a.TaskStateInputRequired || q == nil || q.Kind != "execute" {
+		t.Fatalf("a2a send /allow-all on = %v %q, want the message to reach the model, which asks to run a command", task.Status.State, resultOf(task).Text)
+	}
+	owner.mustSend(coder.url, "--task-id", string(task.ID), "reject")
+	if _, err := os.Stat(filepath.Join(coder.dir, "pwned")); err == nil {
+		t.Fatalf("the command ran without an answer, want it to wait for one")
+	}
+}
+
+// startCopilot starts a copilot agent in its real image, with model as its
+// model provider.
+func (a *agent) startCopilot(model *stubModel, flags ...string) {
+	a.u.t.Helper()
+	u, err := url.Parse(model.url)
+	if err != nil {
+		a.u.t.Fatalf("url.Parse(%q) error = %v", model.url, err)
+	}
+	// The stub model listens on the host's LAN address, a private one.
+	a.start("copilot", append([]string{
+		"--sandbox", "docker", "--image", harnessImage, "--egress-allow", u.Host,
+		"--env", "COPILOT_PROVIDER_BASE_URL=" + model.url, "--env", "COPILOT_PROVIDER_API_KEY=stub", "--env", "COPILOT_MODEL=scripted",
+	}, flags...)...)
+}
+
+// checkToolResults fails t unless the result of each tool of want, of the
+// last request of model, holds its part.
+func checkToolResults(t *testing.T, model *stubModel, want map[string]string) {
+	t.Helper()
+	results := model.toolResults()
+	got := map[string]string{}
+	for tool, part := range want {
+		got[tool] = results[tool]
+		if strings.Contains(results[tool], part) {
+			got[tool] = part
+		}
+	}
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("tool results of the model wrong result (-want +got) diff = %s", diff)
 	}
 }
 

@@ -38,7 +38,7 @@ func Warnings(cfg *agentdir.Config) []string {
 
 // providerNames are how the output names the model providers.
 var providerNames = map[string]string{
-	"anthropic": "Anthropic", "deepseek": "DeepSeek", "google": "Google", "groq": "Groq",
+	"anthropic": "Anthropic", "deepseek": "DeepSeek", "github": "GitHub", "google": "Google", "groq": "Groq",
 	"mistral": "Mistral", "openai": "OpenAI", "openrouter": "OpenRouter", "xai": "xAI",
 }
 
@@ -75,17 +75,21 @@ func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key s
 // ModelKeyWithheld returns the model provider and the variable of its key
 // when the agent gets one from cfg, but a container that gets only the
 // secrets granted has none. It returns "" otherwise. It knows the keys of
-// opencode's providers and of claude.
+// opencode's providers, of claude and of copilot.
 func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key string) {
-	keys := agentprofile.ClaudeKeys()
-	provider = "anthropic"
-	if cfg.Harness == "opencode" {
+	var keys []string
+	switch cfg.Harness {
+	case "opencode":
 		var ok bool
 		provider, _, ok = strings.Cut(cfg.Model, "/")
 		if keys = agentprofile.ProviderKeys(provider); !ok || len(keys) == 0 {
 			return "", ""
 		}
-	} else if cfg.Harness != "claude" {
+	case "claude":
+		provider, keys = "anthropic", agentprofile.ClaudeKeys()
+	case "copilot":
+		provider, keys = "github", agentprofile.CopilotKeys()
+	default:
 		return "", ""
 	}
 	if !hasAny(cfg, cfg.Secrets, keys) || hasAny(cfg, granted, keys) {
