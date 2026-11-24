@@ -1,6 +1,16 @@
 name: o11y
 agent: opencode
 description: Answers questions about production and investigates incidents with metrics, logs, traces, profiles and recent changes.
+card:
+  skills:
+    - id: triage
+      name: Incident triage
+      description: Investigates alerts and reports that a service is slow, failing or down, correlating metrics, logs, traces and recent changes.
+      tags: [observability, triage, incidents, grafana]
+    - id: telemetry-query
+      name: Telemetry queries
+      description: Answers questions about production by querying Prometheus metrics, Loki logs, Tempo traces, profiles and Grafana dashboards.
+      tags: [observability, metrics, logs, traces, promql, logql, traceql]
 mounts:
   - ~/.kube/a2a-o11y:/kube:ro
 approvals:

@@ -40,6 +40,9 @@ func TestExampleRecipe(t *testing.T) {
 	if err := r.Config.Validate(); err != nil {
 		t.Fatalf("the example's config.yaml is invalid: %v", err)
 	}
+	if len(r.Config.Card.Skills) == 0 {
+		t.Fatalf("the example's config.yaml sets no card.skills, want observability skills instead of the default coding skill")
+	}
 	var skills []string
 	for _, s := range r.Skills {
 		skills = append(skills, s.Name)
