@@ -41,8 +41,8 @@ a2a-serve start opencode --name coder --model openrouter/~google/gemini-flash-la
 
 For Claude Code, use `a2a-serve start claude` instead.
 
-The first run saves the flags and the key in `.a2a/`, pulls the agent image
-and stays in the foreground. Later runs from this directory are just
+The first run saves the flags and the key in `.a2a/`, pulls or builds the
+agent image and stays in the foreground. Later runs from this directory are just
 `a2a-serve start`.
 
 In **terminal B**, check that it runs and note its local URL:

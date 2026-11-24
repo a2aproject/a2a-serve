@@ -50,7 +50,10 @@ func imageOf(image string, profile Profile) (string, *sandboxrt.LocalBuild, erro
 	}
 	var local *sandboxrt.LocalBuild
 	if df, ok := Dockerfile(harness); ok && image == profile.Image() {
-		local = &sandboxrt.LocalBuild{Tag: LocalImage(harness), Dockerfile: df, Reason: strings.TrimPrefix(image, ImageRepo) + " is not published"}
+		local = &sandboxrt.LocalBuild{Tag: LocalImage(harness), Dockerfile: df}
+		if image != local.Tag {
+			local.Reason = strings.TrimPrefix(image, ImageRepo) + " is not published"
+		}
 	}
 	return image, local, nil
 }

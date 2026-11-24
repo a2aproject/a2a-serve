@@ -5,7 +5,7 @@ The server runs opencode, Claude Code or any other ACP agent, on Linux and macOS
 | Agent | Image |
 | --- | --- |
 | `opencode` | `ghcr.io/a2aproject/harness-opencode`, with the latest `opencode-ai` at publish time |
-| `claude` | `ghcr.io/a2aproject/harness-claude`, with the latest Claude Code and `claude-agent-acp` at publish time |
+| `claude` | Built on your machine on the first start, with the latest Claude Code and `claude-agent-acp` at build time |
 | `acp --command …` | Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com), in any image with `--image` |
 
 `--command` also replaces the command of `opencode` or `claude`, as in `a2a-serve start opencode --command "opencode acp --print-logs"`. The images include Node.js, `git`, `ripgrep`, `python3`, `npx`, `uvx` and the `a2a` CLI.
