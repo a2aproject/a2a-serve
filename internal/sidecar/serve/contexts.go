@@ -19,10 +19,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/internal/sidecar/hosttools"
 )
 
 // contextsPool is the pool of the agent processes of A2A contexts.
@@ -38,6 +41,10 @@ type contexts struct {
 	// base is the environment of every process, which each gets with its
 	// own name.
 	base a2aserve.Environment
+	// localTools is set where the agent connects to the tools endpoint
+	// itself, so that each process sends its context in the headers of
+	// the MCP server.
+	localTools bool
 }
 
 func (c contexts) Key(_ context.Context, contextID string) (string, error) {
@@ -52,6 +59,20 @@ func (c contexts) Environment(_ context.Context, key string) (a2aserve.Environme
 	sum := sha256.Sum256([]byte(key))
 	env.Name += "-" + hex.EncodeToString(sum[:6])
 	env.Pool = contextsPool
+	if c.localTools {
+		env.MCPServers = slices.Clone(env.MCPServers)
+		for i, srv := range env.MCPServers {
+			if srv.Name != ToolsServer {
+				continue
+			}
+			headers := maps.Clone(srv.Headers)
+			if headers == nil {
+				headers = map[string]string{}
+			}
+			headers[hosttools.HeaderContext] = key
+			env.MCPServers[i].Headers = headers
+		}
+	}
 	return env, nil
 }
 

@@ -119,6 +119,26 @@ func TestToolsGivesTheAgentTheHostAndItsHooks(t *testing.T) {
 	}
 }
 
+func TestToolsTellsTheHostTheContextOfEachToolCall(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}})
+	c := startWithTools(t, host)
+
+	for _, contextID := range []string{"context-a", "context-b"} {
+		if task := sendFor(t, c, contextID, "mcpcall host echo hi"); task.Status.State != a2a.TaskStateCompleted {
+			t.Fatalf("Client.SendMessage(mcpcall) in %s = %v, want completed", contextID, task.Status.State)
+		}
+	}
+
+	var got []string
+	for _, r := range host.Records("tools/call") {
+		got = append(got, r.Context)
+	}
+	if diff := cmp.Diff([]string{"context-a", "context-b"}, got); diff != "" {
+		t.Fatalf("%s of the tool calls wrong result (-want +got) diff = %s", hosttools.HeaderContext, diff)
+	}
+}
+
 func TestToolsGivesTheLocalAgentTheHostToken(t *testing.T) {
 	t.Parallel()
 	host := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}, Token: toolsHostToken})

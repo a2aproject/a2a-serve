@@ -31,6 +31,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/core/sandbox"
+	"github.com/a2aproject/a2a-serve/internal/sidecar/hosttools"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/refhost"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -85,6 +86,37 @@ func TestBwrapSandboxRunsTheAgentBehindTheEgressProxy(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(workspace, "hello.txt")); err != nil || string(got) != "written by fakeacp\n" {
 		t.Fatalf("os.ReadFile(hello.txt) = %q, %v, want the agent's file", got, err)
+	}
+}
+
+func TestBwrapSandboxTellsTheToolsEndpointTheContextOfEachCall(t *testing.T) {
+	t.Parallel()
+	bin := bwrapTestEnv(t)
+	tools := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}})
+	dir := testutil.ShortTempDir(t)
+	url := serveHost(t, refhost.New(refhost.Config{Tools: tools}), dir)
+	sock := filepath.Join(dir, "a2a.sock")
+	startBinary(t, bin, "--sandbox", "bwrap", "--command", fakeACP, "--workspace", "memory", "--tools", url, "--listen", "unix://"+sock)
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
+
+	var tasks []string
+	for _, contextID := range []string{"context-a", "context-b"} {
+		task := sendTask(t, c, contextID, "mcpcall host echo hi")
+		if got, want := testutil.AllArtifactText(task), "mcp result: echo: hi"; got != want {
+			t.Fatalf("Client.SendMessage(mcpcall) in %s = %q, want %q", contextID, got, want)
+		}
+		tasks = append(tasks, contextID+" "+string(task.ID))
+	}
+
+	var got []string
+	for _, r := range tools.Records("tools/call") {
+		got = append(got, r.Context+" "+r.Task)
+	}
+	if diff := cmp.Diff(tasks, got); diff != "" {
+		t.Fatalf("context and task of the tool calls wrong result (-want +got) diff = %s", diff)
 	}
 }
 

@@ -135,7 +135,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		return nil, err
 	}
 	if s.sandbox != SandboxLocal {
-		if srv.boundary, srv.proxy, srv.middleware, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter()); err != nil {
+		if srv.boundary, srv.proxy, srv.middleware, err = newBoundary(s, srv.log, turns, srv.tools.wrapRouter(turns.task)); err != nil {
 			return nil, err
 		}
 	}
@@ -174,7 +174,7 @@ func Start(ctx context.Context, cfg Config) (_ *Server, err error) {
 		Egress:   srv.boundary,
 		Tools:    srv.tools.deciders(),
 		Main:     mainEnv,
-		Callers:  contexts{base: base},
+		Callers:  contexts{base: base, localTools: srv.tools != nil && s.sandbox == SandboxLocal},
 		Pools:    map[string]a2aserve.Pool{contextsPool: {MaxProcesses: s.maxProcesses, QuestionTimeout: questionTimeout}},
 		Sessions: mem.sessions(),
 		AgentAPI: srv.contacts.agentAPI(),

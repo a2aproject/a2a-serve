@@ -29,6 +29,12 @@ The agent and `a2a-serve-sidecar` both reach the endpoint, so `a2a-serve-sidecar
 
 Accept `hooks/*` only with `A2A-Sidecar-Origin: a2a-serve-sidecar`, and answer the others with 403, so that the agent can't decide its own tool calls or report made-up results. With `--sandbox local`, the agent connects to the endpoint itself and can send any header, so the header doesn't tell it from `a2a-serve-sidecar`.
 
+## Context
+
+Requests from the agent carry the A2A context of its process in `A2A-Sidecar-Context`, and the task of the turn in progress in `A2A-Sidecar-Task`. Use them to run a tool call for the right caller, such as the session that sent the task. `A2A-Sidecar-Task` is missing between turns. Both are missing for the process that `a2a-serve-sidecar` starts to check that the agent starts.
+
+With `--sandbox local`, the agent sends `A2A-Sidecar-Context` itself, from the headers of the MCP server `host`, and sends no `A2A-Sidecar-Task`. Since the agent can send any header there, trust it only as much as the agent.
+
 ## a2a-serve-sidecar's session
 
 At start, `a2a-serve-sidecar` opens an MCP session of its own and sends `initialize` with `protocolVersion` `2025-06-18` and `clientInfo.name` `a2a-serve-sidecar`, then `notifications/initialized`. It doesn't start when the endpoint doesn't answer.
