@@ -34,6 +34,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/approval"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -291,9 +292,25 @@ func TestURLWorkspaceConflictFailsTheTask(t *testing.T) {
 
 func TestURLWorkspaceThatStopsAnsweringFailsTheTurnWithoutItsPath(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.StripPrefix("/secret-value", fsys.Handler(fsys.Memory())))
+	const hostToken = "ws-host-token"
+	fsHandler := http.StripPrefix("/secret-value", fsys.Handler(fsys.Memory()))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(egress.ProxyHeaderToken) != hostToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fsHandler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
-	_, c := startWorkspace(t, "--workspace", srv.URL+"/secret-value/")
+	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+	r := startWithStdin(t, hostToken+"\n", "--sandbox", "local", "--command", fakeACP, "--listen", "unix://"+sock, "--workspace", srv.URL+"/secret-value/")
+	if !r.ready.Ready {
+		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
+	}
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
 
 	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
 	srv.Close()

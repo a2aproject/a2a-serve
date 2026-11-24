@@ -42,7 +42,10 @@ func startWithTools(t *testing.T, host *refhost.Tools) *a2aclient.Client {
 	srv := httptest.NewServer(host)
 	t.Cleanup(srv.Close)
 	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
-	start(t, "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
+	r := startWithStdin(t, "test-host-token\n", "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
+	if !r.ready.Ready {
+		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
+	}
 	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
 	if err != nil {
 		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
@@ -163,7 +166,7 @@ func TestToolsFailsToStartWithoutTheEndpoint(t *testing.T) {
 	srv.Close()
 	var stdout, stderr bytes.Buffer
 	args := []string{"--sandbox", "local", "--command", fakeACP, "--workspace", "dir:" + t.TempDir(), "--tools", url}
-	code := sidecar.Main(context.Background(), args, sidecar.IO{Stdout: &stdout, Stderr: &stderr})
+	code := sidecar.Main(context.Background(), args, sidecar.IO{Stdin: strings.NewReader("test-host-token\n"), Stdout: &stdout, Stderr: &stderr})
 	var ready serve.Ready
 	if err := json.Unmarshal(stdout.Bytes(), &ready); err != nil || code != 1 || ready.Ready || !strings.Contains(ready.Error, "connecting to --tools") {
 		t.Fatalf("sidecar.Main() = %d with stdout %q, want 1 and an error about --tools", code, stdout.String())

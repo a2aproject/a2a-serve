@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -51,13 +52,17 @@ const (
 type Entry struct {
 	// Name is what the agent calls the contact by.
 	Name string
-	// URL is the https:// URL of the contact's agent card, or unix://<path>
-	// of a socket that serves the contact.
+	// URL is the https:// URL of the contact's agent card, a loopback
+	// http:// URL, or unix://<path> of a socket that serves the contact.
 	URL string
 	// Auth is the value of the Authorization header of the requests to the
-	// contact, or "". It is a secret: it goes only over https to the card's
-	// host and port, or through the socket, and is never logged.
+	// contact, or "". It is a secret: it goes only to the card's origin,
+	// or through the socket, and is never logged.
 	Auth string
+	// Headers are extra headers sent on every request to the contact's
+	// origin (or through its socket), such as a run-scoped host token.
+	// They are secrets and are never logged.
+	Headers http.Header
 }
 
 // StaticConfig configures a [Static] directory.
@@ -164,6 +169,16 @@ func newStaticContact(e Entry, transport http.RoundTripper) (*staticContact, err
 	if strings.ContainsAny(e.Auth, "\r\n") {
 		return nil, fmt.Errorf("contact: the auth header of %s has a line break", e.Name)
 	}
+	for name, vals := range e.Headers {
+		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n") {
+			return nil, fmt.Errorf("contact: the header name of %s is invalid", e.Name)
+		}
+		for _, val := range vals {
+			if strings.ContainsAny(val, "\r\n") {
+				return nil, fmt.Errorf("contact: a header of %s has a line break", e.Name)
+			}
+		}
+	}
 	u, err := url.Parse(e.URL)
 	if err != nil {
 		return nil, fmt.Errorf("contact: invalid URL of %s", e.Name)
@@ -172,7 +187,7 @@ func newStaticContact(e Entry, transport http.RoundTripper) (*staticContact, err
 	var rt http.RoundTripper
 	cardOrigin := ""
 	switch {
-	case u.Scheme == "https" && u.Host != "":
+	case (u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname()))) && u.Host != "":
 		c.cardURL, cardOrigin = e.URL, origin(u)
 		c.display = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 		if p, ok := u.User.Password(); ok {
@@ -189,10 +204,10 @@ func newStaticContact(e Entry, transport http.RoundTripper) (*staticContact, err
 		c.cardURL = "http://contact"
 		rt = unixTransport(u.Path)
 	default:
-		return nil, fmt.Errorf("contact: the URL of %s must start with https:// or unix:///", e.Name)
+		return nil, fmt.Errorf("contact: the URL of %s must start with https://, loopback http://, or unix:///", e.Name)
 	}
 	c.http = &http.Client{
-		Transport:     &authTransport{base: egressrules.LimitResponses(rt, maxResponse), origin: cardOrigin, auth: e.Auth},
+		Transport:     &authTransport{base: egressrules.LimitResponses(rt, maxResponse), origin: cardOrigin, auth: e.Auth, headers: e.Headers.Clone()},
 		CheckRedirect: egressrules.CheckRedirect,
 	}
 	return c, nil
@@ -209,31 +224,52 @@ func unixTransport(path string) http.RoundTripper {
 	}
 }
 
-// authTransport adds the Authorization header to the requests over https
-// to origin, the scheme, host and port of the card, or to every request
-// when origin is "", for a socket that every request goes through.
+// authTransport adds the Authorization header and extra headers to the
+// requests to origin, the scheme, host and port of the card, or to every
+// request when origin is "", for a socket that every request goes through.
 type authTransport struct {
-	base   http.RoundTripper
-	origin string
-	auth   string
+	base    http.RoundTripper
+	origin  string
+	auth    string
+	headers http.Header
 }
 
 func (t *authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.auth == "" || (t.origin != "" && origin(r.URL) != t.origin) {
+	if (t.auth == "" && len(t.headers) == 0) || (t.origin != "" && origin(r.URL) != t.origin) {
 		return t.base.RoundTrip(r)
 	}
 	r = r.Clone(r.Context())
-	r.Header.Set("Authorization", t.auth)
+	for k, vals := range t.headers {
+		r.Header[http.CanonicalHeaderKey(k)] = slices.Clone(vals)
+	}
+	if t.auth != "" {
+		r.Header.Set("Authorization", t.auth)
+	}
 	return t.base.RoundTrip(r)
 }
 
-// origin is the https origin of u with its port spelled out, or "" for
-// another scheme.
+// origin is the scheme, host and port of u for https or loopback http,
+// or "" for anything else.
 func origin(u *url.URL) string {
-	if u.Scheme != "https" {
+	switch u.Scheme {
+	case "https":
+		return "https://" + net.JoinHostPort(strings.ToLower(u.Hostname()), cmp.Or(u.Port(), "443"))
+	case "http":
+		if !isLoopbackHost(u.Hostname()) {
+			return ""
+		}
+		return "http://" + net.JoinHostPort(strings.ToLower(u.Hostname()), cmp.Or(u.Port(), "80"))
+	default:
 		return ""
 	}
-	return "https://" + net.JoinHostPort(strings.ToLower(u.Hostname()), cmp.Or(u.Port(), "443"))
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 func (s *Static) loop(ctx context.Context) {

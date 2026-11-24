@@ -16,6 +16,7 @@ package refhost
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +51,9 @@ type ToolsConfig struct {
 	Stream bool
 	// OnRecord sees each message the host gets.
 	OnRecord func(Record)
+	// Token, when non-empty, requires every request to carry it in
+	// [hosttools.HeaderToken].
+	Token string
 }
 
 // Record is a message the tools endpoint got.
@@ -106,6 +110,10 @@ type rpcError struct {
 
 // ServeHTTP serves the MCP endpoint.
 func (h *Tools) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get(hosttools.HeaderToken)), []byte(h.cfg.Token)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 	case http.MethodDelete:

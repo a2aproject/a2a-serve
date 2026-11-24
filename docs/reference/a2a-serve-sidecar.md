@@ -36,6 +36,7 @@ Once the agent is up, `a2a-serve-sidecar` prints one JSON line on stdout. Logs g
 | --- | --- |
 | `ready` | `true` once the agent is up, `false` when it failed to start |
 | `a2a` | The A2A endpoint: `unix:///path`, or `http://host:port` with the port it picked for port 0 |
+| `token` | When `a2a` listens on loopback TCP, the run-scoped bearer token required in `Authorization: Bearer <token>` on every A2A request |
 | `sandbox` | `docker`, `docker (rootless)`, `gvisor`, `gvisor (rootless)`, `bwrap` or `local` |
 | `workspace` | `dir`, `memory` or `url` |
 | `workspace_sync` | `turn` or `live` |
@@ -76,7 +77,16 @@ For each `--egress-middleware` host, `a2a-serve-sidecar` terminates TLS and forw
 
 ## A2A endpoint
 
-The endpoint serves A2A over JSON-RPC at `/` and over REST, and the agent card at `/.well-known/agent-card.json`. It doesn't authenticate callers, so it listens only on a Unix socket or a loopback address.
+The endpoint serves A2A over JSON-RPC at `/` and over REST, and the agent card at `/.well-known/agent-card.json`. It listens only on a Unix socket or a loopback address.
+
+### Loopback authentication
+
+Over loopback HTTP (`http://127.0.0.1` or `http://localhost`), each side authenticates the other with a run-scoped token:
+
+- **Host to sidecar:** When `--listen` is a loopback address, `a2a-serve-sidecar` generates a token and prints it in the ready line's `token` field. Send `Authorization: Bearer <token>` on every A2A request, including `GET /.well-known/agent-card.json`.
+- **Sidecar to host:** When any host control endpoint (`--egress-proxy`, `--egress-middleware`, `--tools`, a URL `--workspace`, or a loopback `http://` `--contact` without `--contact-auth`) uses loopback `http://`, write the host's token on one line to the sidecar's `stdin` before the ready line. `a2a-serve-sidecar` sends it in the `A2A-Sidecar-Token` header on every request to those loopback endpoints. Hosts that forward intercepted requests upstream must strip `A2A-Sidecar-Token`.
+
+Endpoints on `unix://` sockets use socket file permissions and need no token.
 
 Each A2A context runs in an agent process of its own. A process stops when it is idle, and `--max-processes` bounds how many run at once. `a2a-serve-sidecar` keeps tasks in memory and forgets a context some time after its tasks ended. See [limits](limits.md#a2a-serve-sidecar).
 
@@ -107,7 +117,7 @@ $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"policy","contacts":[{"name":"reviewer","card":"ok"},{"name":"planner","card":"ok"}]}
 ```
 
-A contact is the `https://` URL of an agent card, or a `unix://` socket that serves an agent, so the host can offer agents of its own without opening a port. The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. The agent never sees it.
+A contact is the `https://` URL of an agent card, a loopback `http://` URL, or a `unix://` socket that serves an agent. A loopback `http://` contact without `--contact-auth` gets the host's [loopback token](#loopback-authentication) in `A2A-Sidecar-Token`. The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. The agent never sees it.
 
 The agent's instructions list each contact with the description and skills from its card, and the agent calls one with the `a2a` CLI:
 
@@ -243,9 +253,9 @@ The key is the same for every embedder of the core, so a host reads one key whet
 | `--workspace source` |  | Files of the agent, a source: dir:path for a directory, memory for files that a2a-serve-sidecar keeps in memory and drops at exit, or the URL of a file server of the host: http://, https:// or unix:///path |
 | `--workspace-sync string` | `turn` | How the agent changes the workspace: turn gives each A2A context a private copy, written back after each of its turns, and returns the changed files with the task; live lets the agent change the workspace in place, and needs --sandbox docker or bwrap unless the workspace is a dir: |
 | `--tools url` |  | Tools endpoint of the host, an MCP server over streamable HTTP: a url, http://, https:// or unix:///path; every agent session gets it as the MCP server host, and a2a-serve-sidecar calls the hooks it advertises |
-| `--contact name=url` |  | Other A2A agent the agent may call, through a2a-serve-sidecar: name=url, with the https:// URL of its agent card, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
+| `--contact name=url` |  | Other A2A agent the agent may call, through a2a-serve-sidecar: name=url, with the https:// URL of its agent card, a loopback http:// URL, or unix:///path of a socket that serves it, such as reviewer=https://reviewer.example.com |
 | `--contact-auth name=value` |  | Authorization header of the requests to a --contact, which the agent never sees: name=value; the value may end in env:VAR, which reads the variable VAR, or -, which reads one line from stdin, such as reviewer="Bearer env:REVIEWER_TOKEN" |
-| `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port |
+| `--listen string` | `127.0.0.1:0` | Address of the A2A endpoint: unix:///path, or host:port with a loopback host; port 0 picks a free port. Over loopback, the ready line includes a bearer token for every A2A request |
 | `--max-processes int` | `4` | Agent processes that run at once, one per A2A context; an idle process stops to make room. One more process runs for the life of a2a-serve-sidecar, started to check that the agent starts |
 | `--home directory` |  | Agent home directory, which every agent process shares (default: a temporary directory, removed at exit) |
 | `--state-dir directory` |  | State directory for the files of the agent processes that no process may see, such as their sockets (default: a temporary directory, removed at exit) |

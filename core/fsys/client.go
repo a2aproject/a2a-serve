@@ -34,6 +34,13 @@ import (
 	"time"
 )
 
+// ClientOptions configures [ClientWithOptions].
+type ClientOptions struct {
+	// Header holds extra headers sent on every request to the file server,
+	// such as an authentication token.
+	Header http.Header
+}
+
 // Client returns the tree that a file server serves at rawURL with the
 // wire protocol of [Handler]: http://host:port or https://host:port with
 // an optional path prefix, or unix:///path/to/socket. It refuses paths outside the rules of
@@ -41,6 +48,11 @@ import (
 // and a batch of changes to [MaxEntries]. Changes waits at most until the
 // deadline of its context, in requests of up to [MaxChangesWait].
 func Client(rawURL string) (FS, error) {
+	return ClientWithOptions(rawURL, ClientOptions{})
+}
+
+// ClientWithOptions is [Client] configured with opts.
+func ClientWithOptions(rawURL string, opts ClientOptions) (FS, error) {
 	u, err := url.Parse(rawURL)
 	if ue, ok := errors.AsType[*url.Error](err); ok {
 		// The error of url.Parse quotes the URL, whose path may carry a
@@ -53,12 +65,22 @@ func Client(rawURL string) (FS, error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("the file server URL can't have user info, a query or a fragment")
 	}
+	for name, vals := range opts.Header {
+		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n") {
+			return nil, errors.New("the file server client header name is invalid")
+		}
+		for _, val := range vals {
+			if strings.ContainsAny(val, "\r\n") {
+				return nil, errors.New("the file server client header value has a line break")
+			}
+		}
+	}
 	transport := &http.Transport{
 		MaxIdleConnsPerHost:   16,
 		IdleConnTimeout:       time.Minute,
 		ResponseHeaderTimeout: MaxChangesWait + time.Minute,
 	}
-	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}}
+	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}, header: opts.Header.Clone()}
 	switch u.Scheme {
 	case "http", "https":
 		if u.Host == "" {
@@ -92,8 +114,9 @@ type client struct {
 	base string
 	// shown names the server in errors: its scheme and host, or its
 	// socket, without the path, which may carry a secret.
-	shown string
-	http  *http.Client
+	shown  string
+	header http.Header
+	http   *http.Client
 }
 
 // requestError is the error of a request that got no answer. Unlike the
@@ -135,6 +158,9 @@ func (c *client) do(ctx context.Context, op, p, method, route string, query url.
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, err)}
+	}
+	for k, vals := range c.header {
+		req.Header[http.CanonicalHeaderKey(k)] = slices.Clone(vals)
 	}
 	maps.Copy(req.Header, header)
 	resp, err := c.http.Do(req)

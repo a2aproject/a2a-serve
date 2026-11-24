@@ -7,7 +7,7 @@ This page specifies the tools endpoint that a host gives `a2a-serve-sidecar` wit
 
 ## Endpoint
 
-The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) server over streamable HTTP. `--tools` takes one of:
+The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) server over streamable HTTP. Over loopback `http://`, `a2a-serve-sidecar` sends the host's token in `A2A-Sidecar-Token` on its own session and on proxied sandbox requests; see [Loopback authentication](a2a-serve-sidecar.md#loopback-authentication). `--tools` takes one of:
 
 | Value | Endpoint |
 | --- | --- |

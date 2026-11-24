@@ -23,6 +23,7 @@ package refhost
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -109,6 +110,9 @@ type Config struct {
 	// get the real key, as with a2a-serve-sidecar --inject-model-key. New ignores
 	// unknown providers.
 	ModelKeys map[string]string
+	// Token, when non-empty, requires every request to carry it in
+	// [egress.ProxyHeaderToken].
+	Token string
 }
 
 // ParseModelKey parses a provider=NAME argument and reads the key from
@@ -270,6 +274,10 @@ func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
 }
 
 func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get(egress.ProxyHeaderToken)), []byte(h.cfg.Token)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if r.Method == http.MethodConnect {
 		h.connect(w, r)
 		return

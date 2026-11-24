@@ -6,7 +6,7 @@ The protocol maps one to one onto the Go interface `fsys.FS` in `core/fsys`. In 
 
 ## Transport
 
-The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` or `https://host:port` with an optional path prefix. Requests are plain HTTP/1.1. The protocol has no authentication, so serve it only on a Unix socket or a loopback address.
+The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` or `https://host:port` with an optional path prefix. Requests are plain HTTP/1.1. When `a2a-serve-sidecar --workspace` connects over loopback `http://`, it sends the host's token in `A2A-Sidecar-Token`; see [Loopback authentication](a2a-serve-sidecar.md#loopback-authentication).
 
 ## Paths
 

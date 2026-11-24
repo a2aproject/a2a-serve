@@ -560,3 +560,44 @@ func TestConcurrentCallsShareOneNewSession(t *testing.T) {
 		t.Fatalf("client ended %d sessions, want the replaced one ended once", deletes)
 	}
 }
+
+func TestEndpointWithTokenAuthenticatesClientAndProxy(t *testing.T) {
+	t.Parallel()
+	const tok = "host-tools-token"
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: allHooks, Token: tok})
+	base := serve(t, host)
+
+	if _, err := hosttools.Dial(t.Context(), base, "test"); err == nil {
+		t.Fatalf("hosttools.Dial() without token error = nil, want 401")
+	}
+	ep, err := base.WithToken(tok)
+	if err != nil {
+		t.Fatalf("Endpoint.WithToken() error = %v", err)
+	}
+	c := dial(t, ep)
+	if got := c.Hooks(); got != allHooks {
+		t.Fatalf("Client.Hooks() = %+v, want %+v", got, allHooks)
+	}
+
+	proxyClient := &http.Client{Transport: ep.Proxy()}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://tools.sidecar.internal/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(hosttools.HeaderToken, "spoofed-token")
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		t.Fatalf("Endpoint.Proxy() initialize error = %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Endpoint.Proxy() initialize status = %d, want 200", resp.StatusCode)
+	}
+
+	if _, err := base.WithToken("bad\r\ntoken"); err == nil {
+		t.Fatalf("Endpoint.WithToken(invalid) error = nil, want an error")
+	}
+}

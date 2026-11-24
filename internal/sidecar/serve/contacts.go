@@ -15,15 +15,12 @@
 package serve
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	neturl "net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -33,10 +30,10 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/contact"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/names"
 )
@@ -76,51 +73,89 @@ type ContactStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// resolveContacts checks the --contact and --contact-auth flags of cfg and
-// reads the auth values they name.
-func resolveContacts(ctx context.Context, cfg Config) ([]contact.Entry, error) {
+// parsedContactAuth holds a validated --contact-auth flag before reading
+// secrets from stdin.
+type parsedContactAuth struct {
+	index int
+	value string
+}
+
+// parseContacts validates the --contact and --contact-auth flags of cfg
+// without reading from stdin.
+func parseContacts(cfg Config) ([]contact.Entry, []parsedContactAuth, error) {
 	if len(cfg.Contacts) > contact.MaxContacts {
-		return nil, usagef("%d --contact flags: a2a-serve-sidecar takes at most %d", len(cfg.Contacts), contact.MaxContacts)
+		return nil, nil, usagef("%d --contact flags: a2a-serve-sidecar takes at most %d", len(cfg.Contacts), contact.MaxContacts)
 	}
 	var out []contact.Entry
 	for _, v := range cfg.Contacts {
 		name, u, ok := strings.Cut(v, "=")
 		if !ok || name == "" || u == "" {
-			return nil, usagef("invalid --contact: want name=url, such as reviewer=https://reviewer.example.com")
+			return nil, nil, usagef("invalid --contact: want name=url, such as reviewer=https://reviewer.example.com")
 		}
 		if !names.Valid(name) {
-			return nil, usagef("invalid --contact name: want a name of %s, then =url", names.Rule)
+			return nil, nil, usagef("invalid --contact name: want a name of %s, then =url", names.Rule)
 		}
 		if slices.ContainsFunc(out, func(e contact.Entry) bool { return strings.EqualFold(e.Name, name) }) {
-			return nil, usagef("--contact names %s twice; give each contact one URL", name)
+			return nil, nil, usagef("--contact names %s twice; give each contact one URL", name)
 		}
 		if err := checkContactURL(name, u); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, contact.Entry{Name: name, URL: u})
 	}
-	stdin := &stdinSecret{in: cfg.Stdin, prompt: cfg.Stderr}
 	seen := map[string]bool{}
+	var auths []parsedContactAuth
 	for _, v := range cfg.ContactAuth {
 		name, value, ok := strings.Cut(v, "=")
 		if !ok || name == "" {
-			return nil, usagef("invalid --contact-auth: want name=value, such as reviewer=\"Bearer env:REVIEWER_TOKEN\"")
+			return nil, nil, usagef("invalid --contact-auth: want name=value, such as reviewer=\"Bearer env:REVIEWER_TOKEN\"")
 		}
 		i := slices.IndexFunc(out, func(e contact.Entry) bool { return strings.EqualFold(e.Name, name) })
 		if i < 0 {
-			return nil, usagef("--contact-auth names a contact that no --contact names; the contacts are: %s", contactNames(out))
+			return nil, nil, usagef("--contact-auth names a contact that no --contact names; the contacts are: %s", contactNames(out))
 		}
 		if seen[out[i].Name] {
-			return nil, usagef("--contact-auth names %s twice; give each contact one header value", out[i].Name)
+			return nil, nil, usagef("--contact-auth names %s twice; give each contact one header value", out[i].Name)
 		}
 		seen[out[i].Name] = true
-		auth, err := resolveAuth(ctx, cfg, out[i].Name, value, stdin)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Auth = auth
+		auths = append(auths, parsedContactAuth{index: i, value: value})
 	}
-	return out, nil
+	return out, auths, nil
+}
+
+// resolveContactAuths reads the auth values of auths into entries, and attaches
+// hostToken to loopback http:// contacts that have no explicit --contact-auth.
+func resolveContactAuths(ctx context.Context, cfg Config, entries []contact.Entry, auths []parsedContactAuth, hostToken string, stdin *stdinSecret) error {
+	for _, a := range auths {
+		auth, err := resolveAuth(ctx, cfg, entries[a.index].Name, a.value, stdin)
+		if err != nil {
+			return err
+		}
+		entries[a.index].Auth = auth
+	}
+	if hostToken != "" {
+		for i := range entries {
+			if isLoopbackHTTP(entries[i].URL) && entries[i].Auth == "" {
+				entries[i].Headers = http.Header{egress.ProxyHeaderToken: {hostToken}}
+			}
+		}
+	}
+	return nil
+}
+
+// contactsNeedHostToken reports whether any contact is a loopback http://
+// endpoint without an explicit --contact-auth override.
+func contactsNeedHostToken(entries []contact.Entry, auths []parsedContactAuth) bool {
+	hasAuth := make([]bool, len(entries))
+	for _, a := range auths {
+		hasAuth[a.index] = true
+	}
+	for i, e := range entries {
+		if isLoopbackHTTP(e.URL) && !hasAuth[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // contactNames lists the names of entries for an error, which leaves out
@@ -136,8 +171,9 @@ func contactNames(entries []contact.Entry) string {
 	return strings.Join(out, ", ")
 }
 
-// checkContactURL refuses a contact URL that isn't an https:// card URL or
-// a unix:/// socket. The errors leave the URL out, which may carry secrets.
+// checkContactURL refuses a contact URL that isn't an https:// card URL, a
+// loopback http:// URL, or a unix:/// socket. The errors leave the URL out,
+// which may carry secrets.
 func checkContactURL(name, v string) error {
 	u, err := neturl.Parse(v)
 	if err != nil {
@@ -146,14 +182,16 @@ func checkContactURL(name, v string) error {
 	switch {
 	case u.Scheme == "https" && u.Host != "":
 		return nil
+	case u.Scheme == "http" && u.Host != "" && loopback(u.Hostname()):
+		return nil
 	case u.Scheme == "unix" && u.Host == "" && filepath.IsAbs(u.Path):
 		return nil
 	case u.Scheme == "unix":
 		return usagef("invalid --contact %s: want unix:///absolute/path", name)
 	case u.Scheme == "http":
-		return usagef("invalid --contact %s: a2a-serve-sidecar calls contacts over https:// or a unix:/// socket, so that their auth stays private; serve a local agent on a socket", name)
+		return usagef("invalid --contact %s: a2a-serve-sidecar calls contacts over https://, loopback http://, or a unix:/// socket, so that their auth stays private", name)
 	}
-	return usagef("invalid --contact %s: the URL must start with https:// or unix:///", name)
+	return usagef("invalid --contact %s: the URL must start with https://, loopback http://, or unix:///", name)
 }
 
 // resolveAuth returns the header value of --contact-auth for the contact
@@ -167,7 +205,7 @@ func resolveAuth(ctx context.Context, cfg Config, name, value string, stdin *std
 	}
 	switch {
 	case last == "-":
-		secret, err := stdin.read(ctx, name)
+		secret, err := stdin.read(ctx, "contact-auth", "--contact-auth "+name, "pass the others as env:VAR")
 		if err != nil {
 			return "", err
 		}
@@ -189,101 +227,6 @@ func resolveAuth(ctx context.Context, cfg Config, name, value string, stdin *std
 		return "", usagef("--contact-auth %s: the header value has a line break", name)
 	}
 	return auth, nil
-}
-
-// maxStdinSecret bounds the line of a --contact-auth value of -.
-const maxStdinSecret = 64 << 10
-
-// stdinSecret reads the one --contact-auth value of - from stdin: a line,
-// or a prompt without echo on a terminal.
-type stdinSecret struct {
-	in       io.Reader
-	prompt   io.Writer
-	consumed bool
-}
-
-// read returns the value, or ctx's error once ctx ends first. The read
-// that ctx abandons stays blocked on stdin until the process exits.
-func (s *stdinSecret) read(ctx context.Context, name string) (string, error) {
-	if s.consumed {
-		return "", usagef("--contact-auth %s: only one --contact-auth can read its value from stdin; pass the others as env:VAR", name)
-	}
-	s.consumed = true
-	if s.in == nil {
-		return "", usagef("--contact-auth %s: - reads the value from stdin, which a2a-serve-sidecar doesn't have here", name)
-	}
-	read := func() (string, error) { return readLine(s.in, name) }
-	if f, ok := s.in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		state, err := term.GetState(int(f.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("--contact-auth %s: reading the prompt: %w", name, err)
-		}
-		defer func() {
-			if ctx.Err() == nil {
-				return
-			}
-			if err := term.Restore(int(f.Fd()), state); err != nil {
-				slog.Warn("restoring the terminal", "error", err)
-			}
-		}()
-		read = func() (string, error) { return s.readTerminal(f, name) }
-	}
-	type result struct {
-		value string
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		v, err := read()
-		done <- result{v, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case r := <-done:
-		return r.value, r.err
-	}
-}
-
-// readLine reads the first line of in, of at most maxStdinSecret bytes.
-func readLine(in io.Reader, name string) (string, error) {
-	line, err := bufio.NewReader(io.LimitReader(in, maxStdinSecret+1)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("--contact-auth %s: reading stdin: %w", name, err)
-	}
-	line = strings.TrimRight(line, "\r\n")
-	if len(line) > maxStdinSecret {
-		return "", usagef("--contact-auth %s: the line on stdin is longer than 64 KiB", name)
-	}
-	if line == "" {
-		return "", usagef("--contact-auth %s: stdin had no value", name)
-	}
-	return line, nil
-}
-
-func (s *stdinSecret) readTerminal(f *os.File, name string) (string, error) {
-	if s.prompt != nil {
-		if _, err := fmt.Fprintf(s.prompt, "--contact-auth %s: ", name); err != nil {
-			return "", err
-		}
-	}
-	b, err := term.ReadPassword(int(f.Fd()))
-	if s.prompt != nil {
-		if _, perr := fmt.Fprintln(s.prompt); perr != nil {
-			return "", perr
-		}
-	}
-	if err != nil {
-		return "", fmt.Errorf("--contact-auth %s: reading the prompt: %w", name, err)
-	}
-	v := strings.TrimSpace(string(b))
-	if v == "" {
-		return "", usagef("--contact-auth %s: empty value", name)
-	}
-	if len(v) > maxStdinSecret {
-		return "", usagef("--contact-auth %s: the value is longer than 64 KiB", name)
-	}
-	return v, nil
 }
 
 // contacts are the contacts of the agent: their directory, which fetches

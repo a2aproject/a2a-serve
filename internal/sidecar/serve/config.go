@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	neturl "net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/contact"
@@ -116,7 +118,8 @@ type Config struct {
 
 	// Getenv reads the variables of Secrets, ModelKeys and ContactAuth.
 	Getenv func(string) string
-	// Stdin is where a ContactAuth value of - is read from.
+	// Stdin is where the loopback host token or a ContactAuth value of - is
+	// read from.
 	Stdin io.Reader
 	// Stderr receives the logs, the image pulls and the stderr of the
 	// agent.
@@ -149,6 +152,7 @@ type settings struct {
 	workspace        workspace
 	tools            *hosttools.Endpoint
 	contacts         []contact.Entry
+	hostToken        string
 	listen           address
 	maxProcesses     int
 	home             string
@@ -208,7 +212,8 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
 		return settings{}, err
 	}
-	if s.contacts, err = resolveContacts(ctx, cfg); err != nil {
+	contacts, contactAuths, err := parseContacts(cfg)
+	if err != nil {
 		return settings{}, err
 	}
 	if s.listen, err = parseListen(cfg.Listen); err != nil {
@@ -221,7 +226,78 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.maxProcesses < 1 || s.maxProcesses > maxMaxProcesses {
 		return settings{}, usagef("invalid --max-processes %d: want 1 to %d", cfg.MaxProcesses, maxMaxProcesses)
 	}
+	stdin := &stdinSecret{in: cfg.Stdin, prompt: cfg.Stderr}
+	if needsHostToken(cfg, s, contacts, contactAuths) {
+		token, err := stdin.read(ctx, "host-token", "loopback host token", "")
+		if err != nil {
+			return settings{}, err
+		}
+		if !httpguts.ValidHeaderFieldValue(token) {
+			return settings{}, usagef("loopback host token: has a character that a header can't carry")
+		}
+		s.hostToken = token
+	}
+	if err := resolveContactAuths(ctx, cfg, contacts, contactAuths, s.hostToken, stdin); err != nil {
+		return settings{}, err
+	}
+	s.contacts = contacts
+	if s.hostToken != "" {
+		for i := range s.egressMiddleware {
+			if isLoopbackHTTP(s.egressMiddleware[i].URL) {
+				s.egressMiddleware[i].Token = s.hostToken
+			}
+		}
+		if s.workspace.kind == WorkspaceURL && isLoopbackHTTP(cfg.Workspace) {
+			if err := s.workspace.withToken(cfg.Workspace, s.hostToken); err != nil {
+				return settings{}, err
+			}
+		}
+		if s.tools != nil && isLoopbackHTTP(cfg.Tools) {
+			ep, err := s.tools.WithToken(s.hostToken)
+			if err != nil {
+				return settings{}, usagef("invalid loopback host token: %w", err)
+			}
+			s.tools = &ep
+		}
+	}
 	return s, nil
+}
+
+// needsHostToken reports whether any configured host control endpoint is a
+// loopback http:// URL that needs the host's run-scoped token from stdin.
+func needsHostToken(cfg Config, s settings, contacts []contact.Entry, auths []parsedContactAuth) bool {
+	if isLoopbackHTTP(s.egressProxy) {
+		return true
+	}
+	for _, e := range s.egressMiddleware {
+		if isLoopbackHTTP(e.URL) {
+			return true
+		}
+	}
+	if s.workspace.kind == WorkspaceURL && isLoopbackHTTP(cfg.Workspace) {
+		return true
+	}
+	if s.tools != nil && isLoopbackHTTP(cfg.Tools) {
+		return true
+	}
+	return contactsNeedHostToken(contacts, auths)
+}
+
+// isLoopbackHTTP reports whether rawURL is an http:// URL targeting a loopback
+// host.
+func isLoopbackHTTP(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := neturl.Parse(rawURL)
+	return err == nil && u.Scheme == "http" && u.Host != "" && loopback(u.Hostname())
+}
+
+func hostTokenIfLoopback(rawURL, token string) string {
+	if isLoopbackHTTP(rawURL) {
+		return token
+	}
+	return ""
 }
 
 func resolveSandbox(cfg Config) (string, error) {
@@ -392,8 +468,7 @@ func (cfg Config) getenv(name string) string {
 	return cfg.Getenv(name)
 }
 
-// parseListen parses unix:///path, or host:port with a loopback host:
-// the endpoint has no authentication.
+// parseListen parses unix:///path, or host:port with a loopback host.
 func parseListen(v string) (address, error) {
 	if v == "" {
 		v = DefaultListen
@@ -412,7 +487,7 @@ func parseListen(v string) (address, error) {
 		return address{}, usagef("invalid --listen %q: the port isn't a number from 0 to 65535", v)
 	}
 	if !loopback(host) {
-		return address{}, usagef("invalid --listen %q: a2a-serve-sidecar doesn't authenticate callers, so it listens only on a loopback address, such as %s, or a Unix socket", v, DefaultListen)
+		return address{}, usagef("invalid --listen %q: a2a-serve-sidecar listens only on a loopback address, such as %s, or a Unix socket", v, DefaultListen)
 	}
 	return address{network: "tcp", addr: v}, nil
 }

@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -54,6 +55,7 @@ func TestResolveInjectHeaders(t *testing.T) {
 			"api.anthropic.com=http://127.0.0.1:9000/anthropic",
 		},
 		Getenv: func(name string) string { return env[name] },
+		Stdin:  strings.NewReader("host-token\n"),
 	}
 
 	got, err := cfg.resolve(context.Background())

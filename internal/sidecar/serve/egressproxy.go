@@ -96,7 +96,7 @@ func newBoundary(s settings, log *slog.Logger, turns *turns, wrap func(egress.Ro
 		err   error
 	)
 	if s.egressProxy != "" {
-		if proxy, err = egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task}); err != nil {
+		if proxy, err = egress.NewProxyRouter(egress.ProxyConfig{URL: s.egressProxy, Task: turns.task, Token: hostTokenIfLoopback(s.egressProxy, s.hostToken)}); err != nil {
 			return nil, nil, nil, err
 		}
 		r = proxy

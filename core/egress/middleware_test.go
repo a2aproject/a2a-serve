@@ -403,3 +403,57 @@ func TestMiddlewareRouterCAConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestMiddlewareRouterSendsTokenAndStripsSpoofedToken(t *testing.T) {
+	t.Parallel()
+	const hostToken = "mw-host-token"
+	var (
+		mu       sync.Mutex
+		gotToken string
+		gotAuth  string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotToken = r.Header.Get(egress.ProxyHeaderToken)
+		gotAuth = r.Header.Get("Authorization")
+		mu.Unlock()
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			t.Errorf("writing answer error = %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	mr, err := egress.NewMiddlewareRouter(egress.MiddlewareConfig{
+		Entries: []egress.MiddlewareEntry{{Host: "api.anthropic.com", URL: srv.URL, Token: hostToken}},
+	})
+	if err != nil {
+		t.Fatalf("egress.NewMiddlewareRouter() error = %v", err)
+	}
+	t.Cleanup(mr.CloseIdleConnections)
+	ep, addr := openEndpoint(t, newRouterBoundary(t, mr), "ctx-1")
+	c := client(t, addr, ep.CA())
+
+	status, _, err := get(t, c, "https://api.anthropic.com/v1/messages", http.Header{
+		"Authorization":         {"Bearer agent-placeholder"},
+		egress.ProxyHeaderToken: {"spoofed-token"},
+	})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("GET = %d, %v, want 200", status, err)
+	}
+	mu.Lock()
+	token, auth := gotToken, gotAuth
+	mu.Unlock()
+	if token != hostToken || auth != "Bearer agent-placeholder" {
+		t.Fatalf("middleware got token=%q auth=%q, want token=%q auth=%q", token, auth, hostToken, "Bearer agent-placeholder")
+	}
+}
+
+func TestNewMiddlewareRouterRejectsInvalidToken(t *testing.T) {
+	t.Parallel()
+	_, err := egress.NewMiddlewareRouter(egress.MiddlewareConfig{
+		Entries: []egress.MiddlewareEntry{{Host: "api.anthropic.com", URL: "http://127.0.0.1:9000", Token: "secret\r\nX-Bad: 1"}},
+	})
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("egress.NewMiddlewareRouter() error = %v, want an error without echoing the token", err)
+	}
+}

@@ -72,6 +72,9 @@ type Config struct {
 	// Workspace is the URL of the file server of the workspace; "" skips
 	// its tests.
 	Workspace string
+	// Token, when non-empty, is sent in A2A-Sidecar-Token on every request
+	// and checked to be required by each endpoint.
+	Token string
 }
 
 // timeout bounds each step; a2a-serve-sidecar waits less for a decision.
@@ -97,13 +100,13 @@ func Run(t *testing.T, cfg Config) {
 		if err != nil {
 			t.Fatalf("invalid tools URL: %v", err)
 		}
-		testTools(t, ep)
+		testTools(t, ep, cfg.Token)
 	})
 	t.Run("workspace", func(t *testing.T) {
 		if cfg.Workspace == "" {
 			t.Skip("no workspace")
 		}
-		testWorkspace(t, cfg.Workspace)
+		testWorkspace(t, cfg.Workspace, cfg.Token)
 	})
 }
 
@@ -115,7 +118,13 @@ func testEgressProxy(t *testing.T, cfg Config) {
 	if cfg.Forward && !cfg.AllowLoopback {
 		t.Fatal("Forward needs AllowLoopback: the suite's upstream listens on 127.0.0.1")
 	}
-	p := proxy{network: network, addr: addr}
+	p := proxy{network: network, addr: addr, token: cfg.Token}
+	t.Run("egress proxy refuses missing or wrong token", func(t *testing.T) {
+		if cfg.Token == "" {
+			t.Skip("no token configured")
+		}
+		testProxyAuth(t, p)
+	})
 	t.Run("egress proxy refuses", func(t *testing.T) {
 		if cfg.Refuse == "" {
 			t.Skip("no host to refuse")
@@ -154,7 +163,14 @@ func proxyAddr(u string) (string, string, error) {
 	return "", "", fmt.Errorf("invalid egress proxy URL %q: want http://host:port or unix:///path", u)
 }
 
-type proxy struct{ network, addr string }
+type proxy struct{ network, addr, token string }
+
+func (p proxy) tokenHeader() string {
+	if p.token == "" {
+		return ""
+	}
+	return egress.ProxyHeaderToken + ": " + p.token + "\r\n"
+}
 
 func (p proxy) dial(t *testing.T) (net.Conn, *bufio.Reader) {
 	t.Helper()
@@ -177,11 +193,19 @@ func (p proxy) dial(t *testing.T) (net.Conn, *bufio.Reader) {
 // and returns the answer.
 func (p proxy) connect(t *testing.T, target string, offered bool) *http.Response {
 	t.Helper()
+	return p.connectWithToken(t, target, offered, p.token)
+}
+
+func (p proxy) connectWithToken(t *testing.T, target string, offered bool, token string) *http.Response {
+	t.Helper()
 	c, br := p.dial(t)
 	req := &http.Request{Method: http.MethodConnect, Host: target, Header: http.Header{egress.ProxyHeaderContext: {contextID}}}
 	req.URL = &neturl.URL{Opaque: target}
 	if offered {
 		req.Header.Set(egress.ProxyHeaderIntercept, egress.ProxyInterceptOffered)
+	}
+	if token != "" {
+		req.Header.Set(egress.ProxyHeaderToken, token)
 	}
 	if err := req.Write(c); err != nil {
 		t.Fatalf("sending CONNECT %s error = %v", target, err)
@@ -191,6 +215,21 @@ func (p proxy) connect(t *testing.T, target string, offered bool) *http.Response
 		t.Fatalf("reading the answer to CONNECT %s error = %v, want an answer within %v", target, err, timeout)
 	}
 	return resp
+}
+
+func testProxyAuth(t *testing.T, p proxy) {
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{name: "missing", token: ""},
+		{name: "wrong", token: p.token + "-wrong"},
+	} {
+		resp := p.connectWithToken(t, "example.com:443", true, tc.token)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("CONNECT with %s token status = %d, want 401", tc.name, resp.StatusCode)
+		}
+	}
 }
 
 func testRefuse(t *testing.T, p proxy, target string) {
@@ -221,7 +260,7 @@ func testForward(t *testing.T, p proxy) {
 	upstream := serveUpstream(t, next)
 	c, br := p.dial(t)
 	u := "http://" + upstream + "/events"
-	if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n%s: conformance-task\r\n\r\n", u, upstream, egress.ProxyHeaderContext, contextID, egress.ProxyHeaderTask); err != nil {
+	if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n%s: conformance-task\r\n%s\r\n", u, upstream, egress.ProxyHeaderContext, contextID, egress.ProxyHeaderTask, p.tokenHeader()); err != nil {
 		t.Fatalf("sending GET %s error = %v", u, err)
 	}
 	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
@@ -278,7 +317,7 @@ func testLoopback(t *testing.T, p proxy) {
 		}
 		c, br := p.dial(t)
 		u := "http://" + target + "/"
-		if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n\r\n", u, target, egress.ProxyHeaderContext, contextID); err != nil {
+		if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n%s\r\n", u, target, egress.ProxyHeaderContext, contextID, p.tokenHeader()); err != nil {
 			t.Fatalf("sending GET %s error = %v", u, err)
 		}
 		resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
@@ -298,7 +337,7 @@ func testLoopback(t *testing.T, p proxy) {
 
 func testMalformed(t *testing.T, p proxy) {
 	c, br := p.dial(t)
-	if _, err := io.WriteString(c, "CONNECT no-port HTTP/1.1\r\nHost: no-port\r\n\r\n"); err != nil {
+	if _, err := io.WriteString(c, "CONNECT no-port HTTP/1.1\r\nHost: no-port\r\n"+p.tokenHeader()+"\r\n"); err != nil {
 		t.Fatalf("sending a malformed CONNECT error = %v", err)
 	}
 	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})

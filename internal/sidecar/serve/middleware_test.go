@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,7 @@ func TestResolveEgressMiddleware(t *testing.T) {
 			"custom.internal=unix:///run/host/custom.sock",
 		},
 		Getenv: func(name string) string { return env[name] },
+		Stdin:  strings.NewReader("host-token\n"),
 	}
 
 	got, err := cfg.resolve(context.Background())
@@ -71,8 +73,8 @@ func TestResolveEgressMiddleware(t *testing.T) {
 	}
 
 	wantMW := []egress.MiddlewareEntry{
-		{Host: "api.anthropic.com", URL: "http://127.0.0.1:9000/anthropic"},
-		{Host: "generativelanguage.googleapis.com", URL: "http://127.0.0.1:9000/gemini"},
+		{Host: "api.anthropic.com", URL: "http://127.0.0.1:9000/anthropic", Token: "host-token"},
+		{Host: "generativelanguage.googleapis.com", URL: "http://127.0.0.1:9000/gemini", Token: "host-token"},
 		{Host: "custom.internal", URL: "unix:///run/host/custom.sock"},
 	}
 	if diff := cmp.Diff(wantMW, got.egressMiddleware); diff != "" {
@@ -93,10 +95,11 @@ func TestNewBoundaryComposesMiddlewareAndModelKeys(t *testing.T) {
 	t.Parallel()
 	var gotReq string
 	mwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotReq = fmt.Sprintf("%s %s host=%s ctx=%s task=%s",
+		gotReq = fmt.Sprintf("%s %s host=%s ctx=%s task=%s token=%s",
 			r.Method, r.RequestURI, r.Host,
 			r.Header.Get(egress.ProxyHeaderContext),
-			r.Header.Get(egress.ProxyHeaderTask))
+			r.Header.Get(egress.ProxyHeaderTask),
+			r.Header.Get(egress.ProxyHeaderToken))
 		if _, err := io.WriteString(w, "ok-from-mw"); err != nil {
 			t.Errorf("writing middleware answer error = %v", err)
 		}
@@ -111,6 +114,7 @@ func TestNewBoundaryComposesMiddlewareAndModelKeys(t *testing.T) {
 		ModelKeys:        []string{"openai=OPENAI_KEY"},
 		EgressMiddleware: []string{"api.anthropic.com=" + mwSrv.URL + "/v2"},
 		Getenv:           func(name string) string { return map[string]string{"OPENAI_KEY": "sk-real"}[name] },
+		Stdin:            strings.NewReader("mw-token\n"),
 	}
 	set, err := cfg.resolve(context.Background())
 	if err != nil {
@@ -210,7 +214,7 @@ func TestNewBoundaryComposesMiddlewareAndModelKeys(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusOK || string(body) != "ok-from-mw" {
 		t.Fatalf("GET https://api.anthropic.com/v1/models = %d %q, %v, want 200 %q", resp.StatusCode, string(body), err, "ok-from-mw")
 	}
-	wantReq := "GET /v2/v1/models?limit=5 host=api.anthropic.com ctx=ctx-42 task=task-99"
+	wantReq := "GET /v2/v1/models?limit=5 host=api.anthropic.com ctx=ctx-42 task=task-99 token=mw-token"
 	if gotReq != wantReq {
 		t.Fatalf("middleware request = %q, want %q", gotReq, wantReq)
 	}

@@ -15,12 +15,14 @@
 package serve
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -83,9 +85,9 @@ func url(ln net.Listener) string {
 }
 
 // routes serves the agent card, and the A2A handler over JSON-RPC and REST.
-// Over TCP, it serves only requests for loopback hosts, so that a web page
-// can't rebind its own name to the endpoint.
-func routes(h a2asrv.RequestHandler, card func(baseURL string) *a2a.AgentCard, tcp bool) http.Handler {
+// Over TCP, it serves only requests for loopback hosts, and when token is
+// non-empty it requires Authorization: Bearer <token> on every request.
+func routes(h a2asrv.RequestHandler, card func(baseURL string) *a2a.AgentCard, tcp bool, token string) http.Handler {
 	mux := http.NewServeMux()
 	cardHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a2asrv.NewStaticAgentCardHandler(card("http://"+r.Host)).ServeHTTP(w, r)
@@ -96,6 +98,9 @@ func routes(h a2asrv.RequestHandler, card func(baseURL string) *a2a.AgentCard, t
 	mux.Handle("POST /{$}", a2aRoute(a2asrv.NewJSONRPCHandler(h, a2asrv.WithTransportKeepAlive(keepAlive))))
 	mux.Handle("/", a2aRoute(a2asrv.NewRESTHandler(h, a2asrv.WithTransportKeepAlive(keepAlive))))
 	out := http.NewCrossOriginProtection().Handler(mux)
+	if token != "" {
+		out = requireToken(token, out)
+	}
 	if !tcp {
 		return out
 	}
@@ -110,6 +115,28 @@ func routes(h a2asrv.RequestHandler, card func(baseURL string) *a2a.AgentCard, t
 		}
 		out.ServeHTTP(w, r)
 	})
+}
+
+func requireToken(token string, next http.Handler) http.Handler {
+	want := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok := bearerToken(r.Header.Get("Authorization"))
+		if !ok || subtle.ConstantTimeCompare([]byte(got), want) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			jsonhttp.Error(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerToken(header string) (string, bool) {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(header), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	token = strings.TrimSpace(token)
+	return token, token != ""
 }
 
 // agentCard returns the card of agent served at baseURL.
