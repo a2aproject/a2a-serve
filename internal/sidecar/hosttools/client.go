@@ -46,9 +46,10 @@ const (
 	// to a loopback HTTP tools endpoint.
 	HeaderToken = "A2A-Sidecar-Token"
 	// HeaderContext carries the A2A context of the agent process that sent
-	// a request from the sandbox, and HeaderTask the task it works on.
+	// a request from the sandbox.
 	HeaderContext = egress.ProxyHeaderContext
-	HeaderTask    = egress.ProxyHeaderTask
+	// HeaderTask carries the task that the agent process works on.
+	HeaderTask = egress.ProxyHeaderTask
 	// OriginSidecar is the origin of a2a-serve-sidecar's own session.
 	OriginSidecar = "a2a-serve-sidecar"
 	// OriginSandbox is the origin of the agent's requests, which a2a-serve-sidecar
