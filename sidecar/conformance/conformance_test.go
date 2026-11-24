@@ -54,7 +54,7 @@ func TestConformance(t *testing.T) {
 	})
 	t.Run("reference host over loopback with token", func(t *testing.T) {
 		const tok = "conformance-loopback-token"
-		url := serveLoopbackRefhost(t, tok, refhost.ToolsConfig{Hooks: allHooks})
+		url := serveLoopbackRefhost(t, tok, false, refhost.ToolsConfig{Hooks: allHooks})
 		Run(t, Config{EgressProxy: url, Intercept: "api.anthropic.com:443", Refuse: "blocked.example:443", Tools: url, Workspace: url, Token: tok})
 	})
 	t.Run("file server over HTTP", func(t *testing.T) {
@@ -64,6 +64,10 @@ func TestConformance(t *testing.T) {
 	})
 	t.Run("reference host reaching loopback", func(t *testing.T) {
 		Run(t, Config{EgressProxy: serveRefhost(t, true, refhost.ToolsConfig{}), Forward: true, AllowLoopback: true})
+	})
+	t.Run("reference host reaching loopback over loopback with token", func(t *testing.T) {
+		const tok = "conformance-forward-token"
+		Run(t, Config{EgressProxy: serveLoopbackRefhost(t, tok, true, refhost.ToolsConfig{}), Forward: true, AllowLoopback: true, Token: tok})
 	})
 	t.Run("reference host with event streams", func(t *testing.T) {
 		Run(t, Config{Tools: serveRefhost(t, false, refhost.ToolsConfig{Hooks: allHooks, Stream: true})})
@@ -107,10 +111,13 @@ func serveRefhost(t *testing.T, allowPrivate bool, tools refhost.ToolsConfig) st
 	return "unix://" + sock
 }
 
-func serveLoopbackRefhost(t *testing.T, tok string, tools refhost.ToolsConfig) string {
+// serveLoopbackRefhost serves the reference host as serveRefhost does, on
+// 127.0.0.1 with tok as its loopback token. It returns its URL.
+func serveLoopbackRefhost(t *testing.T, tok string, allowPrivate bool, tools refhost.ToolsConfig) string {
 	t.Helper()
 	h := refhost.New(refhost.Config{
-		Token: tok,
+		Token:        tok,
+		AllowPrivate: allowPrivate,
 		Decide: func(c refhost.Connect) refhost.Decision {
 			if c.Target == "blocked.example:443" {
 				return refhost.Refuse("blocked.example is off limits")

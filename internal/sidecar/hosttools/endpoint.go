@@ -77,6 +77,10 @@ func (e Endpoint) WithToken(token string) (Endpoint, error) {
 	return e, nil
 }
 
+// Token returns the token that the endpoint's requests carry in
+// [HeaderToken], or "".
+func (e Endpoint) Token() string { return e.token }
+
 // URL returns the URL of the endpoint's requests, which reaches it only
 // through [Endpoint.Transport] for a Unix socket.
 func (e Endpoint) URL() string { return e.url.String() }

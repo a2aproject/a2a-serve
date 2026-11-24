@@ -146,7 +146,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 			c.Contacts = []string{"r=https://r.example.com"}
 			c.ContactAuth = []string{"r=Bearer -"}
 			c.Stdin = strings.NewReader("host-token\ncontact-token\n")
-		}, want: "stdin is already used by the loopback host token"},
+		}, want: "--contact-auth r: stdin carries the loopback host token; pass this value as env:VAR"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -86,7 +86,7 @@ func TestStartRefusesInvalidContacts(t *testing.T) {
 				c.ContactAuth = []string{"a=Bearer -", "b=Bearer -"}
 			},
 			stdin: secret + "\n" + secret + "\n",
-			want:  "--contact-auth b: only one --contact-auth can read its value from stdin",
+			want:  "--contact-auth b: only one --contact-auth can read its value from stdin; pass the others as env:VAR",
 		},
 		{
 			name: "auth from empty stdin",

@@ -124,7 +124,7 @@ func parseContacts(cfg Config) ([]contact.Entry, []parsedContactAuth, error) {
 }
 
 // resolveContactAuths reads the auth values of auths into entries, and attaches
-// hostToken to loopback http:// contacts that have no explicit --contact-auth.
+// hostToken to every loopback http:// contact, which the host serves.
 func resolveContactAuths(ctx context.Context, cfg Config, entries []contact.Entry, auths []parsedContactAuth, hostToken string, stdin *stdinSecret) error {
 	for _, a := range auths {
 		auth, err := resolveAuth(ctx, cfg, entries[a.index].Name, a.value, stdin)
@@ -133,29 +133,21 @@ func resolveContactAuths(ctx context.Context, cfg Config, entries []contact.Entr
 		}
 		entries[a.index].Auth = auth
 	}
-	if hostToken != "" {
-		for i := range entries {
-			if isLoopbackHTTP(entries[i].URL) && entries[i].Auth == "" {
-				entries[i].Headers = http.Header{egress.ProxyHeaderToken: {hostToken}}
-			}
+	if hostToken == "" {
+		return nil
+	}
+	for i := range entries {
+		if isLoopbackHTTP(entries[i].URL) {
+			entries[i].Headers = http.Header{egress.ProxyHeaderToken: {hostToken}}
 		}
 	}
 	return nil
 }
 
 // contactsNeedHostToken reports whether any contact is a loopback http://
-// endpoint without an explicit --contact-auth override.
-func contactsNeedHostToken(entries []contact.Entry, auths []parsedContactAuth) bool {
-	hasAuth := make([]bool, len(entries))
-	for _, a := range auths {
-		hasAuth[a.index] = true
-	}
-	for i, e := range entries {
-		if isLoopbackHTTP(e.URL) && !hasAuth[i] {
-			return true
-		}
-	}
-	return false
+// endpoint.
+func contactsNeedHostToken(entries []contact.Entry) bool {
+	return slices.ContainsFunc(entries, func(e contact.Entry) bool { return isLoopbackHTTP(e.URL) })
 }
 
 // contactNames lists the names of entries for an error, which leaves out
@@ -205,7 +197,7 @@ func resolveAuth(ctx context.Context, cfg Config, name, value string, stdin *std
 	}
 	switch {
 	case last == "-":
-		secret, err := stdin.read(ctx, "contact-auth", "--contact-auth "+name, "pass the others as env:VAR")
+		secret, err := stdin.read(ctx, "contact-auth", "--contact-auth "+name)
 		if err != nil {
 			return "", err
 		}

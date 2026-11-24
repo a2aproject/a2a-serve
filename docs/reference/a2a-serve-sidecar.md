@@ -66,7 +66,7 @@ The agent gets placeholder model keys, and the proxy adds the real ones. `--egre
 ```console
 $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
     --egress allowlist \
-    --egress-middleware api.anthropic.com=http://127.0.0.1:8080/anthropic \
+    --egress-middleware api.anthropic.com=unix:///run/host/anthropic.sock \
     --egress-inject-header api.github.com="Authorization:Bearer env:GH_TOKEN" \
     --listen unix:///tmp/a2a-serve-sidecar.sock
 ```
@@ -84,7 +84,15 @@ The endpoint serves A2A over JSON-RPC at `/` and over REST, and the agent card a
 Over loopback HTTP (`http://127.0.0.1` or `http://localhost`), each side authenticates the other with a run-scoped token:
 
 - **Host to sidecar:** When `--listen` is a loopback address, `a2a-serve-sidecar` generates a token and prints it in the ready line's `token` field. Send `Authorization: Bearer <token>` on every A2A request, including `GET /.well-known/agent-card.json`.
-- **Sidecar to host:** When any host control endpoint (`--egress-proxy`, `--egress-middleware`, `--tools`, a URL `--workspace`, or a loopback `http://` `--contact` without `--contact-auth`) uses loopback `http://`, write the host's token on one line to the sidecar's `stdin` before the ready line. `a2a-serve-sidecar` sends it in the `A2A-Sidecar-Token` header on every request to those loopback endpoints. Hosts that forward intercepted requests upstream must strip `A2A-Sidecar-Token`.
+- **Sidecar to host:** When `--egress-proxy`, `--egress-middleware`, `--tools`, a URL `--workspace` or a `--contact` is a loopback `http://` URL, write the host's token on one line to the sidecar's stdin. `a2a-serve-sidecar` reads it before the ready line and sends it in the `A2A-Sidecar-Token` header on every request to those endpoints. With `--sandbox local`, the agent connects to `--tools` itself and sends the token too.
+
+```console
+$ printf '%s\n' "$HOST_TOKEN" | a2a-serve-sidecar --agent opencode --workspace dir:$PWD \
+    --tools http://127.0.0.1:9000/mcp
+{"ready":true,"a2a":"http://127.0.0.1:41721","token":"Xk3…","sandbox":"docker (rootless)","workspace":"dir","workspace_sync":"turn","egress":"policy"}
+```
+
+Answer a request with a missing or wrong token with `401 Unauthorized`, and strip `A2A-Sidecar-Token` from the requests that you forward upstream. A loopback contact gets the token whether or not it has `--contact-auth`, so point loopback contacts only at agents that the host serves.
 
 Endpoints on `unix://` sockets use socket file permissions and need no token.
 
@@ -117,7 +125,7 @@ $ a2a-serve-sidecar --agent claude --workspace dir:$PWD \
 {"ready":true,"a2a":"unix:///tmp/a2a-serve-sidecar.sock","sandbox":"docker (rootless)","workspace":"dir","egress":"policy","contacts":[{"name":"reviewer","card":"ok"},{"name":"planner","card":"ok"}]}
 ```
 
-A contact is the `https://` URL of an agent card, a loopback `http://` URL, or a `unix://` socket that serves an agent. A loopback `http://` contact without `--contact-auth` gets the host's [loopback token](#loopback-authentication) in `A2A-Sidecar-Token`. The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. The agent never sees it.
+A contact is the `https://` URL of an agent card, a loopback `http://` URL, or a `unix://` socket that serves an agent. A loopback `http://` contact gets the host's [loopback token](#loopback-authentication). The value of `--contact-auth` may end in `env:VAR`, which reads the variable `VAR`, or `-`, which reads one line from stdin before the ready line. When stdin carries the loopback token, use `env:VAR`. The agent never sees the value.
 
 The agent's instructions list each contact with the description and skills from its card, and the agent calls one with the `a2a` CLI:
 

@@ -226,9 +226,9 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.maxProcesses < 1 || s.maxProcesses > maxMaxProcesses {
 		return settings{}, usagef("invalid --max-processes %d: want 1 to %d", cfg.MaxProcesses, maxMaxProcesses)
 	}
-	stdin := &stdinSecret{in: cfg.Stdin, prompt: cfg.Stderr}
-	if needsHostToken(cfg, s, contacts, contactAuths) {
-		token, err := stdin.read(ctx, "host-token", "loopback host token", "")
+	stdin := &stdinSecret{in: cfg.Stdin, prompt: cfg.Stderr, waitHint: stdinWaitHint}
+	if needsHostToken(cfg, s, contacts) {
+		token, err := stdin.read(ctx, "host-token", "loopback host token")
 		if err != nil {
 			return settings{}, err
 		}
@@ -265,7 +265,7 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 
 // needsHostToken reports whether any configured host control endpoint is a
 // loopback http:// URL that needs the host's run-scoped token from stdin.
-func needsHostToken(cfg Config, s settings, contacts []contact.Entry, auths []parsedContactAuth) bool {
+func needsHostToken(cfg Config, s settings, contacts []contact.Entry) bool {
 	if isLoopbackHTTP(s.egressProxy) {
 		return true
 	}
@@ -280,7 +280,7 @@ func needsHostToken(cfg Config, s settings, contacts []contact.Entry, auths []pa
 	if s.tools != nil && isLoopbackHTTP(cfg.Tools) {
 		return true
 	}
-	return contactsNeedHostToken(contacts, auths)
+	return contactsNeedHostToken(contacts)
 }
 
 // isLoopbackHTTP reports whether rawURL is an http:// URL targeting a loopback

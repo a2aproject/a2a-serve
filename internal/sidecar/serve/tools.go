@@ -80,10 +80,14 @@ func startTools(ctx context.Context, ep hosttools.Endpoint, version string, log 
 // server returns the MCP server of the tools endpoint as the agent
 // reaches it: at ToolsHost in a Docker sandbox, without the query of the
 // URL, which the boundary adds, and at the endpoint's own URL on this
-// machine.
+// machine, with the endpoint's token, which the boundary adds otherwise.
 func (t *hostTools) server(sandbox string) a2aserve.MCPServer {
 	if sandbox == SandboxLocal {
-		return a2aserve.MCPServer{Name: ToolsServer, URL: t.ep.URL()}
+		srv := a2aserve.MCPServer{Name: ToolsServer, URL: t.ep.URL()}
+		if tok := t.ep.Token(); tok != "" {
+			srv.Headers = map[string]string{hosttools.HeaderToken: tok}
+		}
+		return srv
 	}
 	return a2aserve.MCPServer{Name: ToolsServer, URL: "http://" + ToolsHost + t.ep.Path()}
 }

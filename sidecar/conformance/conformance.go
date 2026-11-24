@@ -257,7 +257,7 @@ func testIntercept(t *testing.T, p proxy, target string) {
 
 func testForward(t *testing.T, p proxy) {
 	next := make(chan struct{})
-	upstream := serveUpstream(t, next)
+	upstream, tokens := serveUpstream(t, next)
 	c, br := p.dial(t)
 	u := "http://" + upstream + "/events"
 	if _, err := fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s\r\n%s: %s\r\n%s: conformance-task\r\n%s\r\n", u, upstream, egress.ProxyHeaderContext, contextID, egress.ProxyHeaderTask, p.tokenHeader()); err != nil {
@@ -269,6 +269,9 @@ func testForward(t *testing.T, p proxy) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s through the proxy status = %d, want 200", u, resp.StatusCode)
+	}
+	if <-tokens {
+		t.Fatalf("GET %s reached the upstream with %s, want the proxy to strip it", u, egress.ProxyHeaderToken)
 	}
 	body := bufio.NewReader(resp.Body)
 	first, err := body.ReadString('\n')
@@ -350,14 +353,20 @@ func testMalformed(t *testing.T, p proxy) {
 }
 
 // serveUpstream serves /events on 127.0.0.1, which streams two events,
-// the second once next closes, and returns its address.
-func serveUpstream(t *testing.T, next <-chan struct{}) string {
+// the second once next closes. It returns its address, and a channel that
+// reports for each request whether it carried A2A-Sidecar-Token.
+func serveUpstream(t *testing.T, next <-chan struct{}) (string, <-chan bool) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	tokens := make(chan bool, 1)
 	srv := &http.Server{ReadHeaderTimeout: timeout, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case tokens <- r.Header.Get(egress.ProxyHeaderToken) != "":
+		default:
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if _, err := io.WriteString(w, "data: one\n\n"); err != nil {
 			return
@@ -388,5 +397,5 @@ func serveUpstream(t *testing.T, next <-chan struct{}) string {
 			t.Errorf("stopping the upstream error = %v", err)
 		}
 	})
-	return ln.Addr().String()
+	return ln.Addr().String(), tokens
 }

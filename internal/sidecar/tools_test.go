@@ -35,6 +35,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
+// toolsHostToken is the loopback host token that startWithTools writes to
+// the stdin of a2a-serve-sidecar.
+const toolsHostToken = "test-host-token"
+
 // startWithTools runs a2a-serve-sidecar locally with fakeacp and --tools of host,
 // and returns its client.
 func startWithTools(t *testing.T, host *refhost.Tools) *a2aclient.Client {
@@ -42,7 +46,7 @@ func startWithTools(t *testing.T, host *refhost.Tools) *a2aclient.Client {
 	srv := httptest.NewServer(host)
 	t.Cleanup(srv.Close)
 	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
-	r := startWithStdin(t, "test-host-token\n", "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
+	r := startWithStdin(t, toolsHostToken+"\n", "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
 	if !r.ready.Ready {
 		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
 	}
@@ -112,6 +116,16 @@ func TestToolsGivesTheAgentTheHostAndItsHooks(t *testing.T) {
 	wantAfter := []hosttools.AfterToolParams{{Context: "context-a", Task: string(task.ID), Call: hosttools.AfterCall{ID: "m1", Kind: "other", Title: "host_echo", Status: "completed", Output: "echo: hi"}}}
 	if diff := cmp.Diff(wantAfter, params[hosttools.AfterToolParams](t, host, hosttools.MethodAfterTool)); diff != "" {
 		t.Fatalf("hooks/afterTool wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestToolsGivesTheLocalAgentTheHostToken(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}, Token: toolsHostToken})
+	c := startWithTools(t, host)
+	task := sendFor(t, c, "context-a", "mcpcall host echo hi")
+	if got := testutil.AllArtifactText(task); task.Status.State != a2a.TaskStateCompleted || got != "mcp result: echo: hi" {
+		t.Fatalf("Client.SendMessage(mcpcall) = %v with %q, want completed with %q", task.Status.State, got, "mcp result: echo: hi")
 	}
 }
 
