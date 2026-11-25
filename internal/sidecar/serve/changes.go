@@ -103,7 +103,7 @@ func (c *changesets) synced(ctx context.Context, key string, changes []fsys.Info
 	if len(changes) == 0 {
 		return
 	}
-	c.store.attachArtifact(id, c.artifact(ctx, changes))
+	c.store.attachArtifact(id, c.artifact(withWorkspaceContext(ctx, key), changes))
 }
 
 // inGitDir reports whether the slash-separated path p is in a .git

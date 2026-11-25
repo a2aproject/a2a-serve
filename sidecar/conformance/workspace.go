@@ -31,6 +31,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
 )
 
 // changesWait is how long the suite asks the file server to wait for a
@@ -69,11 +71,12 @@ type changes struct {
 // fileServer sends requests of the workspace protocol to a host's file
 // server.
 type fileServer struct {
-	base string
-	http *http.Client
+	base  string
+	token string
+	http  *http.Client
 }
 
-func newFileServer(rawURL string) (*fileServer, error) {
+func newFileServer(rawURL, token string) (*fileServer, error) {
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid workspace URL: %w", err)
@@ -84,7 +87,7 @@ func newFileServer(rawURL string) (*fileServer, error) {
 		if u.Host == "" {
 			return nil, fmt.Errorf("invalid workspace URL %q: no host", rawURL)
 		}
-		return &fileServer{base: strings.TrimSuffix(u.String(), "/"), http: &http.Client{Transport: transport}}, nil
+		return &fileServer{base: strings.TrimSuffix(u.String(), "/"), token: token, http: &http.Client{Transport: transport}}, nil
 	case "unix":
 		if u.Host != "" || u.Path == "" {
 			return nil, fmt.Errorf("invalid workspace URL %q: want unix:///path", rawURL)
@@ -94,7 +97,7 @@ func newFileServer(rawURL string) (*fileServer, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socket)
 		}
-		return &fileServer{base: "http://fsys", http: &http.Client{Transport: transport}}, nil
+		return &fileServer{base: "http://fsys", token: token, http: &http.Client{Transport: transport}}, nil
 	}
 	return nil, fmt.Errorf("invalid workspace URL %q: want http://, https:// or unix:///path", rawURL)
 }
@@ -120,6 +123,9 @@ func (f *fileServer) send(ctx context.Context, method, route string, query netur
 	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err
+	}
+	if f.token != "" {
+		req.Header.Set(egress.ProxyHeaderToken, f.token)
 	}
 	maps.Copy(req.Header, header)
 	resp, err := f.http.Do(req)
@@ -209,10 +215,30 @@ func fileOf(p string) neturl.Values { return neturl.Values{"path": {p}, "mode": 
 
 func quoted(version string) http.Header { return http.Header{"If-Match": {`"` + version + `"`}} }
 
-func testWorkspace(t *testing.T, rawURL string) {
-	f, err := newFileServer(rawURL)
+func testWorkspace(t *testing.T, rawURL, token string) {
+	f, err := newFileServer(rawURL, token)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if token != "" {
+		t.Run("refuses missing or wrong token", func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				tok  string
+			}{
+				{name: "missing", tok: ""},
+				{name: "wrong", tok: token + "-wrong"},
+			} {
+				bad, err := newFileServer(rawURL, tc.tok)
+				if err != nil {
+					t.Fatal(err)
+				}
+				status, _, _ := bad.do(t, http.MethodGet, "/stat", pathOf("."), nil, nil)
+				if status != http.StatusUnauthorized {
+					t.Fatalf("GET /stat with %s token status = %d, want 401", tc.name, status)
+				}
+			}
+		})
 	}
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {

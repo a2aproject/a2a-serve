@@ -498,3 +498,56 @@ func TestNewProxyRouterChecksTheURL(t *testing.T) {
 		})
 	}
 }
+
+func TestProxyRouterSendsTokenAndStripsSpoofedToken(t *testing.T) {
+	t.Parallel()
+	const hostToken = "run-scoped-host-token"
+	var (
+		mu             sync.Mutex
+		connectToken   string
+		forwardedToken string
+	)
+	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method == http.MethodConnect {
+			connectToken = r.Header.Get(egress.ProxyHeaderToken)
+			mu.Unlock()
+			w.Header().Set(egress.ProxyHeaderIntercept, egress.ProxyInterceptAccept)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		forwardedToken = r.Header.Get(egress.ProxyHeaderToken)
+		mu.Unlock()
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			t.Errorf("writing answer error = %v", err)
+		}
+	})
+	addr, ca := proxyEndpoint(t, egress.ProxyConfig{URL: serveProxy(t, listenTCP(t), proxyHandler), Token: hostToken}, 5*time.Second, "ctx-1")
+	c := client(t, addr, ca)
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.anthropic.com/v1/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(egress.ProxyHeaderToken, "spoofed-token")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("GET error = %v", err)
+	}
+	closeLog(t, resp.Body)
+
+	mu.Lock()
+	gotConnect, gotForwarded := connectToken, forwardedToken
+	mu.Unlock()
+	if gotConnect != hostToken || gotForwarded != hostToken {
+		t.Fatalf("ProxyRouter sent tokens connect=%q forwarded=%q, want %q for both", gotConnect, gotForwarded, hostToken)
+	}
+}
+
+func TestNewProxyRouterRejectsInvalidToken(t *testing.T) {
+	t.Parallel()
+	_, err := egress.NewProxyRouter(egress.ProxyConfig{URL: "http://127.0.0.1:9000", Token: "secret\r\nX-Bad: 1"})
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("egress.NewProxyRouter() error = %v, want an error without echoing the token", err)
+	}
+}

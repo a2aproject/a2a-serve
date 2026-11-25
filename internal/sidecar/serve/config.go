@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	neturl "net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/contact"
@@ -71,8 +73,12 @@ type Config struct {
 	// Egress is the egress mode; "" when unset, which is internet.
 	Egress      string
 	EgressAllow []string
+	// EgressMiddleware are host[:port]=URL pairs of HTTP middlewares for
+	// individual hosts.
+	EgressMiddleware []string
 	// EgressProxy is the URL of the proxy that decides every connection
-	// of the sandbox, in place of Egress, EgressAllow and ModelKeys.
+	// of the sandbox, in place of Egress, EgressAllow, EgressMiddleware,
+	// ModelKeys and InjectHeaders.
 	EgressProxy string
 	// Env are NAME=value pairs the agent gets.
 	Env []string
@@ -82,6 +88,9 @@ type Config struct {
 	// ModelKeys are provider=NAME pairs: the boundary adds the key in the
 	// variable NAME of this process to the requests to the provider.
 	ModelKeys []string
+	// InjectHeaders are host[:port]=Name: value pairs: the boundary adds
+	// the header to HTTPS requests to that host.
+	InjectHeaders []string
 	// Workspace is dir:<path> or memory.
 	Workspace string
 	// WorkspaceSync is turn or live; "" is turn.
@@ -109,7 +118,8 @@ type Config struct {
 
 	// Getenv reads the variables of Secrets, ModelKeys and ContactAuth.
 	Getenv func(string) string
-	// Stdin is where a ContactAuth value of - is read from.
+	// Stdin is where the loopback host token or a ContactAuth value of - is
+	// read from.
 	Stdin io.Reader
 	// Stderr receives the logs, the image pulls and the stderr of the
 	// agent.
@@ -129,21 +139,24 @@ func usagef(format string, args ...any) error {
 
 // settings are a Config resolved into what the core takes.
 type settings struct {
-	profile      a2aserve.Profile
-	image        string
-	model        string
-	sandbox      string
-	policy       egress.Policy
-	egressProxy  string
-	env          []string
-	credentials  []egress.Credential
-	workspace    workspace
-	tools        *hosttools.Endpoint
-	contacts     []contact.Entry
-	listen       address
-	maxProcesses int
-	home         string
-	stateDir     string
+	profile          a2aserve.Profile
+	image            string
+	model            string
+	sandbox          string
+	policy           egress.Policy
+	egressMiddleware []egress.MiddlewareEntry
+	egressProxy      string
+	env              []string
+	credentials      []egress.Credential
+	hasInjectHeaders bool
+	workspace        workspace
+	tools            *hosttools.Endpoint
+	contacts         []contact.Entry
+	hostToken        string
+	listen           address
+	maxProcesses     int
+	home             string
+	stateDir         string
 }
 
 // address is where the A2A endpoint listens.
@@ -174,11 +187,24 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.env, err = resolveEnv(cfg); err != nil {
 		return settings{}, err
 	}
-	if s.egressProxy != "" {
-		s.env = append(placeholderKeys(s.env), s.env...)
-	}
-	if s.credentials, err = resolveModelKeys(cfg); err != nil {
+	modelCreds, credTargets, err := resolveModelKeys(cfg)
+	if err != nil {
 		return settings{}, err
+	}
+	headerCreds, headerPlaceholders, err := resolveInjectHeaders(cfg, credTargets)
+	if err != nil {
+		return settings{}, err
+	}
+	s.credentials = append(modelCreds, headerCreds...)
+	s.hasInjectHeaders = len(headerCreds) > 0
+	var mwPlaceholders []string
+	if s.egressMiddleware, mwPlaceholders, err = resolveEgressMiddleware(cfg, credTargets); err != nil {
+		return settings{}, err
+	}
+	if s.egressProxy != "" {
+		s.env = prependPlaceholders(s.env, placeholderKeys(s.env))
+	} else {
+		s.env = prependPlaceholders(s.env, append(headerPlaceholders, mwPlaceholders...))
 	}
 	if s.workspace, err = parseWorkspace(cfg.Workspace, cfg.WorkspaceSync, s.sandbox); err != nil {
 		return settings{}, err
@@ -186,7 +212,8 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.tools, err = parseTools(cfg.Tools, s.sandbox); err != nil {
 		return settings{}, err
 	}
-	if s.contacts, err = resolveContacts(ctx, cfg); err != nil {
+	contacts, contactAuths, err := parseContacts(cfg)
+	if err != nil {
 		return settings{}, err
 	}
 	if s.listen, err = parseListen(cfg.Listen); err != nil {
@@ -199,7 +226,78 @@ func (cfg Config) resolve(ctx context.Context) (settings, error) {
 	if s.maxProcesses < 1 || s.maxProcesses > maxMaxProcesses {
 		return settings{}, usagef("invalid --max-processes %d: want 1 to %d", cfg.MaxProcesses, maxMaxProcesses)
 	}
+	stdin := &stdinSecret{in: cfg.Stdin, prompt: cfg.Stderr, waitHint: stdinWaitHint}
+	if needsHostToken(cfg, s, contacts) {
+		token, err := stdin.read(ctx, "host-token", "loopback host token")
+		if err != nil {
+			return settings{}, err
+		}
+		if !httpguts.ValidHeaderFieldValue(token) {
+			return settings{}, usagef("loopback host token: has a character that a header can't carry")
+		}
+		s.hostToken = token
+	}
+	if err := resolveContactAuths(ctx, cfg, contacts, contactAuths, s.hostToken, stdin); err != nil {
+		return settings{}, err
+	}
+	s.contacts = contacts
+	if s.hostToken != "" {
+		for i := range s.egressMiddleware {
+			if isLoopbackHTTP(s.egressMiddleware[i].URL) {
+				s.egressMiddleware[i].Token = s.hostToken
+			}
+		}
+		if s.workspace.kind == WorkspaceURL && isLoopbackHTTP(cfg.Workspace) {
+			if err := s.workspace.withToken(cfg.Workspace, s.hostToken); err != nil {
+				return settings{}, err
+			}
+		}
+		if s.tools != nil && isLoopbackHTTP(cfg.Tools) {
+			ep, err := s.tools.WithToken(s.hostToken)
+			if err != nil {
+				return settings{}, usagef("invalid loopback host token: %w", err)
+			}
+			s.tools = &ep
+		}
+	}
 	return s, nil
+}
+
+// needsHostToken reports whether any configured host control endpoint is a
+// loopback http:// URL that needs the host's run-scoped token from stdin.
+func needsHostToken(cfg Config, s settings, contacts []contact.Entry) bool {
+	if isLoopbackHTTP(s.egressProxy) {
+		return true
+	}
+	for _, e := range s.egressMiddleware {
+		if isLoopbackHTTP(e.URL) {
+			return true
+		}
+	}
+	if s.workspace.kind == WorkspaceURL && isLoopbackHTTP(cfg.Workspace) {
+		return true
+	}
+	if s.tools != nil && isLoopbackHTTP(cfg.Tools) {
+		return true
+	}
+	return contactsNeedHostToken(contacts)
+}
+
+// isLoopbackHTTP reports whether rawURL is an http:// URL targeting a loopback
+// host.
+func isLoopbackHTTP(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := neturl.Parse(rawURL)
+	return err == nil && u.Scheme == "http" && u.Host != "" && loopback(u.Hostname())
+}
+
+func hostTokenIfLoopback(rawURL, token string) string {
+	if isLoopbackHTTP(rawURL) {
+		return token
+	}
+	return ""
 }
 
 func resolveSandbox(cfg Config) (string, error) {
@@ -216,7 +314,14 @@ func resolveSandbox(cfg Config) (string, error) {
 			return SandboxBwrap, nil
 		}
 		var sandboxed []string
-		for flag, set := range map[string]bool{"--egress": cfg.Egress != "", "--egress-allow": len(cfg.EgressAllow) > 0, "--inject-model-key": len(cfg.ModelKeys) > 0, "--egress-proxy": cfg.EgressProxy != ""} {
+		for flag, set := range map[string]bool{
+			"--egress":               cfg.Egress != "",
+			"--egress-allow":         len(cfg.EgressAllow) > 0,
+			"--egress-middleware":    len(cfg.EgressMiddleware) > 0,
+			"--inject-model-key":     len(cfg.ModelKeys) > 0,
+			"--egress-inject-header": len(cfg.InjectHeaders) > 0,
+			"--egress-proxy":         cfg.EgressProxy != "",
+		} {
 			if set {
 				sandboxed = append(sandboxed, flag)
 			}
@@ -312,28 +417,48 @@ func resolveEnv(cfg Config) ([]string, error) {
 	return out, nil
 }
 
-func resolveModelKeys(cfg Config) ([]egress.Credential, error) {
+func resolveModelKeys(cfg Config) ([]egress.Credential, map[string]string, error) {
 	var out []egress.Credential
 	var seen []string
+	targets := map[string]string{}
 	for _, kv := range cfg.ModelKeys {
 		provider, name, ok := strings.Cut(kv, "=")
 		if !ok || !envName.MatchString(name) {
-			return nil, usagef("invalid --inject-model-key %q: want provider=NAME, with NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY", kv)
+			return nil, nil, usagef("invalid --inject-model-key %q: want provider=NAME, with NAME a variable of your environment, such as anthropic=ANTHROPIC_API_KEY", kv)
 		}
-		if _, ok := egressrules.LookupProvider(provider); !ok {
-			return nil, usagef("invalid --inject-model-key %q: %w", kv, egressrules.UnknownProvider(provider))
+		p, ok := egressrules.LookupProvider(provider)
+		if !ok {
+			return nil, nil, usagef("invalid --inject-model-key %q: %w", kv, egressrules.UnknownProvider(provider))
 		}
 		if slices.Contains(seen, provider) {
-			return nil, usagef("--inject-model-key names %s twice; give each provider one key", provider)
+			return nil, nil, usagef("--inject-model-key names %s twice; give each provider one key", provider)
 		}
 		seen = append(seen, provider)
 		key := cfg.getenv(name)
 		if key == "" {
-			return nil, usagef("--inject-model-key %s: the variable %s is unset or empty; export it before you start a2a-serve-sidecar", kv, name)
+			return nil, nil, usagef("--inject-model-key %s: the variable %s is unset or empty; export it before you start a2a-serve-sidecar", kv, name)
 		}
 		out = append(out, egress.ModelKey{Provider: provider, Key: key})
+		targets[net.JoinHostPort(p.Host, strconv.Itoa(egressrules.HTTPSPort))] = "--inject-model-key"
 	}
-	return out, nil
+	return out, targets, nil
+}
+
+func prependPlaceholders(env, placeholders []string) []string {
+	var add []string
+	for _, kv := range placeholders {
+		name, _, _ := strings.Cut(kv, "=")
+		prefix := name + "="
+		if slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, prefix) }) ||
+			slices.ContainsFunc(add, func(e string) bool { return strings.HasPrefix(e, prefix) }) {
+			continue
+		}
+		add = append(add, kv)
+	}
+	if len(add) == 0 {
+		return env
+	}
+	return append(add, env...)
 }
 
 func (cfg Config) getenv(name string) string {
@@ -343,8 +468,7 @@ func (cfg Config) getenv(name string) string {
 	return cfg.Getenv(name)
 }
 
-// parseListen parses unix:///path, or host:port with a loopback host:
-// the endpoint has no authentication.
+// parseListen parses unix:///path, or host:port with a loopback host.
 func parseListen(v string) (address, error) {
 	if v == "" {
 		v = DefaultListen
@@ -363,7 +487,7 @@ func parseListen(v string) (address, error) {
 		return address{}, usagef("invalid --listen %q: the port isn't a number from 0 to 65535", v)
 	}
 	if !loopback(host) {
-		return address{}, usagef("invalid --listen %q: a2a-serve-sidecar doesn't authenticate callers, so it listens only on a loopback address, such as %s, or a Unix socket", v, DefaultListen)
+		return address{}, usagef("invalid --listen %q: a2a-serve-sidecar listens only on a loopback address, such as %s, or a Unix socket", v, DefaultListen)
 	}
 	return address{network: "tcp", addr: v}, nil
 }

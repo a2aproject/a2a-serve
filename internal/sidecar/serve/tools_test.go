@@ -39,7 +39,9 @@ func TestToolsRouterKeepsTheToolsHostFromTheRouterItWraps(t *testing.T) {
 		seen = append(seen, f.Host)
 		return egress.Direct(), nil
 	})
-	r := (&hostTools{ep: ep}).router(next)
+	tools := &hostTools{ep: ep, proxy: ep.Proxy()}
+	noTask := func(string) string { return "" }
+	r := tools.router(next, noTask)
 	for _, f := range []egress.Flow{{Key: "c1", Host: ToolsHost, Port: 80}, {Key: "c1", Host: ToolsHost, Port: 443}, {Key: "c1", Host: "api.anthropic.com", Port: 443}} {
 		if _, err := r.Route(t.Context(), f); err != nil {
 			t.Fatalf("Router.Route(%s:%d) error = %v", f.Host, f.Port, err)
@@ -48,14 +50,14 @@ func TestToolsRouterKeepsTheToolsHostFromTheRouterItWraps(t *testing.T) {
 	if diff := cmp.Diff([]string{"api.anthropic.com"}, seen); diff != "" {
 		t.Fatalf("hosts that reached the wrapped router wrong result (-want +got) diff = %s", diff)
 	}
-	if _, ok := (&hostTools{ep: ep}).router(proxy).(egress.InterceptHosts); ok {
+	if _, ok := tools.router(proxy, noTask).(egress.InterceptHosts); ok {
 		t.Fatal("tools router of the egress proxy implements InterceptHosts, want the proxy's unconstrained CA kept")
 	}
 	policy, err := egress.Policy{}.Router(egress.Header{Host: "api.example.com", Name: "Authorization", Value: "Bearer k"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ih, ok := (&hostTools{ep: ep}).router(policy).(egress.InterceptHosts)
+	ih, ok := tools.router(policy, noTask).(egress.InterceptHosts)
 	if !ok {
 		t.Fatal("tools router of the policy doesn't implement InterceptHosts, want the policy's hosts")
 	}

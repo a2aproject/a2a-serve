@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
 )
 
 const (
@@ -40,6 +42,14 @@ const (
 	HooksCapability = "a2a-sidecar/hooks"
 	// HeaderOrigin says who sent a request to the endpoint.
 	HeaderOrigin = "A2A-Sidecar-Origin"
+	// HeaderToken carries the run-scoped authentication token on requests
+	// to a loopback HTTP tools endpoint.
+	HeaderToken = "A2A-Sidecar-Token"
+	// HeaderContext carries the A2A context of the agent process that sent
+	// a request from the sandbox.
+	HeaderContext = egress.ProxyHeaderContext
+	// HeaderTask carries the task that the agent process works on.
+	HeaderTask = egress.ProxyHeaderTask
 	// OriginSidecar is the origin of a2a-serve-sidecar's own session.
 	OriginSidecar = "a2a-serve-sidecar"
 	// OriginSandbox is the origin of the agent's requests, which a2a-serve-sidecar
@@ -219,7 +229,7 @@ func (c *Client) end(ctx context.Context, session, version string) error {
 	if err != nil {
 		return err
 	}
-	headers(req, session, version)
+	c.headers(req, session, version)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return c.ep.errorf("ending the session: %w", withoutURL(err))
@@ -229,9 +239,12 @@ func (c *Client) end(ctx context.Context, session, version string) error {
 
 var errSessionGone = errors.New("the endpoint forgot the session")
 
-// headers sets the origin and the session headers of a request.
-func headers(req *http.Request, session, version string) {
+// headers sets the origin, token, and session headers of a request.
+func (c *Client) headers(req *http.Request, session, version string) {
 	req.Header.Set(HeaderOrigin, OriginSidecar)
+	if c.ep.token != "" {
+		req.Header.Set(HeaderToken, c.ep.token)
+	}
 	if session != "" {
 		req.Header.Set("Mcp-Session-Id", session)
 	}
@@ -269,7 +282,7 @@ func (c *Client) roundTrip(ctx context.Context, session, version, method string,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	headers(req, session, version)
+	c.headers(req, session, version)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return "", c.ep.errorf("%s: %w", method, withoutURL(err))

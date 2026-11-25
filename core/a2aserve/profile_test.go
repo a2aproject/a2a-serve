@@ -35,7 +35,7 @@ func TestProfile(t *testing.T) {
 		wantArgv  []string
 	}{
 		{name: "opencode", profile: a2aserve.Opencode(), wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
-		{name: "claude", profile: a2aserve.Claude(), wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
+		{name: "claude", profile: a2aserve.Claude(), wantName: "claude", wantImage: agentprofile.LocalImage("claude"), wantArgv: []string{"claude-agent-acp"}},
 		{name: "command", profile: a2aserve.Command("/usr/bin/gemini", "--experimental-acp"), wantName: "gemini", wantArgv: []string{"/usr/bin/gemini", "--experimental-acp"}},
 		{name: "command named like a profile has no image", profile: a2aserve.Command("opencode", "acp"), wantName: "opencode", wantArgv: []string{"opencode", "acp"}},
 		{name: "command without argv", profile: a2aserve.Command()},
@@ -69,7 +69,7 @@ func TestLookupProfile(t *testing.T) {
 		wantErr   bool
 	}{
 		{name: "opencode", agent: "opencode", wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp"}},
-		{name: "claude", agent: "claude", wantName: "claude", wantImage: agentprofile.ImageRepo + "claude:" + agentprofile.ImageTag, wantArgv: []string{"claude-agent-acp"}},
+		{name: "claude", agent: "claude", wantName: "claude", wantImage: agentprofile.LocalImage("claude"), wantArgv: []string{"claude-agent-acp"}},
 		{name: "argv replaces the command and keeps the image", agent: "opencode", argv: []string{"opencode", "acp", "--print-logs"}, wantName: "opencode", wantImage: agentprofile.ImageRepo + "opencode:" + agentprofile.ImageTag, wantArgv: []string{"opencode", "acp", "--print-logs"}},
 		{name: "unknown name with argv", agent: "gemini", argv: []string{"gemini", "--experimental-acp"}, wantName: "gemini", wantArgv: []string{"gemini", "--experimental-acp"}},
 		{name: "unknown name", agent: "gemini", wantErr: true},

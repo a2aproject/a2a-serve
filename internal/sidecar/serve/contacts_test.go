@@ -54,8 +54,9 @@ func TestStartRefusesInvalidContacts(t *testing.T) {
 			want: "--contact-auth names a contact that no --contact names; the contacts are: r",
 		},
 		{name: "name twice", edit: func(c *serve.Config) { c.Contacts = []string{"r=https://a.example.com", "R=https://b.example.com"} }, want: "--contact names R twice"},
-		{name: "plain http", edit: func(c *serve.Config) { c.Contacts = []string{"r=http://127.0.0.1:8080"} }, want: "invalid --contact r: a2a-serve-sidecar calls contacts over https:// or a unix:/// socket"},
-		{name: "other scheme", edit: func(c *serve.Config) { c.Contacts = []string{"r=ftp://r.example.com?key=" + secret} }, want: "the URL must start with https:// or unix:///"},
+		{name: "plain http", edit: func(c *serve.Config) { c.Contacts = []string{"r=http://r.example.com:8080"} }, want: "invalid --contact r: a2a-serve-sidecar calls contacts over https://, loopback http://, or a unix:/// socket"},
+		{name: "loopback http without host token", edit: func(c *serve.Config) { c.Contacts = []string{"r=http://127.0.0.1:8080"} }, want: "loopback host token: stdin had no value"},
+		{name: "other scheme", edit: func(c *serve.Config) { c.Contacts = []string{"r=ftp://r.example.com?key=" + secret} }, want: "the URL must start with https://, loopback http://, or unix:///"},
 		{name: "relative socket", edit: func(c *serve.Config) { c.Contacts = []string{"r=unix://r.sock"} }, want: "invalid --contact r: want unix:///absolute/path"},
 		{name: "too many contacts", edit: func(c *serve.Config) { c.Contacts = tooMany }, want: "101 --contact flags: a2a-serve-sidecar takes at most 100"},
 		{name: "auth for an unknown contact", edit: func(c *serve.Config) { c.ContactAuth = []string{"r=Bearer " + secret} }, want: "--contact-auth names a contact that no --contact names; the contacts are: none"},
@@ -85,7 +86,7 @@ func TestStartRefusesInvalidContacts(t *testing.T) {
 				c.ContactAuth = []string{"a=Bearer -", "b=Bearer -"}
 			},
 			stdin: secret + "\n" + secret + "\n",
-			want:  "--contact-auth b: only one --contact-auth can read its value from stdin",
+			want:  "--contact-auth b: only one --contact-auth can read its value from stdin; pass the others as env:VAR",
 		},
 		{
 			name: "auth from empty stdin",

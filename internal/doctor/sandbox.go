@@ -127,11 +127,14 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 	}
 	_, buildable := agentprofile.Dockerfile(profile.Name())
 	buildable = buildable && image == profile.Image()
-	if buildable {
-		if local := agentprofile.LocalImage(profile.Name()); present(local) {
-			r.Status, r.Message = StatusOK, "image "+local+" present"
-			return r, true
-		}
+	local := agentprofile.LocalImage(profile.Name())
+	if buildable && present(local) {
+		r.Status, r.Message = StatusOK, "image "+local+" present"
+		return r, true
+	}
+	if buildable && image == local {
+		r.Status, r.Message = StatusWarn, "image "+image+" not built yet; the first start builds it"
+		return r, true
 	}
 	if !online {
 		r.Status, r.Message = StatusWarn, "image "+image+" not pulled yet; the first start pulls it"

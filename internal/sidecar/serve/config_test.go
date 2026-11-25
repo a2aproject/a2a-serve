@@ -38,7 +38,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"KEY": "secret-value"}
+	env := map[string]string{"KEY": "secret-value", "BAD": "bad\r\nsecret-value"}
 	valid := serve.Config{Agent: "opencode", Workspace: "dir:" + dir, Sandbox: serve.SandboxLocal}
 	tests := []struct {
 		name string
@@ -68,6 +68,50 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "unknown provider", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"mistral=KEY"} }, want: `unknown model provider "mistral"`},
 		{name: "provider twice", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"openai=KEY", "openai=KEY"} }, want: "--inject-model-key names openai twice"},
 		{name: "unset model key", edit: func(c *serve.Config) { c.Sandbox, c.ModelKeys = "", []string{"openai=MISSING"} }, want: "the variable MISSING is unset or empty"},
+		{name: "egress middleware with local", edit: func(c *serve.Config) { c.EgressMiddleware = []string{"api.anthropic.com=http://127.0.0.1:9000"} }, want: "--egress-middleware needs --sandbox docker"},
+		{name: "egress middleware without equals", edit: func(c *serve.Config) { c.Sandbox, c.EgressMiddleware = "", []string{"api.anthropic.com"} }, want: "invalid --egress-middleware: want host[:port]=URL"},
+		{name: "egress middleware invalid host", edit: func(c *serve.Config) { c.Sandbox, c.EgressMiddleware = "", []string{"127.0.0.1=http://127.0.0.1:9000"} }, want: "invalid --egress-middleware: invalid egress middleware host"},
+		{name: "egress middleware URL with credentials", edit: func(c *serve.Config) {
+			c.Sandbox, c.EgressMiddleware = "", []string{"api.anthropic.com=http://u:secret-value@127.0.0.1:9000"}
+		}, want: "the URL can't carry credentials"},
+		{name: "egress middleware duplicate host", edit: func(c *serve.Config) {
+			c.Sandbox, c.EgressMiddleware = "", []string{"api.anthropic.com=http://127.0.0.1:9000", "api.anthropic.com:443=http://127.0.0.1:9001"}
+		}, want: "two egress middlewares for api.anthropic.com:443"},
+		{name: "egress middleware overlaps model key", edit: func(c *serve.Config) {
+			c.Sandbox, c.ModelKeys, c.EgressMiddleware = "", []string{"anthropic=KEY"}, []string{"api.anthropic.com=http://127.0.0.1:9000"}
+		}, want: "--egress-middleware and --inject-model-key both name api.anthropic.com"},
+		{name: "egress middleware overlaps inject header", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders, c.EgressMiddleware = "", []string{"api.github.com=Authorization:Bearer env:KEY"}, []string{"api.github.com=http://127.0.0.1:9000"}
+		}, want: "--egress-middleware and --egress-inject-header both name api.github.com"},
+		{name: "egress inject header with local", edit: func(c *serve.Config) { c.InjectHeaders = []string{"api.github.com=Authorization:Bearer env:KEY"} }, want: "--egress-inject-header needs --sandbox docker"},
+		{name: "egress inject header without equals", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"Authorization: Bearer secret-value"} }, want: "invalid --egress-inject-header: want host[:port]=Name: value"},
+		{name: "egress inject header IP host", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"127.0.0.1=Authorization:Bearer env:KEY"}
+		}, want: "is an IP address"},
+		{name: "egress inject header missing colon", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization"} }, want: "want a header Name: value after ="},
+		{name: "egress inject header reserved header", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Host: evil.example"} }, want: "can't set the header Host"},
+		{name: "egress inject header empty value", edit: func(c *serve.Config) { c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:   "} }, want: "empty header value"},
+		{name: "egress inject header invalid env name", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:1BAD"}
+		}, want: "env: needs the name of a variable"},
+		{name: "egress inject header unset env var", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:MISSING"}
+		}, want: "the variable MISSING is unset or empty"},
+		{name: "egress inject header unset dollar var", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization: Bearer $MISSING"}
+		}, want: "the variable MISSING is unset or empty"},
+		{name: "egress inject header bad dollar syntax", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization: Bearer $1BAD"}
+		}, want: "invalid --egress-inject-header"},
+		{name: "egress inject header control character in secret", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:BAD"}
+		}, want: "has a character that a header can't carry"},
+		{name: "egress inject header duplicate host", edit: func(c *serve.Config) {
+			c.Sandbox, c.InjectHeaders = "", []string{"api.github.com=Authorization:Bearer env:KEY", "API.GITHUB.COM:443=X-Token: env:KEY"}
+		}, want: "--egress-inject-header names api.github.com twice"},
+		{name: "egress inject header overlaps model key", edit: func(c *serve.Config) {
+			c.Sandbox, c.ModelKeys, c.InjectHeaders = "", []string{"anthropic=KEY"}, []string{"api.anthropic.com=X-Api-Key: env:KEY"}
+		}, want: "--egress-inject-header and --inject-model-key both name api.anthropic.com"},
 		{name: "no workspace", edit: func(c *serve.Config) { c.Workspace = "" }, want: "no workspace: pass --workspace dir:<path>, --workspace memory, or the URL of your file server"},
 		{name: "unknown workspace kind", edit: func(c *serve.Config) { c.Workspace = "nfs:/x" }, want: `invalid --workspace "nfs:/x": want dir:<path>, memory, or an http://, https:// or unix:///path URL`},
 		{name: "workspace URL with user info", edit: func(c *serve.Config) { c.Workspace = "http://user:secret-value@127.0.0.1:1" }, want: "invalid --workspace: the file server URL can't have user info"},
@@ -90,6 +134,19 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "tools on a socket with local", edit: func(c *serve.Config) { c.Tools = "unix:///run/tools.sock" }, want: "--tools unix:// needs --sandbox docker"},
 		{name: "too many processes", edit: func(c *serve.Config) { c.MaxProcesses = 65 }, want: "invalid --max-processes 65: want 1 to 64"},
 		{name: "negative processes", edit: func(c *serve.Config) { c.MaxProcesses = -1 }, want: "invalid --max-processes -1"},
+		{name: "loopback tools without stdin", edit: func(c *serve.Config) { c.Tools = "http://127.0.0.1:9000/mcp" }, want: "loopback control endpoints need a host token on stdin"},
+		{name: "loopback tools with empty stdin", edit: func(c *serve.Config) {
+			c.Tools, c.Stdin = "http://127.0.0.1:9000/mcp", strings.NewReader("\n")
+		}, want: "loopback host token: stdin had no value"},
+		{name: "loopback tools with invalid host token", edit: func(c *serve.Config) {
+			c.Tools, c.Stdin = "http://127.0.0.1:9000/mcp", strings.NewReader("bad\x7ftoken\n")
+		}, want: "loopback host token: has a character that a header can't carry"},
+		{name: "loopback workspace conflicts with stdin contact auth", edit: func(c *serve.Config) {
+			c.Workspace = "http://127.0.0.1:9000"
+			c.Contacts = []string{"r=https://r.example.com"}
+			c.ContactAuth = []string{"r=Bearer -"}
+			c.Stdin = strings.NewReader("host-token\ncontact-token\n")
+		}, want: "--contact-auth r: stdin carries the loopback host token; pass this value as env:VAR"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,7 +186,7 @@ func TestStartFailsWhenTheWorkspaceServerDoesntAnswer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := serve.Start(context.Background(), serve.Config{Agent: "opencode", Workspace: tc.workspace, Sandbox: serve.SandboxLocal})
+			_, err := serve.Start(context.Background(), serve.Config{Agent: "opencode", Workspace: tc.workspace, Sandbox: serve.SandboxLocal, Stdin: strings.NewReader("host-token\n")})
 
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("serve.Start() error = %v, want %q", err, tc.want)

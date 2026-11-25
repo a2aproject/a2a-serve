@@ -48,6 +48,9 @@ const (
 	ProxyHeaderIntercept  = "A2A-Sidecar-Intercept"
 	ProxyInterceptOffered = "offered"
 	ProxyInterceptAccept  = "accept"
+	// ProxyHeaderToken carries the run-scoped authentication token on
+	// requests to a host endpoint over loopback HTTP.
+	ProxyHeaderToken = "A2A-Sidecar-Token"
 )
 
 // Bounds of the answers of an egress proxy.
@@ -82,6 +85,9 @@ type ProxyConfig struct {
 	// Task returns the task that the process of key works on, or "" when
 	// it doesn't know one. Nil sends no task.
 	Task func(key string) string
+	// Token, when non-empty, is sent in [ProxyHeaderToken] on every
+	// CONNECT and forwarded request to the proxy.
+	Token string
 }
 
 // ProxyRouter is a [Router] that lets an HTTP proxy decide each
@@ -104,6 +110,7 @@ type ProxyConfig struct {
 type ProxyRouter struct {
 	dial      func(ctx context.Context) (net.Conn, error)
 	task      func(key string) string
+	token     string
 	transport *http.Transport
 	timeout   time.Duration
 }
@@ -118,7 +125,10 @@ func newProxyRouter(cfg ProxyConfig, timeout time.Duration) (*ProxyRouter, error
 	if err != nil {
 		return nil, err
 	}
-	p := &ProxyRouter{task: cfg.Task, timeout: timeout}
+	if cfg.Token != "" && !httpguts.ValidHeaderFieldValue(cfg.Token) {
+		return nil, errors.New("invalid egress proxy token: has a character that a header can't carry")
+	}
+	p := &ProxyRouter{task: cfg.Task, token: cfg.Token, timeout: timeout}
 	p.dial = func(ctx context.Context) (net.Conn, error) {
 		var d net.Dialer
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -211,6 +221,9 @@ func (p *ProxyRouter) decide(ctx context.Context, conn net.Conn, target, key str
 	if key != "" {
 		req.Header.Set(ProxyHeaderContext, key)
 	}
+	if p.token != "" {
+		req.Header.Set(ProxyHeaderToken, p.token)
+	}
 	if err := req.Write(conn); err != nil {
 		return Route{}, false, fmt.Errorf("asking the egress proxy about %s: %w", target, proxyError(err))
 	}
@@ -273,14 +286,7 @@ func (p *ProxyRouter) forward(key string) func(http.RoundTripper) http.RoundTrip
 			}
 			out := r.Clone(r.Context())
 			out.RequestURI = ""
-			for name := range out.Header {
-				// The client mustn't speak for another context, in any
-				// spelling that a proxy may read as one of these headers:
-				// CGI-style stacks read _ as -.
-				if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-sidecar-") {
-					delete(out.Header, name)
-				}
-			}
+			stripSidecarHeaders(out.Header)
 			if key != "" {
 				out.Header.Set(ProxyHeaderContext, key)
 			}
@@ -288,6 +294,9 @@ func (p *ProxyRouter) forward(key string) func(http.RoundTripper) http.RoundTrip
 				if task := p.task(key); task != "" && httpguts.ValidHeaderFieldValue(task) {
 					out.Header.Set(ProxyHeaderTask, task)
 				}
+			}
+			if p.token != "" {
+				out.Header.Set(ProxyHeaderToken, p.token)
 			}
 			path := r.URL.EscapedPath()
 			if path == "" {
@@ -308,6 +317,16 @@ func (p *ProxyRouter) CloseIdleConnections() { p.transport.CloseIdleConnections(
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// stripSidecarHeaders removes client-sent A2A-Sidecar-* headers in any
+// spelling (CGI-style stacks normalize _ to -).
+func stripSidecarHeaders(h http.Header) {
+	for name := range h {
+		if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "_", "-")), "a2a-sidecar-") {
+			delete(h, name)
+		}
+	}
+}
 
 // refusalReason returns the printable text of body on one line, at most
 // maxProxyReason bytes long.

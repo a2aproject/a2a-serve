@@ -56,6 +56,8 @@ func TestEgressProxyReportsInvalidFlags(t *testing.T) {
 	}{
 		{name: "with egress rules", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--egress", "allowlist", "--egress-allow", "nas.lan"}, want: "--egress-proxy can't be used with --egress, --egress-allow: the proxy decides every connection"},
 		{name: "with a model key", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--inject-model-key", "anthropic=ANTHROPIC_API_KEY"}, want: "--egress-proxy can't be used with --inject-model-key"},
+		{name: "with egress middleware", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--egress-middleware", "api.anthropic.com=http://127.0.0.1:8080"}, want: "--egress-proxy can't be used with --egress-middleware"},
+		{name: "with egress inject header", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--egress-inject-header", "api.github.com=Authorization:Bearer env:GH_TOKEN"}, want: "--egress-proxy can't be used with --egress-inject-header"},
 		{name: "local sandbox", args: []string{"--egress-proxy", "http://127.0.0.1:9000", "--sandbox", "local"}, want: "--egress-proxy needs --sandbox docker"},
 		{name: "invalid URL", args: []string{"--egress-proxy", "https://proxy.example:443"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL isn't http or unix"},
 		{name: "URL with credentials", args: []string{"--egress-proxy", "http://user:hunter2@proxy.example:8080/?token=hunter2"}, want: "invalid --egress-proxy: invalid egress proxy URL: the URL can't carry credentials"},
@@ -186,7 +188,23 @@ func serveHost(t *testing.T, h *refhost.Host, dir string) string {
 // line. It stops it with SIGTERM at the end of the test.
 func startBinary(t *testing.T, bin string, args ...string) serve.Ready {
 	t.Helper()
+	return startBinaryWithEnv(t, bin, nil, args...)
+}
+
+func startBinaryWithEnv(t *testing.T, bin string, extraEnv []string, args ...string) serve.Ready {
+	t.Helper()
+	return startBinaryWithIO(t, bin, "", extraEnv, args...)
+}
+
+func startBinaryWithIO(t *testing.T, bin, stdin string, extraEnv []string, args ...string) serve.Ready {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	stderr := &syncBuffer{}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
