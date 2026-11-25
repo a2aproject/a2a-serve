@@ -31,4 +31,6 @@ a2a-serve contact add grok@ben                                # no code needed
 
 Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). Removing the node or passing `--advertised=false` withdraws the advertisement. A call to `<pairing>@<agent>` goes to the agent that `a2a-serve peers` lists under that [name](agent2agent.md#peer-names).
 
+Webhook nodes hosted by the same agent can also discover the hosting agent and its advertised sibling nodes with `a2a-serve mailbox peers` and call them with `a2a send` using their node token.
+
 A caller that has too many tasks waiting for a node gets an error until one of them finishes. See [limits](../reference/limits.md#webhook-nodes).

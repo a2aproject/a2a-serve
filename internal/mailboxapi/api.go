@@ -142,6 +142,26 @@ type Inbox struct {
 	Entries []InboxEntry `json:"entries"`
 }
 
+// Peer is an agent a webhook node can call with its node token.
+type Peer struct {
+	Name        string      `json:"name"`
+	URL         string      `json:"url"`
+	Description string      `json:"description,omitempty"`
+	Skills      []PeerSkill `json:"skills,omitempty"`
+}
+
+// PeerSkill is a skill of a peer's agent card.
+type PeerSkill struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// Peers is the response of GET /api/peers.
+type Peers struct {
+	Peers []Peer `json:"peers"`
+}
+
 // StateName returns the short lowercase name of a task state, as used in
 // [Event.State], such as input-required.
 func StateName(s a2a.TaskState) string {

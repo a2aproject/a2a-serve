@@ -65,6 +65,25 @@ a2a-serve mailbox list [flags]
 | `--all` |  | List the last 200 wakes |
 | `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
 
+## a2a-serve mailbox peers
+
+List the hosting agent and any advertised sibling webhook nodes that this node can call with `a2a send` using its node token.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox peers [flags]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
+
 ## a2a-serve mailbox reply
 
 Post progress, a question or the result of a task.

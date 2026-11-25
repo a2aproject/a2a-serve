@@ -127,6 +127,9 @@ func TestInstructionsKeepTheNodeToken(t *testing.T) {
 		if !strings.Contains(got, "mailbox reply t1") {
 			t.Fatalf("instructions(%s) = %q, want the reply command", kind, got)
 		}
+		if !strings.Contains(got, "mailbox peers") {
+			t.Fatalf("instructions(%s) = %q, want the peers command", kind, got)
+		}
 	}
 }
 
@@ -601,5 +604,77 @@ func TestStopWaitsForWakeDeliveries(t *testing.T) {
 	}
 	if got := h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing}); got.Attempts != 0 {
 		t.Fatalf("wake after Stop() attempts = %d, want 0", got.Attempts)
+	}
+}
+
+func TestHandlePeers(t *testing.T) {
+	t.Parallel()
+	st := storetest.Open(t)
+	for _, n := range []store.Node{
+		{ID: "muse", Name: "muse", Description: "Mom's Muse", Webhook: "https://muse.example/hook", Secret: "s1"},
+		{ID: "instinct", Name: "instinct", Description: "Sister's Instinct", Webhook: "https://instinct.example/hook", Secret: "s2"},
+		{ID: "private", Name: "private", Description: "Not advertised", Webhook: "https://private.example/hook", Secret: "s3"},
+		{ID: "alpha", Name: "alpha", Description: "Alpha node", Webhook: "https://alpha.example/hook", Secret: "s4"},
+	} {
+		if err := st.PutNode(t.Context(), n); err != nil {
+			t.Fatalf("store.PutNode(%s) error = %v", n.ID, err)
+		}
+	}
+	advertised := map[string]bool{"muse": true, "instinct": true, "alpha": true}
+	cfg := &agentdir.Config{
+		Name:        "assistant",
+		Description: "Personal assistant",
+		Card: agentdir.CardConfig{
+			Skills: []agentdir.CardSkill{
+				{ID: "mail-cousin", Name: "Mail cousin", Description: "Emails Cousin Sam."},
+				{ID: "plan"},
+			},
+		},
+	}
+	h := New(t.Context(), Config{
+		Store:      st,
+		Viewer:     viewer,
+		Runtime:    agentdir.NewRuntime(agentdir.Dir{}, cfg, nil),
+		BaseURL:    func() string { return "https://assistant.example.com/" },
+		Advertised: func(id string) bool { return advertised[id] },
+	})
+	t.Cleanup(h.Stop)
+
+	r := httptest.NewRequest(http.MethodGet, "/mailbox/api/peers", nil)
+	w := httptest.NewRecorder()
+	h.handlePeers(w, r, "https://assistant.example.com/", store.Node{ID: "muse", Name: "muse"})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handlePeers() status = %d, want %d (%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	var got mailboxapi.Peers
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	want := mailboxapi.Peers{
+		Peers: []mailboxapi.Peer{
+			{
+				Name:        "assistant",
+				URL:         "https://assistant.example.com",
+				Description: "Personal assistant",
+				Skills: []mailboxapi.PeerSkill{
+					{ID: "mail-cousin", Name: "Mail cousin", Description: "Emails Cousin Sam."},
+					{ID: "plan", Name: "plan"},
+				},
+			},
+			{
+				Name:        "alpha",
+				URL:         "https://assistant.example.com/n/alpha",
+				Description: "Alpha node",
+			},
+			{
+				Name:        "instinct",
+				URL:         "https://assistant.example.com/n/instinct",
+				Description: "Sister's Instinct",
+			},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("handlePeers() wrong result (-want +got) diff = %s", diff)
 	}
 }

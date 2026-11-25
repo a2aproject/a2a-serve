@@ -19,6 +19,7 @@ package nodes
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -290,6 +292,7 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	mux.Handle("/n/{node}", node)
 	mux.Handle("/n/{node}/{rest...}", node)
 	mux.Handle("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, members, n.handleGetNode))
+	mux.Handle("GET "+mailboxapi.Prefix+"/api/peers", n.nodeAPI(base, members, n.handlePeers))
 	mux.Handle("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", jsonhttp.RequireJSON(jsonhttp.LimitBody(n.nodeAPI(base, members, n.handleEvent))))
 	mux.Handle("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, members, n.handleGetTask))
 	mux.Handle("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, members, n.handleInbox))
@@ -393,6 +396,57 @@ func (n *Host) nodeAPI(base func(*http.Request) string, members func(caller stri
 
 func (n *Host) handleGetNode(w http.ResponseWriter, _ *http.Request, baseURL string, node store.Node) {
 	jsonhttp.Write(w, http.StatusOK, n.wireInfo(baseURL, node))
+}
+
+func (n *Host) handlePeers(w http.ResponseWriter, r *http.Request, baseURL string, self store.Node) {
+	cfg := n.cfg.Runtime.Config()
+	host := mailboxapi.Peer{
+		Name:        cfg.Name,
+		URL:         strings.TrimRight(baseURL, "/"),
+		Description: cfg.Description,
+	}
+	if len(cfg.Card.Skills) > 0 {
+		host.Skills = make([]mailboxapi.PeerSkill, len(cfg.Card.Skills))
+		for i, sk := range cfg.Card.Skills {
+			host.Skills[i] = mailboxapi.PeerSkill{
+				ID:          sk.ID,
+				Name:        cmp.Or(sk.Name, sk.ID),
+				Description: sk.Description,
+			}
+		}
+	}
+	allNodes, err := n.cfg.Store.Nodes(r.Context())
+	if err != nil {
+		slog.Error("listing webhook nodes", "error", err)
+		jsonhttp.Error(w, http.StatusInternalServerError, "listing peers failed")
+		return
+	}
+	var siblings []store.Node
+	for _, other := range allNodes {
+		if other.ID == self.ID {
+			continue
+		}
+		if n.cfg.Advertised == nil || !n.cfg.Advertised(other.ID) {
+			continue
+		}
+		siblings = append(siblings, other)
+	}
+	slices.SortFunc(siblings, func(a, b store.Node) int {
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	peers := make([]mailboxapi.Peer, 0, 1+len(siblings))
+	peers = append(peers, host)
+	for _, other := range siblings {
+		peers = append(peers, mailboxapi.Peer{
+			Name:        other.Name,
+			URL:         mailboxapi.NodeURL(baseURL, other.ID),
+			Description: other.Description,
+		})
+	}
+	jsonhttp.Write(w, http.StatusOK, mailboxapi.Peers{Peers: peers})
 }
 
 func (n *Host) handleGetTask(w http.ResponseWriter, r *http.Request, _ string, node store.Node) {
@@ -925,9 +979,10 @@ func instructions(env mailboxapi.Envelope) string {
 		return fmt.Sprintf("%s %s from %s. "+
 			"Reply with `%s reply %s --final \"<answer>\"` (add --artifact <file> to attach files). "+
 			"Use `--status working --text \"<progress>\"` to report progress, `--input-required \"<question>\"` to ask the caller, "+
-			"`--fail \"<reason>\"` to give up. Without the CLI, follow \"Without the CLI\" in the skill you paired with. "+
+			"`--fail \"<reason>\"` to give up. Run `%s peers` to see other agents you can call with `a2a send`. "+
+			"Without the CLI, follow \"Without the CLI\" in the skill you paired with. "+
 			"The task fails if you post nothing for %s.",
-			what, env.TaskID, env.Sender, mailboxapi.CLI, env.TaskID, nodeTaskTimeout)
+			what, env.TaskID, env.Sender, mailboxapi.CLI, env.TaskID, mailboxapi.CLI, nodeTaskTimeout)
 	case mailboxapi.KindCanceled:
 		return fmt.Sprintf("The caller canceled task %s. Stop working on it; replies are no longer accepted.", env.TaskID)
 	case mailboxapi.KindPing:
