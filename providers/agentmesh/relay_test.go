@@ -54,6 +54,10 @@ var (
 	buildOnce sync.Once
 	binPath   string
 	buildErr  error
+
+	meshOnce sync.Once
+	meshPath string
+	meshErr  error
 )
 
 // providerBinary builds netprovider-agentmesh the way releases are built,
@@ -96,16 +100,32 @@ func agentmeshOne(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("runs an Agent Mesh relay")
 	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
+	meshOnce.Do(func() {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			meshErr = err
+			return
+		}
+		hc := &http.Client{Transport: &http.Transport{}, Timeout: 5 * time.Minute}
+		defer hc.CloseIdleConnections()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		f := meshbackend.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(meshbackend.BinaryEnv), hc, runtime.GOOS, runtime.GOARCH, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		})
+		meshPath, meshErr = f.Get(ctx)
+	})
+	if meshErr != nil {
+		t.Fatalf("Fetcher.Get() error = %v", meshErr)
 	}
-	f := meshbackend.NewFetcher(filepath.Join(cache, "a2a-serve"), os.Getenv(meshbackend.BinaryEnv), http.DefaultClient, runtime.GOOS, runtime.GOARCH, t.Logf)
-	bin, err := f.Get(t.Context())
-	if err != nil {
-		t.Fatalf("Fetcher.Get() error = %v", err)
-	}
-	return bin
+	return meshPath
+}
+
+func newHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
+	c := &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second}
+	t.Cleanup(c.CloseIdleConnections)
+	return c
 }
 
 type logWriter struct{ t *testing.T }
@@ -183,11 +203,13 @@ func startRelayWith(t *testing.T, d relaydir.Dir, bin string, google googleauth.
 			t.Errorf("relay.Run() error = %v", err)
 		}
 	})
+	hc := &http.Client{Transport: &http.Transport{}, Timeout: 10 * time.Second}
+	defer hc.CloseIdleConnections()
 	deadline := time.Now().Add(time.Minute)
 	for {
 		st, err := r.client.Status(ctx)
 		if err == nil {
-			_, err = get(ctx, http.DefaultClient, st.URL+"/readyz")
+			_, err = get(ctx, hc, st.URL+"/readyz")
 		}
 		if err == nil {
 			r.url = st.URL
@@ -336,6 +358,7 @@ func serveAgent(t *testing.T, req netprovider.JoinRequest, onNotice func(string)
 		t.Fatalf("listening on the relay as %s: %v", req.Agent, err)
 	}
 	a.client = &http.Client{Transport: a.proc.Transport(), Timeout: 30 * time.Second}
+	t.Cleanup(a.client.CloseIdleConnections)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == a2asrv.WellKnownAgentCardPath {
@@ -430,7 +453,7 @@ func eventuallyWithin(t *testing.T, d time.Duration, what string, fn func() erro
 		if time.Now().After(deadline) {
 			t.Fatalf("%s: %v", what, err)
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -453,6 +476,7 @@ func wantKind(t *testing.T, err error, kind string) *netprovider.Error {
 }
 
 func TestRelayRunsAgentMesh(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	d := openRelayDir(t, relaydir.Settings{})
 	r := startRelay(t, d, bin)
@@ -492,8 +516,9 @@ func TestRelayRunsAgentMesh(t *testing.T) {
 	if !strings.HasPrefix(reviewer.ep.PublicURL, r.url+"/ingress/") {
 		t.Fatalf("reviewer's public URL = %s, want one under %s/ingress/", reviewer.ep.PublicURL, r.url)
 	}
+	publicClient := newHTTPClient(t)
 	eventually(t, "a caller outside the relay calls reviewer's public URL", func() error {
-		got, err := call(t.Context(), http.DefaultClient, reviewer.ep.PublicURL+"/hello")
+		got, err := call(t.Context(), publicClient, reviewer.ep.PublicURL+"/hello")
 		if err != nil {
 			return err
 		}
@@ -541,12 +566,14 @@ func TestRelayRunsAgentMesh(t *testing.T) {
 }
 
 func TestRelayConformance(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	r := startRelay(t, openRelayDir(t, relaydir.Settings{}), bin)
 	conformance.Run(t, conformance.Config{Binary: providerBinary(t), URL: r.url, Token: r.invite(t, "conformance").Token})
 }
 
 func TestRelayLetsBackARemovedAgent(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	r := startRelay(t, openRelayDir(t, relaydir.Settings{}), bin)
 	coder := joinAgent(t, r, "coder")
@@ -585,6 +612,7 @@ func TestRelayLetsBackARemovedAgent(t *testing.T) {
 }
 
 func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	d := openRelayDir(t, relaydir.Settings{})
 	r := startRelay(t, d, bin)
@@ -633,6 +661,7 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 }
 
 func TestRelayKeepsAnAgentWhoseInviteIsRefused(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	r := startRelay(t, openRelayDir(t, relaydir.Settings{}), bin)
 	inv := r.invite(t, "reviewer")
@@ -684,6 +713,14 @@ type browser struct {
 	relay string
 	hc    *http.Client
 	links atomic.Int32
+	wg    sync.WaitGroup
+}
+
+func newBrowser(t *testing.T, relayURL string) *browser {
+	t.Helper()
+	b := &browser{t: t, relay: relayURL, hc: newHTTPClient(t)}
+	t.Cleanup(b.wg.Wait)
+	return b
 }
 
 var approvalToken = regexp.MustCompile(`name="token" value="([^"]+)"`)
@@ -696,7 +733,11 @@ func (b *browser) notice(line string) {
 	}
 	link, _, _ := strings.Cut(rest, " (code ")
 	b.links.Add(1)
-	go b.approve(link)
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		b.approve(link)
+	}()
 }
 
 func (b *browser) logf(format string, args ...any) {
@@ -735,11 +776,12 @@ func signInRelayDir(t *testing.T, g *googletest.Google) relaydir.Dir {
 }
 
 func TestRelaySignIn(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	g := googletest.New(t, googletest.Account{Subject: "anna-id", Email: "anna@example.com", Verified: true, HostedDomain: "example.com"})
 	d := signInRelayDir(t, g)
 	r := startRelayWith(t, d, bin, g.Endpoints())
-	b := &browser{t: t, relay: r.url, hc: &http.Client{Timeout: 30 * time.Second}}
+	b := newBrowser(t, r.url)
 	stateDir := t.TempDir()
 	login := &relayLogin{RelayURL: r.url, StateDir: stateDir, HTTP: b.hc, Logf: b.logf, Poll: time.Second}
 
@@ -856,11 +898,12 @@ func TestRelaySignIn(t *testing.T) {
 }
 
 func TestRelayLetsBackASignedInAgentRemovedBeforeARestart(t *testing.T) {
+	t.Parallel()
 	bin := agentmeshOne(t)
 	g := googletest.New(t, googletest.Account{Subject: "anna-id", Email: "anna@example.com", Verified: true, HostedDomain: "example.com"})
 	d := signInRelayDir(t, g)
 	r := startRelayWith(t, d, bin, g.Endpoints())
-	b := &browser{t: t, relay: r.url, hc: &http.Client{Timeout: 30 * time.Second}}
+	b := newBrowser(t, r.url)
 	req := joinRequest("coder", r.url, "")
 	req.StateDir = t.TempDir()
 	var mu sync.Mutex
