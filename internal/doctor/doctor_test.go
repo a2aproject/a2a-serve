@@ -1166,6 +1166,24 @@ func TestLeftoverRestoreFix(t *testing.T) {
 	}
 }
 
+func TestCheckImageOfUnpublishedProfile(t *testing.T) {
+	t.Parallel()
+	for _, online := range []bool{false, true} {
+		m := newFakeMachine(t)
+		d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "claude"})
+		var got *Result
+		for _, r := range Run(t.Context(), m.Env(), Options{Dir: &d, Online: online}) {
+			if r.ID == "harness-image" {
+				got = &r
+			}
+		}
+		want := &Result{ID: "harness-image", Status: StatusWarn, Message: "image " + agentprofile.LocalImage("claude") + " not built yet; the first start builds it", Group: got.Group}
+		if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Result{})); diff != "" {
+			t.Fatalf("Run(online=%v) harness-image wrong result (-want +got) diff = %s", online, diff)
+		}
+	}
+}
+
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "unit")

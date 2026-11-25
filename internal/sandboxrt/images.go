@@ -33,10 +33,17 @@ type LocalBuild struct {
 
 // EnsureImage makes image available to docker: it uses a local copy or
 // pulls it. When the pull fails, it uses local, building it when it is
-// missing. It returns the image to run and a line describing what it did.
+// missing. An image that is local's own tag is never published, so it is
+// built without a pull. It returns the image to run and a line describing
+// what it did.
 func EnsureImage(ctx context.Context, image string, local *LocalBuild, progress io.Writer) (string, string, error) {
 	if ImageExists(ctx, image) {
 		return image, "using " + image, nil
+	}
+	if local != nil && local.Tag == image {
+		return buildLocal(ctx, local, progress, func(err error) error {
+			return fmt.Errorf("building %s: %w", image, err)
+		})
 	}
 	pullErr := PullImage(ctx, image, progress)
 	if pullErr == nil {
@@ -48,11 +55,18 @@ func EnsureImage(ctx context.Context, image string, local *LocalBuild, progress 
 	if ImageExists(ctx, local.Tag) {
 		return local.Tag, "using " + local.Tag, nil
 	}
+	return buildLocal(ctx, local, progress, func(err error) error {
+		return fmt.Errorf("docker pull %s failed (%v), and building it locally failed: %w", image, pullErr, err)
+	})
+}
+
+// buildLocal builds local, wrapping a build failure with fail.
+func buildLocal(ctx context.Context, local *LocalBuild, progress io.Writer, fail func(error) error) (string, string, error) {
 	build := exec.CommandContext(ctx, "docker", "build", "-t", local.Tag, "-")
 	build.Stdin = bytes.NewReader(local.Dockerfile)
 	build.Stdout, build.Stderr = progress, progress
 	if err := build.Run(); err != nil {
-		return "", "", fmt.Errorf("docker pull %s failed (%v), and building it locally failed: %w", image, pullErr, err)
+		return "", "", fail(err)
 	}
 	what := "built " + local.Tag
 	if local.Reason != "" {
