@@ -16,7 +16,10 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,11 +44,37 @@ var testTimings = Timings{
 	EditInterval:         50 * time.Millisecond,
 	GuestQuestionTimeout: 5 * time.Second,
 	SendRetry:            time.Millisecond,
+	StopGrace:            100 * time.Millisecond,
 }
+
+var migratedDB = sync.OnceValues(func() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "chat-seed-*")
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "server.db")
+	st, err := store.Open(path)
+	if err != nil {
+		return nil, errors.Join(err, os.RemoveAll(dir))
+	}
+	if err := st.Close(); err != nil {
+		return nil, errors.Join(err, os.RemoveAll(dir))
+	}
+	data, err := os.ReadFile(path)
+	return data, errors.Join(err, os.RemoveAll(dir))
+})
 
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	data, err := migratedDB()
+	if err != nil {
+		t.Fatalf("migratedDB() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "server.db")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	st, err := store.Open(path)
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}

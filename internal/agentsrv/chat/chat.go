@@ -19,6 +19,8 @@ package chat
 
 import "time"
 
+const defaultStopGrace = 5 * time.Second
+
 // Timings are the delays of the messenger.
 type Timings struct {
 	// EditInterval throttles streaming edits; messengers rate-limit them.
@@ -29,4 +31,15 @@ type Timings struct {
 	// GuestQuestionTimeout is how long the approvals of guests wait for an
 	// owner.
 	GuestQuestionTimeout time.Duration
+	// StopGrace bounds how long the stream of a turn lasts once the server began
+	// to stop and the turns ended, and how long each event it streams after the
+	// stop may take to show in its chat. Zero defaults to five seconds.
+	StopGrace time.Duration
+}
+
+func (t Timings) stopGrace() time.Duration {
+	if t.StopGrace <= 0 {
+		return defaultStopGrace
+	}
+	return t.StopGrace
 }

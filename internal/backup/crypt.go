@@ -45,11 +45,11 @@ const (
 // ErrWrongKey is returned when a snapshot doesn't decrypt with the key.
 var ErrWrongKey = errors.New("the snapshot doesn't decrypt with this backup key, or it is damaged")
 
-func newAEAD(passphrase string, salt []byte) (cipher.AEAD, error) {
+func newAEAD(passphrase string, salt []byte, n int) (cipher.AEAD, error) {
 	if passphrase == "" {
 		return nil, errors.New("empty backup key")
 	}
-	key, err := scrypt.Key([]byte(passphrase), salt, scryptN, scryptR, scryptP, 32)
+	key, err := scrypt.Key([]byte(passphrase), salt, n, scryptR, scryptP, 32)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +81,17 @@ type encryptWriter struct {
 // Encrypt returns a writer which encrypts what is written to it into w.
 // Close writes the last chunk; it doesn't close w.
 func Encrypt(w io.Writer, passphrase string) (io.WriteCloser, error) {
+	return encryptWith(w, passphrase, scryptN)
+}
+
+func encryptWith(w io.Writer, passphrase string, n int) (io.WriteCloser, error) {
 	header := make([]byte, len(magic)+saltLen+prefixLen)
 	copy(header, magic)
 	if _, err := rand.Read(header[len(magic):]); err != nil {
 		return nil, err
 	}
 	salt := header[len(magic) : len(magic)+saltLen]
-	aead, err := newAEAD(passphrase, salt)
+	aead, err := newAEAD(passphrase, salt, n)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +139,10 @@ type decryptReader struct {
 
 // Decrypt returns a reader of the plaintext of the snapshot r.
 func Decrypt(r io.Reader, passphrase string) (io.Reader, error) {
+	return decryptWith(r, passphrase, scryptN)
+}
+
+func decryptWith(r io.Reader, passphrase string, n int) (io.Reader, error) {
 	header := make([]byte, len(magic)+saltLen+prefixLen)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, fmt.Errorf("reading the snapshot header: %w", err)
@@ -142,7 +150,7 @@ func Decrypt(r io.Reader, passphrase string) (io.Reader, error) {
 	if string(header[:len(magic)]) != magic {
 		return nil, errors.New("not an a2a-serve backup snapshot")
 	}
-	aead, err := newAEAD(passphrase, header[len(magic):len(magic)+saltLen])
+	aead, err := newAEAD(passphrase, header[len(magic):len(magic)+saltLen], n)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 )
 
@@ -71,8 +70,9 @@ type relay struct {
 }
 
 type relayOptions struct {
-	allow  []string
-	secret string
+	allow       []string
+	secret      string
+	readTimeout time.Duration
 }
 
 func newRelay(t *testing.T, account googletest.Account, o relayOptions) *relay {
@@ -104,7 +104,8 @@ func (r *relay) restart(t *testing.T, o relayOptions) {
 		URL: r.url, Secret: o.secret, AllowEmails: o.allow,
 		ClientID: googleApp, ClientSecret: r.google.Secret, Google: r.google.Endpoints(),
 		HTTP: r.hc, Now: r.clock.Now,
-		Client: func(req *http.Request) string { return req.Header.Get(clientHeader) },
+		Client:      func(req *http.Request) string { return req.Header.Get(clientHeader) },
+		ReadTimeout: o.readTimeout,
 	})
 	if err != nil {
 		t.Fatalf("signin.New() error = %v", err)
@@ -622,7 +623,7 @@ func TestASignInKeepsItsLastThreeTripsToGoogle(t *testing.T) {
 
 func TestSignInDropsBodiesSentTooSlowly(t *testing.T) {
 	t.Parallel()
-	r := newRelay(t, anna, relayOptions{})
+	r := newRelay(t, anna, relayOptions{readTimeout: 100 * time.Millisecond})
 	u, err := url.Parse(r.url)
 	if err != nil {
 		t.Fatal(err)
@@ -640,7 +641,7 @@ func TestSignInDropsBodiesSentTooSlowly(t *testing.T) {
 	if _, err := io.WriteString(conn, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(3 * jsonhttp.UnauthenticatedReadTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 

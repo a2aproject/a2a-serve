@@ -327,7 +327,7 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	}
 	last := batch[len(batch)-1].in
 	if ctx.Err() != nil {
-		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGrace)
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.stopGrace())
 		defer cancel()
 		c.reply(stopCtx, ch, last, "The server restarted before your message reached the agent. Send it again.")
 		return
@@ -533,9 +533,10 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 	if c.voiceReplies(ctx, p) {
 		req = withVoiceReply(req)
 	}
-	streamCtx, stopStream := outlive(ctx, c.turnsEnded, stopGrace)
+	grace := c.stopGrace()
+	streamCtx, stopStream := outlive(ctx, c.turnsEnded, grace)
 	defer stopStream()
-	render := &graceContext{ctx: ctx, grace: stopGrace}
+	render := &graceContext{ctx: ctx, grace: grace}
 	defer render.stop()
 	rd := newRenderer(c.chat, ch, conv, replyTo, p)
 	rd.onWaitForOwner = func(taskID a2a.TaskID) { c.chat.followOwnerAnswer(ctx, ch, conv, p, taskID) }
@@ -568,10 +569,12 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 	rd.finish(render.get())
 }
 
-// stopGrace bounds how long the stream of a turn lasts once the server began
-// to stop and the turns ended, and how long each event it streams after the
-// stop may take to show in its chat.
-const stopGrace = 5 * time.Second
+func (c *ChatTurns) stopGrace() time.Duration {
+	if c.chat == nil {
+		return defaultStopGrace
+	}
+	return c.chat.timings.stopGrace()
+}
 
 // outlive returns a context with the values of ctx that ends grace after
 // ctx ended and then ended returned, or when the returned function is called.

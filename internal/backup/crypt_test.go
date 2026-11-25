@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 )
@@ -49,17 +50,20 @@ func decrypt(enc []byte, key string) ([]byte, error) {
 func TestEncryptRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{0, 1, chunkSize - 1, chunkSize, chunkSize + 1, 3 * chunkSize} {
-		plain := make([]byte, size)
-		if _, err := rand.Read(plain); err != nil {
-			t.Fatal(err)
-		}
-		got, err := decrypt(encrypt(t, plain, "passphrase"), "passphrase")
-		if err != nil {
-			t.Fatalf("Decrypt() of %d bytes error = %v", size, err)
-		}
-		if !bytes.Equal(got, plain) {
-			t.Fatalf("Decrypt() of %d bytes returned %d different bytes", size, len(got))
-		}
+		t.Run(fmt.Sprintf("%d", size), func(t *testing.T) {
+			t.Parallel()
+			plain := make([]byte, size)
+			if _, err := rand.Read(plain); err != nil {
+				t.Fatal(err)
+			}
+			got, err := decrypt(encrypt(t, plain, "passphrase"), "passphrase")
+			if err != nil {
+				t.Fatalf("Decrypt() of %d bytes error = %v", size, err)
+			}
+			if !bytes.Equal(got, plain) {
+				t.Fatalf("Decrypt() of %d bytes returned %d different bytes", size, len(got))
+			}
+		})
 	}
 }
 

@@ -61,14 +61,14 @@ func TestRestoreMovesAsideStateWithoutAgentData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
 	root := t.TempDir()
 	d := newCommandState(t, root, nil)
 
-	notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
+	notes, err := restoreFast(ctx, dest, snap.Name, "k", root, false)
 	if err != nil {
 		t.Fatalf("Restore() error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestRestoreRefusesStateWithAgentData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -153,7 +153,7 @@ func TestRestoreRefusesStateWithAgentData(t *testing.T) {
 			}
 			before := paths(t, root)
 
-			_, err := Restore(ctx, dest, snap.Name, "k", root, false)
+			_, err := restoreFast(ctx, dest, snap.Name, "k", root, false)
 
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Restore() error = %v, want %q", err, tc.wantErr)
