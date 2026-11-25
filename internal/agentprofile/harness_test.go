@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"gopkg.in/yaml.v3"
 )
 
 func TestOpencodeContinuesAfterDeniedTool(t *testing.T) {
@@ -64,8 +65,8 @@ func TestLookup(t *testing.T) {
 	}{
 		{name: "opencode", want: Command{Path: "opencode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
-		{name: "claude", want: Command{Path: "claude-agent-acp", Dir: "/w"}, image: ImageRepo + "claude:" + ImageTag},
-		{name: "copilot", want: Command{Path: "copilot", Args: []string{"--acp"}, Dir: "/w", Env: copilotEnv}, image: ImageRepo + "copilot:" + ImageTag},
+		{name: "claude", want: Command{Path: "claude-agent-acp", Dir: "/w"}, image: LocalImage("claude")},
+		{name: "copilot", want: Command{Path: "copilot", Args: []string{"--acp"}, Dir: "/w", Env: copilotEnv}, image: LocalImage("copilot")},
 		{name: "opencode", command: []string{"opencode", "acp", "--print-logs"}, want: Command{Path: "opencode", Args: []string{"acp", "--print-logs"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, want: Command{Path: "gemini", Args: []string{"--experimental-acp"}, Dir: "/w"}},
@@ -277,6 +278,46 @@ func TestDockerfiles(t *testing.T) {
 		if _, ok := Dockerfile(name); !ok {
 			t.Errorf("Dockerfile(%q) missing", name)
 		}
+	}
+}
+
+func TestHarnessImagesWorkflowPublishesOnlyPulledImages(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../.github/workflows/harness-images.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs struct {
+			Publish struct {
+				Strategy struct {
+					Matrix struct {
+						Include []struct {
+							Harness string `yaml:"harness"`
+							Publish bool   `yaml:"publish"`
+						} `yaml:"include"`
+					} `yaml:"matrix"`
+				} `yaml:"strategy"`
+			} `yaml:"publish"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	got := map[string]bool{}
+	for _, h := range workflow.Jobs.Publish.Strategy.Matrix.Include {
+		got[h.Harness] = h.Publish
+	}
+	want := map[string]bool{}
+	for _, name := range ProfileNames() {
+		p, err := Lookup(name, nil)
+		if err != nil {
+			t.Fatalf("Lookup(%q) error = %v", name, err)
+		}
+		want[name] = strings.HasPrefix(p.Image(), ImageRepo)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("harness-images.yaml publish matrix wrong result (-want +got) diff = %s", diff)
 	}
 }
 

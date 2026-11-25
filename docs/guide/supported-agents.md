@@ -5,8 +5,8 @@ The server runs opencode, Claude Code, GitHub Copilot CLI or any other ACP agent
 | Agent | Image |
 | --- | --- |
 | `opencode` | `ghcr.io/a2aproject/harness-opencode`, with the latest `opencode-ai` at publish time |
-| `claude` | `ghcr.io/a2aproject/harness-claude`, with the latest Claude Code and `claude-agent-acp` at publish time |
-| `copilot` | Built on this machine at the first start, with the latest GitHub Copilot CLI |
+| `claude` | Built on your machine on the first start, with the latest Claude Code and `claude-agent-acp` at build time |
+| `copilot` | Built on your machine on the first start, with the latest GitHub Copilot CLI at build time |
 | `acp --command …` | Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com), in any image with `--image` |
 
 `--command` also replaces the command of `opencode`, `claude` or `copilot`, as in `a2a-serve start opencode --command "opencode acp --print-logs"`. The images include Node.js, `git`, `ripgrep`, `python3`, `npx`, `uvx` and the `a2a` CLI.

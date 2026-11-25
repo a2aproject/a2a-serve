@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // dialTimeout bounds a connection to the endpoint.
@@ -40,6 +42,8 @@ type Endpoint struct {
 	socket string
 	// url is the URL of the requests, with the host "tools" for a socket.
 	url *url.URL
+	// token, when non-empty, is sent in [HeaderToken] on every request.
+	token string
 }
 
 // Parse parses an http://, https:// or unix:///path URL.
@@ -62,6 +66,20 @@ func Parse(v string) (Endpoint, error) {
 
 // Unix reports whether the endpoint is a Unix socket.
 func (e Endpoint) Unix() bool { return e.socket != "" }
+
+// WithToken returns a copy of e that sends token in [HeaderToken] on every
+// request.
+func (e Endpoint) WithToken(token string) (Endpoint, error) {
+	if token != "" && !httpguts.ValidHeaderFieldValue(token) {
+		return Endpoint{}, errors.New("invalid tools endpoint token: has a character that a header can't carry")
+	}
+	e.token = token
+	return e, nil
+}
+
+// Token returns the token that the endpoint's requests carry in
+// [HeaderToken], or "".
+func (e Endpoint) Token() string { return e.token }
 
 // URL returns the URL of the endpoint's requests, which reaches it only
 // through [Endpoint.Transport] for a Unix socket.
@@ -97,15 +115,28 @@ func (e Endpoint) Transport() *http.Transport {
 	return t
 }
 
-// Proxy returns a transport for the agent's requests from the sandbox. It
-// refuses a request to another path than the endpoint's, or with a method
-// that streamable HTTP doesn't use, without sending it. It sends the others
-// to the endpoint with the endpoint's scheme, host and query in place of the
-// request's, so that a client given only [Endpoint.Path] never sees the
-// query. It drops the request's A2A-Sidecar- headers and sets HeaderOrigin to
-// OriginSandbox, so that the host can tell the agent from a2a-serve-sidecar.
-func (e Endpoint) Proxy() http.RoundTripper {
-	t := e.Transport()
+// Proxy forwards the agent's requests from the sandbox to the endpoint.
+type Proxy struct {
+	ep        Endpoint
+	transport *http.Transport
+}
+
+// Proxy returns the proxy of the agent's requests from the sandbox, whose
+// processes share its connections to the endpoint.
+func (e Endpoint) Proxy() *Proxy { return &Proxy{ep: e, transport: e.Transport()} }
+
+// For returns a transport for the requests of the agent process of the A2A
+// context contextID; task returns the task that the process works on, or
+// "", and may be nil. It refuses a request to another path than the
+// endpoint's, or with a method that streamable HTTP doesn't use, without
+// sending it. It sends the others to the endpoint with the endpoint's
+// scheme, host and query in place of the request's, so that a client given
+// only [Endpoint.Path] never sees the query. It drops the request's
+// A2A-Sidecar- headers, sets HeaderOrigin to OriginSandbox, so that the host
+// can tell the agent from a2a-serve-sidecar, and sets HeaderContext and
+// HeaderTask to the process's context and task when it has them.
+func (p *Proxy) For(contextID string, task func() string) http.RoundTripper {
+	e := p.ep
 	path := e.url.EscapedPath()
 	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
@@ -126,10 +157,24 @@ func (e Endpoint) Proxy() http.RoundTripper {
 			}
 		}
 		r.Header.Set(HeaderOrigin, OriginSandbox)
+		if contextID != "" && httpguts.ValidHeaderFieldValue(contextID) {
+			r.Header.Set(HeaderContext, contextID)
+			if task != nil {
+				if t := task(); t != "" && httpguts.ValidHeaderFieldValue(t) {
+					r.Header.Set(HeaderTask, t)
+				}
+			}
+		}
+		if e.token != "" {
+			r.Header.Set(HeaderToken, e.token)
+		}
 		r.URL.Scheme, r.URL.Host, r.Host, r.URL.RawQuery = e.url.Scheme, e.url.Host, e.url.Host, e.url.RawQuery
-		return t.RoundTrip(r)
+		return p.transport.RoundTrip(r)
 	})
 }
+
+// CloseIdleConnections closes the proxy's idle connections to the endpoint.
+func (p *Proxy) CloseIdleConnections() { p.transport.CloseIdleConnections() }
 
 // refusal returns an answer to r with status and the text msg.
 func refusal(r *http.Request, status int, msg string) *http.Response {

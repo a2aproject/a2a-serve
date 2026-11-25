@@ -79,8 +79,12 @@ func TestToolsReachTheHostThroughTheBoundary(t *testing.T) {
 			if got, want := testutil.AllArtifactText(task), "mcp result: echo: through the boundary"; got != want {
 				t.Fatalf("Client.SendMessage(mcpcall) = %q, want %q", got, want)
 			}
-			if got := len(tools.Records("tools/call")); got != 1 {
-				t.Fatalf("host got %d tools/call, want 1", got)
+			calls := tools.Records("tools/call")
+			if len(calls) != 1 {
+				t.Fatalf("host got %d tools/call, want 1", len(calls))
+			}
+			if calls[0].Context != "context-a" || calls[0].Task != string(task.ID) {
+				t.Fatalf("host got tools/call with context %q and task %q, want %q and %q", calls[0].Context, calls[0].Task, "context-a", task.ID)
 			}
 			if got := len(tools.Records(hosttools.MethodBeforeTool)); got != 1 {
 				t.Fatalf("host got %d hooks/beforeTool, want 1", got)

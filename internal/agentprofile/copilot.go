@@ -27,8 +27,10 @@ var copilotEnv = []string{"COPILOT_AUTO_UPDATE=false", "COPILOT_TELEMETRY_DISABL
 
 type copilot struct{}
 
-func (copilot) Name() string  { return "copilot" }
-func (copilot) Image() string { return ImageRepo + "copilot:" + ImageTag }
+func (copilot) Name() string { return "copilot" }
+
+// Image is built on each machine; the project doesn't publish a Copilot image.
+func (copilot) Image() string { return LocalImage("copilot") }
 
 func (copilot) Command(ws Workspace) Command {
 	return Command{Path: "copilot", Args: []string{"--acp"}, Dir: ws.Dir, Env: slices.Clone(copilotEnv)}

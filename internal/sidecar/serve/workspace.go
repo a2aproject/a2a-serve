@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
@@ -160,15 +162,40 @@ func parseWorkspaceURL(v, sync string) (workspace, error) {
 	if err != nil {
 		return workspace{}, usagef("invalid --workspace: the URL doesn't parse; want http://host:port, https://host:port or unix:///path")
 	}
-	client, err := fsys.Client(v)
+	client, err := workspaceClient(v, "")
 	if err != nil {
-		return workspace{}, usagef("invalid --workspace: %w", err)
+		return workspace{}, err
 	}
 	shown := u.Scheme + "://" + u.Host
 	if u.Scheme == "unix" {
 		shown = "unix://" + u.Path
 	}
 	return workspace{kind: WorkspaceURL, client: client, shown: shown, sync: sync}, nil
+}
+
+// withToken rebuilds the URL workspace client to attach token in
+// [egress.ProxyHeaderToken] on every request.
+func (w *workspace) withToken(rawURL, token string) error {
+	client, err := workspaceClient(rawURL, token)
+	if err != nil {
+		return err
+	}
+	w.client = client
+	return nil
+}
+
+// workspaceClient returns the client of the file server at rawURL, whose
+// requests carry token, if any, and the A2A context and task they are for.
+func workspaceClient(rawURL, token string) (fsys.FS, error) {
+	opts := fsys.ClientOptions{RequestHeader: contextHeader}
+	if token != "" {
+		opts.Header = http.Header{egress.ProxyHeaderToken: {token}}
+	}
+	client, err := fsys.ClientWithOptions(rawURL, opts)
+	if err != nil {
+		return nil, usagef("invalid --workspace: %w", err)
+	}
+	return client, nil
 }
 
 // check checks that the host serves the workspace of a URL: that its root
@@ -244,8 +271,9 @@ func (w workspace) tree() fsys.FS {
 //
 // With turn sync, each process sees its private directory at its path on
 // the host: the agent profiles expect the workspace at the same path on
-// both sides. A live tree has no path on the host, so the processes see it
-// at the default path of the core.
+// both sides, and its requests to the tree of a URL are for its context.
+// A live tree has no path on the host, so the processes see it at the
+// default path of the core.
 func (w workspace) build(tree fsys.FS, stateDir string, synced func(context.Context, string, []fsys.Info)) (contexts, main a2aserve.Workspace, err error) {
 	if w.served() {
 		ws := a2aserve.Live(tree, a2aserve.LiveOptions{})
@@ -259,8 +287,8 @@ func (w workspace) build(tree fsys.FS, stateDir string, synced func(context.Cont
 	if err := os.MkdirAll(empty, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("creating the workspace of the main agent process: %w", err)
 	}
-	opts := a2aserve.TurnSyncOptions{MaxBytes: defaultWorkspaceLimits.bytes, MaxEntries: defaultWorkspaceLimits.entries, Synced: synced}
-	return a2aserve.TurnSynced(tree, opts), a2aserve.SharedDir(empty), nil
+	opts := a2aserve.TurnSyncOptions{Dir: filepath.Join(stateDir, "synced"), MaxBytes: defaultWorkspaceLimits.bytes, MaxEntries: defaultWorkspaceLimits.entries, Synced: synced}
+	return newContextWorkspaces(tree, opts), a2aserve.SharedDir(empty), nil
 }
 
 // explain words the failure of a turn whose changes the workspace didn't

@@ -24,7 +24,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/core/a2aserve"
 	"github.com/a2aproject/a2a-serve/core/approval"
+	"github.com/a2aproject/a2a-serve/core/egress"
 	"github.com/a2aproject/a2a-serve/core/fsys"
 	"github.com/a2aproject/a2a-serve/internal/sidecar/serve"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -270,6 +273,75 @@ func TestURLWorkspaceWithTurnSyncChangesTheHostsTreeAfterTheTurn(t *testing.T) {
 	}
 }
 
+// contextTrees is a file server that keeps a tree for each A2A context,
+// and one for the requests of no context.
+type contextTrees struct {
+	mu    sync.Mutex
+	trees map[string]fsys.FS
+	// tasks are the tasks that the requests of each context named.
+	tasks map[string][]string
+}
+
+func (c *contextTrees) tree(contextID string) fsys.FS {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.trees[contextID] == nil {
+		c.trees[contextID] = fsys.Memory()
+	}
+	return c.trees[contextID]
+}
+
+func (c *contextTrees) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	contextID := r.Header.Get("A2A-Sidecar-Context")
+	if task := r.Header.Get("A2A-Sidecar-Task"); task != "" {
+		c.mu.Lock()
+		if !slices.Contains(c.tasks[contextID], task) {
+			c.tasks[contextID] = append(c.tasks[contextID], task)
+		}
+		c.mu.Unlock()
+	}
+	fsys.Handler(c.tree(contextID)).ServeHTTP(w, r)
+}
+
+func TestURLWorkspaceWithTurnSyncTellsTheHostTheContextOfEachRequest(t *testing.T) {
+	t.Parallel()
+	host := &contextTrees{trees: map[string]fsys.FS{}, tasks: map[string][]string{}}
+	ln, err := net.Listen("unix", filepath.Join(testutil.ShortTempDir(t), "fs.sock"))
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	srv := httptest.NewUnstartedServer(host)
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	_, c := startWorkspace(t, "--workspace", "unix://"+ln.Addr().String())
+
+	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
+	done := sendWant(t, c, allow(t, waiting), a2a.TaskStateCompleted)
+	readB := sendWant(t, c, textIn("context-b", "read hello.txt"), a2a.TaskStateCompleted)
+
+	if got, err := readTree(t, host.tree("context-a"), "hello.txt"); err != nil || got != "written by fakeacp\n" {
+		t.Fatalf("reading hello.txt of the tree of context-a = %q, %v, want the agent's file", got, err)
+	}
+	for _, contextID := range []string{"context-b", ""} {
+		if _, err := readTree(t, host.tree(contextID), "hello.txt"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("reading hello.txt of the tree of context %q error = %v, want %v", contextID, err, fs.ErrNotExist)
+		}
+	}
+	if got := testutil.AllArtifactText(readB); strings.Contains(got, "written by fakeacp") {
+		t.Fatalf("read hello.txt in context-b = %q, want it kept from context-a", got)
+	}
+	want := &changeset{Files: map[string]string{"hello.txt": "written by fakeacp\n"}}
+	if diff := cmp.Diff(want, changesOf(t, done)); diff != "" {
+		t.Fatalf("changes of the turn wrong result (-want +got) diff = %s", diff)
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if !slices.Contains(host.tasks["context-a"], string(done.ID)) {
+		t.Fatalf("tasks of the requests of context-a = %v, want %s among them", host.tasks["context-a"], done.ID)
+	}
+}
+
 func TestURLWorkspaceConflictFailsTheTask(t *testing.T) {
 	t.Parallel()
 	tree := fsys.Memory()
@@ -291,9 +363,25 @@ func TestURLWorkspaceConflictFailsTheTask(t *testing.T) {
 
 func TestURLWorkspaceThatStopsAnsweringFailsTheTurnWithoutItsPath(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.StripPrefix("/secret-value", fsys.Handler(fsys.Memory())))
+	const hostToken = "ws-host-token"
+	fsHandler := http.StripPrefix("/secret-value", fsys.Handler(fsys.Memory()))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(egress.ProxyHeaderToken) != hostToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fsHandler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
-	_, c := startWorkspace(t, "--workspace", srv.URL+"/secret-value/")
+	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
+	r := startWithStdin(t, hostToken+"\n", "--sandbox", "local", "--command", fakeACP, "--listen", "unix://"+sock, "--workspace", srv.URL+"/secret-value/")
+	if !r.ready.Ready {
+		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
+	}
+	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
+	if err != nil {
+		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
+	}
 
 	waiting := sendWant(t, c, textIn("context-a", "writeask hello.txt"), a2a.TaskStateInputRequired)
 	srv.Close()

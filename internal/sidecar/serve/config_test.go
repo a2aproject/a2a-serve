@@ -134,6 +134,19 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		{name: "tools on a socket with local", edit: func(c *serve.Config) { c.Tools = "unix:///run/tools.sock" }, want: "--tools unix:// needs --sandbox docker"},
 		{name: "too many processes", edit: func(c *serve.Config) { c.MaxProcesses = 65 }, want: "invalid --max-processes 65: want 1 to 64"},
 		{name: "negative processes", edit: func(c *serve.Config) { c.MaxProcesses = -1 }, want: "invalid --max-processes -1"},
+		{name: "loopback tools without stdin", edit: func(c *serve.Config) { c.Tools = "http://127.0.0.1:9000/mcp" }, want: "loopback control endpoints need a host token on stdin"},
+		{name: "loopback tools with empty stdin", edit: func(c *serve.Config) {
+			c.Tools, c.Stdin = "http://127.0.0.1:9000/mcp", strings.NewReader("\n")
+		}, want: "loopback host token: stdin had no value"},
+		{name: "loopback tools with invalid host token", edit: func(c *serve.Config) {
+			c.Tools, c.Stdin = "http://127.0.0.1:9000/mcp", strings.NewReader("bad\x7ftoken\n")
+		}, want: "loopback host token: has a character that a header can't carry"},
+		{name: "loopback workspace conflicts with stdin contact auth", edit: func(c *serve.Config) {
+			c.Workspace = "http://127.0.0.1:9000"
+			c.Contacts = []string{"r=https://r.example.com"}
+			c.ContactAuth = []string{"r=Bearer -"}
+			c.Stdin = strings.NewReader("host-token\ncontact-token\n")
+		}, want: "--contact-auth r: stdin carries the loopback host token; pass this value as env:VAR"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,7 +186,7 @@ func TestStartFailsWhenTheWorkspaceServerDoesntAnswer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := serve.Start(context.Background(), serve.Config{Agent: "opencode", Workspace: tc.workspace, Sandbox: serve.SandboxLocal})
+			_, err := serve.Start(context.Background(), serve.Config{Agent: "opencode", Workspace: tc.workspace, Sandbox: serve.SandboxLocal, Stdin: strings.NewReader("host-token\n")})
 
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("serve.Start() error = %v, want %q", err, tc.want)

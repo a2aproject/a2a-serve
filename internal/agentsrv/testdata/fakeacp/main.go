@@ -74,6 +74,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -887,13 +888,20 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 func (a *agent) mcpCall(sid string, s *session, arg string) {
 	server, rest, _ := strings.Cut(arg, " ")
 	tool, text, _ := strings.Cut(rest, " ")
-	var url string
+	var (
+		url     string
+		headers http.Header
+	)
 	for _, raw := range s.MCPServers {
 		var srv struct {
 			Type, Name, URL string
+			Headers         []struct{ Name, Value string }
 		}
 		if json.Unmarshal(raw, &srv) == nil && srv.Name == server && srv.Type == "http" {
-			url = srv.URL
+			url, headers = srv.URL, http.Header{}
+			for _, h := range srv.Headers {
+				headers.Add(h.Name, h.Value)
+			}
 		}
 	}
 	if url == "" {
@@ -921,7 +929,7 @@ func (a *agent) mcpCall(sid string, s *session, arg string) {
 		return
 	}
 	a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "in_progress"})
-	out, err := callMCPTool(url, tool, text)
+	out, err := callMCPTool(url, headers, tool, text)
 	if err != nil {
 		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "failed"})
 		a.chunk(sid, "mcp error: "+err.Error())
@@ -933,8 +941,8 @@ func (a *agent) mcpCall(sid string, s *session, arg string) {
 }
 
 // callMCPTool calls the tool of the streamable HTTP MCP server at url,
-// with a session of its own.
-func callMCPTool(url, tool, text string) (string, error) {
+// with a session of its own and headers on every request.
+func callMCPTool(url string, headers http.Header, tool, text string) (string, error) {
 	c := &http.Client{Timeout: 30 * time.Second}
 	session := ""
 	post := func(msg map[string]any) (json.RawMessage, error) {
@@ -947,6 +955,7 @@ func callMCPTool(url, tool, text string) (string, error) {
 		if err != nil {
 			return nil, err
 		}
+		maps.Copy(req.Header, headers)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		if session != "" {

@@ -6,7 +6,11 @@ The protocol maps one to one onto the Go interface `fsys.FS` in `core/fsys`. In 
 
 ## Transport
 
-The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` or `https://host:port` with an optional path prefix. Requests are plain HTTP/1.1. The protocol has no authentication, so serve it only on a Unix socket or a loopback address.
+The server listens on a Unix socket, `unix:///path/to/socket`, or on HTTP, `http://host:port` or `https://host:port` with an optional path prefix. Requests are plain HTTP/1.1. When `a2a-serve-sidecar --workspace` connects over loopback `http://`, it sends the host's token in `A2A-Sidecar-Token`; see [Loopback authentication](a2a-serve-sidecar.md#loopback-authentication).
+
+## Context
+
+With `--workspace-sync turn`, each request of `a2a-serve-sidecar` for an agent process carries the A2A context of the process in `A2A-Sidecar-Context`, and the task of the turn in `A2A-Sidecar-Task` while a turn runs. A server can keep a tree for each context, so that parallel contexts don't share files. Keep the tree of a context as long as its caller may send it more tasks: `a2a-serve-sidecar` attaches a context again after its process stops, and doesn't say when a context ended. The check at start carries no context. With `--workspace-sync live`, every process shares the tree, and requests carry no context.
 
 ## Paths
 

@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -367,5 +368,108 @@ func TestHandlerHidesTheTextOfServerErrors(t *testing.T) {
 
 	if err == nil || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("Client.Stat() of a failing tree error = %v, want an error without its inner text", err)
+	}
+}
+
+func TestClientWithOptionsSendsHeaders(t *testing.T) {
+	t.Parallel()
+	const token = "fs-host-token"
+	var got string
+	h := fsys.Handler(fsys.Memory())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("A2A-Sidecar-Token")
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := fsys.ClientWithOptions(srv.URL, fsys.ClientOptions{
+		Header: http.Header{"A2A-Sidecar-Token": {token}},
+	})
+	if err != nil {
+		t.Fatalf("fsys.ClientWithOptions() error = %v", err)
+	}
+	if _, err := c.Stat(context.Background(), "."); err != nil {
+		t.Fatalf("Client.Stat() error = %v", err)
+	}
+	if got != token {
+		t.Fatalf("file server got A2A-Sidecar-Token = %q, want %q", got, token)
+	}
+}
+
+func TestClientWithOptionsRejectsInvalidHeader(t *testing.T) {
+	t.Parallel()
+	_, err := fsys.ClientWithOptions("http://127.0.0.1:9000", fsys.ClientOptions{
+		Header: http.Header{"A2A-Sidecar-Token": {"secret\r\nX-Bad: 1"}},
+	})
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("fsys.ClientWithOptions() error = %v, want an error without echoing the header value", err)
+	}
+}
+
+type callerKey struct{}
+
+func TestClientWithOptionsSendsRequestHeaders(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{name: "caller in context", ctx: context.WithValue(context.Background(), callerKey{}, "ctx-1"), want: "ctx-1"},
+		{name: "no caller", ctx: context.Background(), want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got, gotToken string
+			h := fsys.Handler(fsys.Memory())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got, gotToken = r.Header.Get("A2A-Sidecar-Context"), r.Header.Get("A2A-Sidecar-Token")
+				h.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			c, err := fsys.ClientWithOptions(srv.URL, fsys.ClientOptions{
+				Header: http.Header{"A2A-Sidecar-Token": {"tok"}},
+				RequestHeader: func(ctx context.Context) http.Header {
+					id, ok := ctx.Value(callerKey{}).(string)
+					if !ok {
+						return nil
+					}
+					return http.Header{"A2A-Sidecar-Context": {id}}
+				},
+			})
+			if err != nil {
+				t.Fatalf("fsys.ClientWithOptions() error = %v", err)
+			}
+
+			if _, err := c.Stat(tc.ctx, "."); err != nil {
+				t.Fatalf("Client.Stat() error = %v", err)
+			}
+
+			if got != tc.want || gotToken != "tok" {
+				t.Fatalf("file server got A2A-Sidecar-Context = %q and A2A-Sidecar-Token = %q, want %q and %q", got, gotToken, tc.want, "tok")
+			}
+		})
+	}
+}
+
+func TestClientWithOptionsRefusesInvalidRequestHeader(t *testing.T) {
+	t.Parallel()
+	var sent atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { sent.Store(true) }))
+	t.Cleanup(srv.Close)
+	c, err := fsys.ClientWithOptions(srv.URL, fsys.ClientOptions{
+		RequestHeader: func(context.Context) http.Header {
+			return http.Header{"A2A-Sidecar-Context": {"secret\r\nX-Bad: 1"}}
+		},
+	})
+	if err != nil {
+		t.Fatalf("fsys.ClientWithOptions() error = %v", err)
+	}
+
+	_, err = c.Stat(context.Background(), ".")
+
+	if err == nil || strings.Contains(err.Error(), "secret") || sent.Load() {
+		t.Fatalf("Client.Stat() error = %v, sent = %v; want an error without the header value, and no request", err, sent.Load())
 	}
 }

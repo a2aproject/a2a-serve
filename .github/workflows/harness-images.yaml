@@ -1,6 +1,7 @@
 # Publishes the harness images that `a2a-serve start <harness>` pulls by default,
 # ghcr.io/a2aproject/harness-<name>:latest. Without them every first run builds
-# the image locally.
+# the image locally. Images with publish: false are only built and checked;
+# the agentprofile tests keep this list in line with the profiles.
 name: Harness images
 
 on:
@@ -27,16 +28,25 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        harness: [ opencode, claude ]
+        include:
+          - harness: opencode
+            publish: true
+          # Built on each machine: whoever preinstalls Claude Code has to
+          # accept Anthropic's Commercial Terms.
+          - harness: claude
+            publish: false
+          # Built on each machine; the project doesn't publish a Copilot image.
+          - harness: copilot
+            publish: false
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Build
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' || !matrix.publish
       run: docker build -t harness internal/agentprofile/images/${{ matrix.harness }}
 
     - name: Check git reads reftable repositories
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' || !matrix.publish
       run: |
         docker run --rm harness sh -euc '
           git --version
@@ -44,7 +54,7 @@ jobs:
           git -C /tmp/r status'
 
     - name: Build and push
-      if: github.event_name != 'pull_request'
+      if: github.event_name != 'pull_request' && matrix.publish
       env:
         IMAGE: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.harness }}
         CONTEXT: internal/agentprofile/images/${{ matrix.harness }}

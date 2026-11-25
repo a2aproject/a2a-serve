@@ -256,8 +256,11 @@ func (opencode) resetPermissions(home string) error {
 
 type claude struct{}
 
-func (claude) Name() string  { return "claude" }
-func (claude) Image() string { return ImageRepo + "claude:" + ImageTag }
+func (claude) Name() string { return "claude" }
+
+// Image is built on each machine. Anthropic's terms ask whoever preinstalls
+// Claude Code to accept its Commercial Terms, so its image isn't published.
+func (claude) Image() string { return LocalImage("claude") }
 
 func (claude) Command(ws Workspace) Command {
 	return Command{Path: "claude-agent-acp", Dir: ws.Dir}

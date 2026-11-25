@@ -16,6 +16,7 @@ package refhost
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,12 +51,18 @@ type ToolsConfig struct {
 	Stream bool
 	// OnRecord sees each message the host gets.
 	OnRecord func(Record)
+	// Token, when non-empty, requires every request to carry it in
+	// [hosttools.HeaderToken].
+	Token string
 }
 
 // Record is a message the tools endpoint got.
 type Record struct {
 	Method string
 	Params json.RawMessage
+	// Context and Task are the request's [hosttools.HeaderContext] and
+	// [hosttools.HeaderTask].
+	Context, Task string
 }
 
 // Tools is the reference host's tools endpoint: an MCP server over
@@ -106,6 +113,10 @@ type rpcError struct {
 
 // ServeHTTP serves the MCP endpoint.
 func (h *Tools) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get(hosttools.HeaderToken)), []byte(h.cfg.Token)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 	case http.MethodDelete:
@@ -147,7 +158,7 @@ func (h *Tools) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.record(m)
+	h.record(Record{Method: m.Method, Params: m.Params, Context: r.Header.Get(hosttools.HeaderContext), Task: r.Header.Get(hosttools.HeaderTask)})
 	if len(m.ID) == 0 {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -236,8 +247,7 @@ func (h *Tools) handle(m message) (any, *rpcError) {
 	return nil, &rpcError{-32601, "method not found: " + m.Method}
 }
 
-func (h *Tools) record(m message) {
-	rec := Record{Method: m.Method, Params: m.Params}
+func (h *Tools) record(rec Record) {
 	h.mu.Lock()
 	if len(h.records) >= maxToolRecords {
 		h.records = slices.Delete(h.records, 0, 1)

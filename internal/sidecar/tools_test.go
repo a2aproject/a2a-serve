@@ -35,6 +35,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
+// toolsHostToken is the loopback host token that startWithTools writes to
+// the stdin of a2a-serve-sidecar.
+const toolsHostToken = "test-host-token"
+
 // startWithTools runs a2a-serve-sidecar locally with fakeacp and --tools of host,
 // and returns its client.
 func startWithTools(t *testing.T, host *refhost.Tools) *a2aclient.Client {
@@ -42,7 +46,10 @@ func startWithTools(t *testing.T, host *refhost.Tools) *a2aclient.Client {
 	srv := httptest.NewServer(host)
 	t.Cleanup(srv.Close)
 	sock := filepath.Join(testutil.ShortTempDir(t), "a2a.sock")
-	start(t, "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
+	r := startWithStdin(t, toolsHostToken+"\n", "--sandbox", "local", "--command", fakeACP, "--workspace", "dir:"+t.TempDir(), "--tools", srv.URL+"/mcp", "--listen", "unix://"+sock)
+	if !r.ready.Ready {
+		t.Fatalf("ready line = %+v, want ready; stderr:\n%s", r.ready, r.stderr)
+	}
 	c, err := a2aclient.NewFromEndpoints(context.Background(), []*a2a.AgentInterface{a2a.NewAgentInterface("http://a2a/", a2a.TransportProtocolJSONRPC)}, a2aclient.WithJSONRPCTransport(unixClient(sock)))
 	if err != nil {
 		t.Fatalf("a2aclient.NewFromEndpoints() error = %v", err)
@@ -112,6 +119,36 @@ func TestToolsGivesTheAgentTheHostAndItsHooks(t *testing.T) {
 	}
 }
 
+func TestToolsTellsTheHostTheContextOfEachToolCall(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}})
+	c := startWithTools(t, host)
+
+	for _, contextID := range []string{"context-a", "context-b"} {
+		if task := sendFor(t, c, contextID, "mcpcall host echo hi"); task.Status.State != a2a.TaskStateCompleted {
+			t.Fatalf("Client.SendMessage(mcpcall) in %s = %v, want completed", contextID, task.Status.State)
+		}
+	}
+
+	var got []string
+	for _, r := range host.Records("tools/call") {
+		got = append(got, r.Context)
+	}
+	if diff := cmp.Diff([]string{"context-a", "context-b"}, got); diff != "" {
+		t.Fatalf("%s of the tool calls wrong result (-want +got) diff = %s", hosttools.HeaderContext, diff)
+	}
+}
+
+func TestToolsGivesTheLocalAgentTheHostToken(t *testing.T) {
+	t.Parallel()
+	host := refhost.NewTools(refhost.ToolsConfig{Hooks: hosttools.HookSupport{BeforeTool: true, AfterTool: true}, Token: toolsHostToken})
+	c := startWithTools(t, host)
+	task := sendFor(t, c, "context-a", "mcpcall host echo hi")
+	if got := testutil.AllArtifactText(task); task.Status.State != a2a.TaskStateCompleted || got != "mcp result: echo: hi" {
+		t.Fatalf("Client.SendMessage(mcpcall) = %v with %q, want completed with %q", task.Status.State, got, "mcp result: echo: hi")
+	}
+}
+
 func TestToolsBeforeToolDecidesShellCommands(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -163,7 +200,7 @@ func TestToolsFailsToStartWithoutTheEndpoint(t *testing.T) {
 	srv.Close()
 	var stdout, stderr bytes.Buffer
 	args := []string{"--sandbox", "local", "--command", fakeACP, "--workspace", "dir:" + t.TempDir(), "--tools", url}
-	code := sidecar.Main(context.Background(), args, sidecar.IO{Stdout: &stdout, Stderr: &stderr})
+	code := sidecar.Main(context.Background(), args, sidecar.IO{Stdin: strings.NewReader("test-host-token\n"), Stdout: &stdout, Stderr: &stderr})
 	var ready serve.Ready
 	if err := json.Unmarshal(stdout.Bytes(), &ready); err != nil || code != 1 || ready.Ready || !strings.Contains(ready.Error, "connecting to --tools") {
 		t.Fatalf("sidecar.Main() = %d with stdout %q, want 1 and an error about --tools", code, stdout.String())

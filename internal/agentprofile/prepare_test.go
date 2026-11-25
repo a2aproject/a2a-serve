@@ -1390,7 +1390,7 @@ esac
 }
 
 func TestPrepareDockerResolvesImageOnce(t *testing.T) {
-	const built = "docker: built a2a-harness-claude:" + ImageTag + " (claude:" + ImageTag + " is not published)"
+	const built = "docker: built a2a-harness-claude:" + ImageTag
 	tests := []struct {
 		name        string
 		relay       string
@@ -1454,8 +1454,11 @@ esac
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n := strings.Count(string(calls), "\npull "); n != 1 {
-				t.Fatalf("Prepare() ran docker pull %d times, want once", n)
+			if n := strings.Count(string(calls), "\nbuild "); n != 1 {
+				t.Fatalf("Prepare() ran docker build %d times, want once", n)
+			}
+			if strings.Contains(string(calls), "\npull ") {
+				t.Fatalf("Prepare() ran docker pull for an unpublished image; calls:\n%s", calls)
 			}
 			if p.Summary != tc.wantSummary {
 				t.Fatalf("Prepare().Summary = %q, want %q", p.Summary, tc.wantSummary)
