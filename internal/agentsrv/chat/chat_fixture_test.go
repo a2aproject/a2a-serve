@@ -16,10 +16,6 @@ package chat
 
 import (
 	"context"
-	"errors"
-	"os"
-	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 const waitTimeout = 10 * time.Second
@@ -47,43 +44,9 @@ var testTimings = Timings{
 	StopGrace:            100 * time.Millisecond,
 }
 
-var migratedDB = sync.OnceValues(func() ([]byte, error) {
-	dir, err := os.MkdirTemp("", "chat-seed-*")
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, "server.db")
-	st, err := store.Open(path)
-	if err != nil {
-		return nil, errors.Join(err, os.RemoveAll(dir))
-	}
-	if err := st.Close(); err != nil {
-		return nil, errors.Join(err, os.RemoveAll(dir))
-	}
-	data, err := os.ReadFile(path)
-	return data, errors.Join(err, os.RemoveAll(dir))
-})
-
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	data, err := migratedDB()
-	if err != nil {
-		t.Fatalf("migratedDB() error = %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "server.db")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
-	st, err := store.Open(path)
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-	return st
+	return storetest.Open(t)
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
