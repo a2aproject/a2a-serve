@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -229,11 +231,7 @@ func TestMainIgnoresOtherArgs(t *testing.T) {
 
 func TestMainRunsEntryPoints(t *testing.T) {
 	t.Parallel()
-	launcher := filepath.Join(t.TempDir(), "launcher")
-	build := exec.Command("go", "build", "-o", launcher, "./testdata/launcher")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build ./testdata/launcher error = %v\n%s", err, out)
-	}
+	launcher := cachedLauncher(t)
 	tests := []struct {
 		args     []string
 		wantCode int
@@ -474,15 +472,7 @@ func TestLauncherUnderGVisor(t *testing.T) {
 	if runsc == "" {
 		sandboxtest.Skip(t, "needs a runsc binary in %s", sandboxtest.EnvRunsc)
 	}
-	dir := t.TempDir()
-	launcher, probe := filepath.Join(dir, "launcher"), filepath.Join(dir, "probe")
-	for _, b := range []struct{ out, pkg string }{{launcher, "./testdata/launcher"}, {probe, "../../internal/sandboxrt/testdata/probe"}} {
-		build := exec.Command("go", "build", "-o", b.out, b.pkg)
-		build.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
-		}
-	}
+	launcher, probe := cachedLauncher(t), cachedProbe(t)
 	sock := filepath.Join(testutil.ShortTempDir(t), "egress.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -584,9 +574,9 @@ func dockerRuntime(t *testing.T) (sandbox.Runtime, string) {
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		sandboxtest.Skip(t, "docker isn't available: %v", err)
 	}
-	launcher := filepath.Join(t.TempDir(), "launcher")
+	launcher, image := buildTestContainer(t)
 	rt := sandbox.Docker(sandbox.DockerOptions{Launcher: launcher, StateDir: t.TempDir(), ServedAppArmor: os.Getenv(envLiveAppArmor), Runtime: sandboxtest.Runtime()})
-	return rt, buildTestContainer(t, launcher)
+	return rt, image
 }
 
 func put(t *testing.T, tree fsys.FS, p, data string) {
@@ -612,30 +602,128 @@ func get(t *testing.T, tree fsys.FS, p string) string {
 	return string(data)
 }
 
-// buildTestContainer builds the launcher at launcher and an image whose
-// /probe is the probe program of the internal sandbox tests.
-func buildTestContainer(t *testing.T, launcher string) string {
+var (
+	testArtifactDir string
+
+	launcherOnce sync.Once
+	launcherPath string
+	launcherErr  error
+
+	linuxLauncherOnce sync.Once
+	linuxLauncherPath string
+	linuxLauncherErr  error
+
+	probeOnce sync.Once
+	probePath string
+	probeErr  error
+
+	probeImageOnce sync.Once
+	probeImage     string
+	probeImageErr  error
+)
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "a2a-sandbox-test-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	testArtifactDir = dir
+	code := m.Run()
+	if probeImage != "" {
+		if out, err := exec.Command("docker", "rmi", "-f", probeImage).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "docker rmi %s error = %v: %s\n", probeImage, err, out)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(code)
+}
+
+func cachedLauncher(t *testing.T) string {
 	t.Helper()
-	ctxDir := t.TempDir()
-	for _, b := range []struct{ out, pkg string }{{launcher, "./testdata/launcher"}, {filepath.Join(ctxDir, "probe"), "../../internal/sandboxrt/testdata/probe"}} {
-		build := exec.Command("go", "build", "-o", b.out, b.pkg)
+	launcherOnce.Do(func() {
+		p := filepath.Join(testArtifactDir, "launcher")
+		build := exec.Command("go", "build", "-o", p, "./testdata/launcher")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			launcherErr = fmt.Errorf("go build ./testdata/launcher error = %v\n%s", err, out)
+			return
+		}
+		launcherPath = p
+	})
+	if launcherErr != nil {
+		t.Fatal(launcherErr)
+	}
+	return launcherPath
+}
+
+func cachedLinuxLauncher(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "linux" {
+		return cachedLauncher(t)
+	}
+	linuxLauncherOnce.Do(func() {
+		p := filepath.Join(testArtifactDir, "launcher-linux")
+		build := exec.Command("go", "build", "-o", p, "./testdata/launcher")
 		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
 		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
+			linuxLauncherErr = fmt.Errorf("go build ./testdata/launcher error = %v\n%s", err, out)
+			return
 		}
-	}
-	image := "a2a-sandbox-test-probe:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
-	build := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
-	build.Stdin = strings.NewReader("FROM scratch\nCOPY probe /probe\n")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("docker build error = %v\n%s", err, out)
-	}
-	t.Cleanup(func() {
-		if out, err := exec.Command("docker", "rmi", "-f", image).CombinedOutput(); err != nil {
-			t.Errorf("docker rmi %s error = %v: %s", image, err, out)
-		}
+		linuxLauncherPath = p
 	})
-	return image
+	if linuxLauncherErr != nil {
+		t.Fatal(linuxLauncherErr)
+	}
+	return linuxLauncherPath
+}
+
+func cachedProbe(t *testing.T) string {
+	t.Helper()
+	probeOnce.Do(func() {
+		ctxDir := filepath.Join(testArtifactDir, "probe-image")
+		if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+			probeErr = err
+			return
+		}
+		p := filepath.Join(ctxDir, "probe")
+		build := exec.Command("go", "build", "-o", p, "../../internal/sandboxrt/testdata/probe")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			probeErr = fmt.Errorf("go build ../../internal/sandboxrt/testdata/probe error = %v\n%s", err, out)
+			return
+		}
+		probePath = p
+	})
+	if probeErr != nil {
+		t.Fatal(probeErr)
+	}
+	return probePath
+}
+
+// buildTestContainer builds the launcher and an image whose /probe is the
+// probe program of the internal sandbox tests, and returns the launcher's
+// path and the image.
+func buildTestContainer(t *testing.T) (launcher, image string) {
+	t.Helper()
+	launcher = cachedLinuxLauncher(t)
+	probe := cachedProbe(t)
+	probeImageOnce.Do(func() {
+		img := "a2a-sandbox-test-probe:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
+		build := exec.Command("docker", "build", "-q", "-t", img, "-f", "-", filepath.Dir(probe))
+		build.Stdin = strings.NewReader("FROM scratch\nCOPY probe /probe\n")
+		if out, err := build.CombinedOutput(); err != nil {
+			probeImageErr = fmt.Errorf("docker build error = %v\n%s", err, out)
+			return
+		}
+		probeImage = img
+	})
+	if probeImageErr != nil {
+		t.Fatal(probeImageErr)
+	}
+	return launcher, probeImage
 }
 
 func writeFile(t *testing.T, path, data string) {

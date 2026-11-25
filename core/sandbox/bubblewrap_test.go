@@ -231,16 +231,7 @@ func bubblewrapRuntime(t *testing.T, kind sandbox.MountKind, opts sandbox.Bubble
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		t.Skip("needs bwrap")
 	}
-	dir := t.TempDir()
-	launcher, probe := filepath.Join(dir, "launcher"), filepath.Join(dir, "probe")
-	for _, b := range []struct{ out, pkg string }{{launcher, "./testdata/launcher"}, {probe, "../../internal/sandboxrt/testdata/probe"}} {
-		build := exec.Command("go", "build", "-o", b.out, b.pkg)
-		build.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
-		}
-	}
-	opts.Launcher, opts.StateDir = launcher, t.TempDir()
+	opts.Launcher, opts.StateDir = cachedLauncher(t), t.TempDir()
 	rt := sandbox.Bubblewrap(opts)
 	caps, err := rt.Probe(context.Background())
 	if err != nil {
@@ -252,7 +243,7 @@ func bubblewrapRuntime(t *testing.T, kind sandbox.MountKind, opts sandbox.Bubble
 	if !slices.Contains(caps.Mounts, kind) {
 		t.Skipf("%s mounts can't work here: %s", kind, caps.MountProblems[kind])
 	}
-	return rt, probe
+	return rt, cachedProbe(t)
 }
 
 func routerEndpoint(t *testing.T, r egress.Router) *egress.Endpoint {

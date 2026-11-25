@@ -237,7 +237,7 @@ func TestDockerRunnerProbe(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			log := sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+tc.run)
-			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
+			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, probeRetryDelay: time.Millisecond}
 			err := r.Probe(context.Background())
 			data, rerr := os.ReadFile(log)
 			if rerr != nil {
@@ -530,7 +530,7 @@ func TestDockerRunnerProbeReportsMountFailures(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+tc.run)
-			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}}
+			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}, probeRetryDelay: time.Millisecond}
 			err := r.Probe(context.Background())
 			got, ok := errors.AsType[*ServedMountError](err)
 			if !ok || got.Reason != tc.want || got.Dst != "/workspace" {
@@ -542,7 +542,7 @@ func TestDockerRunnerProbeReportsMountFailures(t *testing.T) {
 
 func TestDockerRunnerProbeReportsTreeFailures(t *testing.T) {
 	sandboxtest.FakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+`echo "`+boundary.TreeErrorPrefix+`reading /workspace: input/output error" >&2; exit 123`)
-	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}}
+	r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}, Served: []boundary.Mount{{Dst: "/workspace", Socket: "/run/a2a-egress/fs-0.sock"}}, probeRetryDelay: time.Millisecond}
 	err := r.Probe(context.Background())
 	got, ok := errors.AsType[*ServedTreeError](err)
 	if !ok || got.Reason != "reading /workspace: input/output error" {
