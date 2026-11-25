@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/messenger/telegram"
 	"github.com/a2aproject/a2a-serve/internal/messenger/telegram/telegramtest"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -158,8 +159,8 @@ func TestStatusHintAfterConfigDeletedWorksAsPrinted(t *testing.T) {
 	status := coder.serve("status")
 
 	cmd := printedCommands(t, status, "a2a-serve start")[0]
-	if !strings.Contains(status, "(claude") {
-		t.Fatalf("a2a-serve status = %q, want it to list the agents", status)
+	if want := "(" + strings.Join(agentprofile.ProfileNames(), ", ") + ")"; !strings.Contains(status, want) {
+		t.Fatalf("a2a-serve status = %q, want it to list the agents %s", status, want)
 	}
 	coder.stopped = false
 	owner.run(coder.dir, serveCommand(replaceWord(cmd, "<agent>", append([]string{"acp", "--name", coder.name, "--detach"}, sandboxFlags()...)...))...)
