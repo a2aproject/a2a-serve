@@ -21,7 +21,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -42,6 +41,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 var csrfField = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
@@ -100,15 +100,7 @@ type testInspector struct {
 
 func startInspector(t *testing.T) *testInspector {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	st := storetest.Open(t)
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
 	tasks := st.Tasks("", all)
 	sender := &fakeSender{}

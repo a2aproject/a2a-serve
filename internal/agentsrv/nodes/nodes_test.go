@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egressrules"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 func viewer(ctx context.Context) (string, bool, error) {
@@ -49,15 +49,7 @@ func viewer(ctx context.Context) (string, bool, error) {
 
 func newHost(t *testing.T) *Host {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	st := storetest.Open(t)
 	h := New(t.Context(), Config{
 		Store:          st,
 		Viewer:         viewer,
@@ -549,15 +541,7 @@ func TestWakeLastErrorIsGeneric(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-			if err != nil {
-				t.Fatalf("store.Open() error = %v", err)
-			}
-			t.Cleanup(func() {
-				if err := st.Close(); err != nil {
-					t.Errorf("Close() error = %v", err)
-				}
-			})
+			st := storetest.Open(t)
 			if err := st.PutNode(t.Context(), store.Node{ID: "grok", Name: "grok", Webhook: tc.webhook, Secret: "s"}); err != nil {
 				t.Fatalf("store.PutNode() error = %v", err)
 			}
@@ -597,15 +581,7 @@ func TestStopWaitsForWakeDeliveries(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer hook.Close()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	st := storetest.Open(t)
 	if err := st.PutNode(t.Context(), store.Node{ID: "grok", Name: "grok", Webhook: hook.URL, Secret: "s"}); err != nil {
 		t.Fatalf("store.PutNode() error = %v", err)
 	}

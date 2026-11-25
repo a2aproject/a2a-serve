@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,12 +42,41 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
-func openStore(t *testing.T) *Store {
-	t.Helper()
-	return openStoreAt(t, filepath.Join(t.TempDir(), "server.db"))
+var migratedDB = sync.OnceValues(buildMigratedDB)
+
+func buildMigratedDB() (_ []byte, err error) {
+	dir, err := os.MkdirTemp("", "a2a-store-seed-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = errors.Join(err, os.RemoveAll(dir))
+	}()
+	path := filepath.Join(dir, "server.db")
+	s, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
 }
 
-func openStoreAt(t *testing.T, path string) *Store {
+func openStore(t testing.TB) *Store {
+	t.Helper()
+	data, err := migratedDB()
+	if err != nil {
+		t.Fatalf("migrating the template database: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "server.db")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("writing the template database: %v", err)
+	}
+	return openStoreAt(t, path)
+}
+
+func openStoreAt(t testing.TB, path string) *Store {
 	t.Helper()
 	s, err := Open(path)
 	if err != nil {
