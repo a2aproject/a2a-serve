@@ -609,6 +609,10 @@ var (
 	launcherPath string
 	launcherErr  error
 
+	linuxLauncherOnce sync.Once
+	linuxLauncherPath string
+	linuxLauncherErr  error
+
 	probeOnce sync.Once
 	probePath string
 	probeErr  error
@@ -655,6 +659,27 @@ func cachedLauncher(t *testing.T) string {
 	return launcherPath
 }
 
+func cachedLinuxLauncher(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "linux" {
+		return cachedLauncher(t)
+	}
+	linuxLauncherOnce.Do(func() {
+		p := filepath.Join(testArtifactDir, "launcher-linux")
+		build := exec.Command("go", "build", "-o", p, "./testdata/launcher")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			linuxLauncherErr = fmt.Errorf("go build ./testdata/launcher error = %v\n%s", err, out)
+			return
+		}
+		linuxLauncherPath = p
+	})
+	if linuxLauncherErr != nil {
+		t.Fatal(linuxLauncherErr)
+	}
+	return linuxLauncherPath
+}
+
 func cachedProbe(t *testing.T) string {
 	t.Helper()
 	probeOnce.Do(func() {
@@ -683,7 +708,7 @@ func cachedProbe(t *testing.T) string {
 // path and the image.
 func buildTestContainer(t *testing.T) (launcher, image string) {
 	t.Helper()
-	launcher = cachedLauncher(t)
+	launcher = cachedLinuxLauncher(t)
 	probe := cachedProbe(t)
 	probeImageOnce.Do(func() {
 		img := "a2a-sandbox-test-probe:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
