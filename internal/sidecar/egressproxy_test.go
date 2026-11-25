@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -110,41 +112,81 @@ func dockerOptions(bin string) sandbox.DockerOptions {
 	return sandbox.DockerOptions{Launcher: bin, Runtime: sandboxtest.Runtime()}
 }
 
+type cachedBuild struct {
+	once sync.Once
+	val  string
+	err  error
+}
+
+var (
+	sidecarBuilds = map[string]*cachedBuild{
+		"0": {},
+		"1": {},
+	}
+
+	fakeacpImageOnce sync.Once
+	fakeacpImage     string
+	fakeacpImageErr  error
+)
+
 // buildSidecar builds a2a-serve-sidecar with CGO_ENABLED set to cgo; releases build
 // it with 0.
 func buildSidecar(t *testing.T, cgo string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "a2a-serve-sidecar")
-	build := exec.Command("go", "build", "-o", bin, "../../cmd/a2a-serve-sidecar")
-	build.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS=linux")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build a2a-serve-sidecar with CGO_ENABLED=%s error = %v\n%s", cgo, err, out)
+	b, ok := sidecarBuilds[cgo]
+	if !ok {
+		t.Fatalf("unexpected CGO_ENABLED %q", cgo)
 	}
-	return bin
+	b.once.Do(func() {
+		dir := filepath.Join(sidecarTestDir, "cgo"+cgo)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.err = err
+			return
+		}
+		bin := filepath.Join(dir, "a2a-serve-sidecar")
+		build := exec.Command("go", "build", "-o", bin, "../../cmd/a2a-serve-sidecar")
+		build.Env = append(os.Environ(), "CGO_ENABLED="+cgo, "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			b.err = fmt.Errorf("go build a2a-serve-sidecar with CGO_ENABLED=%s error = %v\n%s", cgo, err, out)
+			return
+		}
+		b.val = bin
+	})
+	if b.err != nil {
+		t.Fatal(b.err)
+	}
+	return b.val
 }
 
 // buildFakeacpImage builds an image whose /usr/local/bin/fakeacp is
 // fakeacp, and returns its name.
 func buildFakeacpImage(t *testing.T) string {
 	t.Helper()
-	ctxDir := t.TempDir()
-	build := exec.Command("go", "build", "-o", filepath.Join(ctxDir, "fakeacp"), "../agentsrv/testdata/fakeacp")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fakeacp error = %v\n%s", err, out)
-	}
-	image := "a2a-serve-sidecar-test-fakeacp:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
-	docker := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
-	docker.Stdin = strings.NewReader("FROM scratch\nCOPY fakeacp /usr/local/bin/fakeacp\n")
-	if out, err := docker.CombinedOutput(); err != nil {
-		t.Fatalf("docker build error = %v\n%s", err, out)
-	}
-	t.Cleanup(func() {
-		if out, err := exec.Command("docker", "rmi", "-f", image).CombinedOutput(); err != nil {
-			t.Errorf("docker rmi %s error = %v: %s", image, err, out)
+	fakeacpImageOnce.Do(func() {
+		ctxDir := filepath.Join(sidecarTestDir, "fakeacp-image")
+		if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+			fakeacpImageErr = err
+			return
 		}
+		build := exec.Command("go", "build", "-o", filepath.Join(ctxDir, "fakeacp"), "../agentsrv/testdata/fakeacp")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			fakeacpImageErr = fmt.Errorf("go build fakeacp error = %v\n%s", err, out)
+			return
+		}
+		image := "a2a-serve-sidecar-test-fakeacp:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
+		docker := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
+		docker.Stdin = strings.NewReader("FROM scratch\nCOPY fakeacp /usr/local/bin/fakeacp\n")
+		if out, err := docker.CombinedOutput(); err != nil {
+			fakeacpImageErr = fmt.Errorf("docker build error = %v\n%s", err, out)
+			return
+		}
+		fakeacpImage = image
 	})
-	return image
+	if fakeacpImageErr != nil {
+		t.Fatal(fakeacpImageErr)
+	}
+	return fakeacpImage
 }
 
 // dockerTestEnv builds what the Docker test needs, or skips without

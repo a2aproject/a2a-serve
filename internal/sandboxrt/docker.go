@@ -74,7 +74,8 @@ type DockerRunner struct {
 	Served         []boundary.Mount
 	ServedAppArmor string
 
-	envFiles []string
+	probeRetryDelay time.Duration
+	envFiles        []string
 }
 
 var _ Runner = (*DockerRunner)(nil)
@@ -304,6 +305,10 @@ func (r *DockerRunner) Probe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	retryDelay := r.probeRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = probeRetryDelay
+	}
 	for attempt := 1; ; attempt++ {
 		err := r.probe(ctx, envFile)
 		if err == nil || errors.Is(err, ErrNoBoundary) {
@@ -316,7 +321,7 @@ func (r *DockerRunner) Probe(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return err
-		case <-time.After(probeRetryDelay):
+		case <-time.After(retryDelay):
 		}
 	}
 }

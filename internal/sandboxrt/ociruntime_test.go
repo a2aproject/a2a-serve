@@ -17,8 +17,6 @@ package sandboxrt
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -163,13 +161,7 @@ func buildStaticLauncher(t *testing.T) string {
 	if err := CheckTUN(); err != nil {
 		t.Skip(err)
 	}
-	launcher := filepath.Join(t.TempDir(), "launcher")
-	build := exec.Command("go", "build", "-o", launcher, "./testdata/launcher")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build ./testdata/launcher error = %v\n%s", err, out)
-	}
-	return launcher
+	return cachedLauncher(t)
 }
 
 func TestDockerPrepareUnderGVisorFailsWhereTheBoundaryCantWork(t *testing.T) {

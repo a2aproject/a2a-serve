@@ -45,8 +45,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
-// fakeACP is the fake ACP agent of the server's tests.
-var fakeACP string
+var (
+	// fakeACP is the fake ACP agent of the server's tests.
+	fakeACP        string
+	sidecarTestDir string
+)
 
 func TestMain(m *testing.M) {
 	dir, err := testutil.MkdirShortTemp()
@@ -54,14 +57,23 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	sidecarTestDir = dir
 	fakeACP = filepath.Join(dir, "fakeacp")
 	build := exec.Command("go", "build", "-o", fakeACP, "../agentsrv/testdata/fakeacp")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "building fakeacp:", err)
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			fmt.Fprintln(os.Stderr, rerr)
+		}
 		os.Exit(1)
 	}
 	code := m.Run()
+	if fakeacpImage != "" {
+		if out, err := exec.Command("docker", "rmi", "-f", fakeacpImage).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "docker rmi %s error = %v: %s\n", fakeacpImage, err, out)
+		}
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -25,6 +26,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -284,32 +286,85 @@ func TestDockerRunsCommandBehindBoundary(t *testing.T) {
 	}
 }
 
+var (
+	testArtifactDir string
+
+	launcherOnce sync.Once
+	launcherPath string
+	launcherErr  error
+
+	probeImageOnce sync.Once
+	probeImageName string
+	probeImageErr  error
+)
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "a2a-sandboxrt-test-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	testArtifactDir = dir
+	code := m.Run()
+	if probeImageName != "" {
+		if out, err := exec.Command("docker", "rmi", "-f", probeImageName).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "docker rmi %s error = %v: %s\n", probeImageName, err, out)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(code)
+}
+
+func cachedLauncher(t *testing.T) string {
+	t.Helper()
+	launcherOnce.Do(func() {
+		p := filepath.Join(testArtifactDir, "launcher")
+		build := exec.Command("go", "build", "-o", p, "./testdata/launcher")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			launcherErr = fmt.Errorf("go build ./testdata/launcher error = %v\n%s", err, out)
+			return
+		}
+		launcherPath = p
+	})
+	if launcherErr != nil {
+		t.Fatal(launcherErr)
+	}
+	return launcherPath
+}
+
 // buildTestContainer builds the launcher and an image whose /probe is the
 // probe program, and returns the launcher's path and the image.
 func buildTestContainer(t *testing.T) (launcher, image string) {
 	t.Helper()
-	dir := t.TempDir()
-	launcher = filepath.Join(dir, "launcher")
-	ctxDir := filepath.Join(dir, "image")
-	for _, b := range []struct{ out, pkg string }{{launcher, "./testdata/launcher"}, {filepath.Join(ctxDir, "probe"), "./testdata/probe"}} {
-		build := exec.Command("go", "build", "-o", b.out, b.pkg)
+	launcher = cachedLauncher(t)
+	probeImageOnce.Do(func() {
+		ctxDir := filepath.Join(testArtifactDir, "probe-image")
+		if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+			probeImageErr = err
+			return
+		}
+		build := exec.Command("go", "build", "-o", filepath.Join(ctxDir, "probe"), "./testdata/probe")
 		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
 		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("go build %s error = %v\n%s", b.pkg, err, out)
+			probeImageErr = fmt.Errorf("go build ./testdata/probe error = %v\n%s", err, out)
+			return
 		}
-	}
-	image = "a2a-sandbox-test-probe:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
-	build := exec.Command("docker", "build", "-q", "-t", image, "-f", "-", ctxDir)
-	build.Stdin = strings.NewReader("FROM scratch\nCOPY probe /probe\n")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("docker build error = %v\n%s", err, out)
-	}
-	t.Cleanup(func() {
-		if out, err := exec.Command("docker", "rmi", "-f", image).CombinedOutput(); err != nil {
-			t.Errorf("docker rmi %s error = %v: %s", image, err, out)
+		img := "a2a-sandbox-test-probe:" + cryptoutil.RandomString(12, "abcdefghijklmnopqrstuvwxyz")
+		docker := exec.Command("docker", "build", "-q", "-t", img, "-f", "-", ctxDir)
+		docker.Stdin = strings.NewReader("FROM scratch\nCOPY probe /probe\n")
+		if out, err := docker.CombinedOutput(); err != nil {
+			probeImageErr = fmt.Errorf("docker build error = %v\n%s", err, out)
+			return
 		}
+		probeImageName = img
 	})
-	return launcher, image
+	if probeImageErr != nil {
+		t.Fatal(probeImageErr)
+	}
+	return launcher, probeImageName
 }
 
 func writeFile(t *testing.T, path, data string) {
