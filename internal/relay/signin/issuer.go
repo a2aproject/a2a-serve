@@ -99,6 +99,9 @@ type Options struct {
 	// Client identifies the client of a request for the limits on the
 	// sign-ins it starts. Nil identifies it by its remote address.
 	Client func(*http.Request) string
+	// ReadTimeout bounds reading a request body. Zero defaults to
+	// [jsonhttp.UnauthenticatedReadTimeout].
+	ReadTimeout time.Duration
 }
 
 // Issuer is the identity provider of a relay.
@@ -144,6 +147,9 @@ func New(opts Options) (*Issuer, error) {
 	if opts.Client == nil {
 		opts.Client = remoteHost
 	}
+	if opts.ReadTimeout <= 0 {
+		opts.ReadTimeout = jsonhttp.UnauthenticatedReadTimeout
+	}
 	i := &Issuer{
 		opts:         opts,
 		url:          URL(opts.URL),
@@ -161,7 +167,7 @@ func New(opts Options) (*Issuer, error) {
 		approvals:    map[string]*approval{},
 		lastRefresh:  map[string]time.Time{},
 	}
-	i.handler = jsonhttp.LimitUnauthenticatedBody(maxBody, http.HandlerFunc(i.serve))
+	i.handler = jsonhttp.Limit{Max: maxBody, Total: opts.ReadTimeout}.Handler(http.HandlerFunc(i.serve))
 	return i, nil
 }
 

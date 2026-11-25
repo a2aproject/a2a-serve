@@ -38,6 +38,40 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
+const testScryptN = 1 << 10
+
+func takeFast(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.Time) (Snapshot, error) {
+	return take(ctx, d, dest, cfg, now, testScryptN)
+}
+
+func restoreFast(ctx context.Context, dest Dest, name, key, root string, takeOver bool) ([]string, error) {
+	return restore(ctx, dest, name, key, root, takeOver, testScryptN)
+}
+
+func encryptFast(t *testing.T, plain []byte, key string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := encryptWith(&buf, key, testScryptN)
+	if err != nil {
+		t.Fatalf("encryptWith() error = %v", err)
+	}
+	if _, err := w.Write(plain); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	return buf.Bytes()
+}
+
+func decryptFast(enc []byte, key string) ([]byte, error) {
+	r, err := decryptWith(bytes.NewReader(enc), key, testScryptN)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(r)
+}
+
 // newAgent creates an agent directory with a database, secrets, a harness
 // home with a cache and a symlink, and a network identity.
 func newAgent(t *testing.T) agentdir.Dir {
@@ -230,20 +264,20 @@ func TestRestoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
 
 	empty := t.TempDir()
-	if _, err := Restore(ctx, dest, snap.Name, "wrong", empty, false); err == nil {
+	if _, err := restoreFast(ctx, dest, snap.Name, "wrong", empty, false); err == nil {
 		t.Fatalf("Restore() with the wrong key error = nil, want error")
 	}
 	if _, err := os.Stat(filepath.Join(empty, agentdir.Name)); !os.IsNotExist(err) {
 		t.Fatalf("Restore() with the wrong key left %s: %v", agentdir.Name, err)
 	}
 	existing := newAgent(t)
-	if _, err := Restore(ctx, dest, snap.Name, "k", existing.Root, false); err == nil || !strings.Contains(err.Error(), "already has an agent") {
+	if _, err := restoreFast(ctx, dest, snap.Name, "k", existing.Root, false); err == nil || !strings.Contains(err.Error(), "already has an agent") {
 		t.Fatalf("Restore() into an existing agent error = %v, want it refused", err)
 	}
 	other := filepath.Join(t.TempDir(), agentdir.Name)
@@ -251,7 +285,7 @@ func TestRestoreErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, other, map[string]string{"relay.yaml": "name: mesh"})
-	if _, err := Restore(ctx, dest, snap.Name, "k", filepath.Dir(other), false); err == nil {
+	if _, err := restoreFast(ctx, dest, snap.Name, "k", filepath.Dir(other), false); err == nil {
 		t.Fatalf("Restore() into a non-empty %s error = nil, want error", agentdir.Name)
 	}
 	if diff := cmp.Diff(map[string]string{"relay.yaml": "name: mesh"}, files(t, other)); diff != "" {
@@ -262,7 +296,7 @@ func TestRestoreErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, withLock, map[string]string{"recipe.lock": "lock", "notes.txt": "mine"})
-	if _, err := Restore(ctx, dest, snap.Name, "k", filepath.Dir(withLock), false); err == nil || !strings.Contains(err.Error(), "holds files other than config.yaml, recipe.lock and .gitignore") {
+	if _, err := restoreFast(ctx, dest, snap.Name, "k", filepath.Dir(withLock), false); err == nil || !strings.Contains(err.Error(), "holds files other than config.yaml, recipe.lock and .gitignore") {
 		t.Fatalf("Restore() into %s with recipe.lock and another file error = %v, want it refused", agentdir.Name, err)
 	}
 	if diff := cmp.Diff(map[string]string{"recipe.lock": "lock", "notes.txt": "mine"}, files(t, withLock)); diff != "" {
@@ -278,7 +312,7 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := newAgent(t)
-	snap, err := Take(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -334,7 +368,7 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 			}
 			writeFiles(t, d.Path(), tc.committed)
 
-			notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
+			notes, err := restoreFast(ctx, dest, snap.Name, "k", root, false)
 			if err != nil {
 				t.Fatalf("Restore() error = %v", err)
 			}
@@ -377,7 +411,7 @@ func TestRestoreConfigNoteNamesGitDiffOfTrackedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -413,7 +447,7 @@ func TestRestoreConfigNoteNamesGitDiffOfTrackedConfig(t *testing.T) {
 				git(t, root, "commit", "-q", "-m", "agent")
 			}
 
-			notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
+			notes, err := restoreFast(ctx, dest, snap.Name, "k", root, false)
 			if err != nil {
 				t.Fatalf("Restore() error = %v", err)
 			}
@@ -451,7 +485,7 @@ func TestRestoreIgnoresUnknownEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -459,18 +493,18 @@ func TestRestoreIgnoresUnknownEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := decrypt(data, "k")
+	plain, err := decryptFast(data, "k")
 	if err != nil {
 		t.Fatal(err)
 	}
 	newer := "coder-20991231T000000Z" + Ext
 	extra := map[string]string{"future.json": "{}", "state/future/data": "x"}
-	if err := os.WriteFile(filepath.Join(destDir, newer), encrypt(t, withEntries(t, plain, extra), "k"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(destDir, newer), encryptFast(t, withEntries(t, plain, extra), "k"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
 
-	if _, err := Restore(ctx, dest, newer, "k", root, false); err != nil {
+	if _, err := restoreFast(ctx, dest, newer, "k", root, false); err != nil {
 		t.Fatalf("Restore() error = %v", err)
 	}
 
@@ -540,7 +574,7 @@ func TestRestoreFailureRemovesOnlyCreatedDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -580,7 +614,7 @@ func TestRestoreFailureRemovesOnlyCreatedDirectories(t *testing.T) {
 				}
 			}
 
-			if _, err := Restore(ctx, dest, snap.Name, "wrong", filepath.Join(base, tc.root), false); err == nil {
+			if _, err := restoreFast(ctx, dest, snap.Name, "wrong", filepath.Join(base, tc.root), false); err == nil {
 				t.Fatalf("Restore() with the wrong key error = nil, want error")
 			}
 			if diff := cmp.Diff(tc.want, paths(t, base)); diff != "" {
@@ -615,7 +649,7 @@ func TestRestoreRemovesLeftoverRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -640,7 +674,7 @@ func TestRestoreRemovesLeftoverRestores(t *testing.T) {
 		}
 	})
 
-	if _, err := Restore(ctx, dest, snap.Name, "k", root, false); err != nil {
+	if _, err := restoreFast(ctx, dest, snap.Name, "k", root, false); err != nil {
 		t.Fatalf("Restore() error = %v", err)
 	}
 
@@ -669,7 +703,7 @@ func TestRestoreLeavesNoPartialAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -710,7 +744,7 @@ func TestRestoreLeavesNoPartialAgent(t *testing.T) {
 				want = []string{d.Path()}
 			}
 
-			if _, err := Restore(tc.ctx, dest, tc.snapshot, "k", root, false); err == nil {
+			if _, err := restoreFast(tc.ctx, dest, tc.snapshot, "k", root, false); err == nil {
 				t.Fatalf("Restore() error = nil, want error")
 			}
 			got, err := filepath.Glob(filepath.Join(root, agentdir.Name+"*"))
@@ -725,7 +759,7 @@ func TestRestoreLeavesNoPartialAgent(t *testing.T) {
 					t.Fatalf("Restore() wrote into %s (-want +got) diff = %s", agentdir.Name, diff)
 				}
 			}
-			if _, err := Restore(ctx, dest, snap.Name, "k", root, false); err != nil {
+			if _, err := restoreFast(ctx, dest, snap.Name, "k", root, false); err != nil {
 				t.Fatalf("Restore() after a failed restore error = %v", err)
 			}
 		})
@@ -796,7 +830,7 @@ func TestTakeReportsFailedRetention(t *testing.T) {
 	}
 	dest := undeletableDest{inner}
 
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, now)
+	snap, err := takeFast(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, now)
 
 	var retention *RetentionError
 	if !errors.As(err, &retention) {
@@ -864,7 +898,7 @@ func TestRestoreDirIsIgnoredByGitWhileExtracting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), inner, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	snap, err := takeFast(ctx, newAgent(t), inner, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
@@ -872,7 +906,7 @@ func TestRestoreDirIsIgnoredByGitWhileExtracting(t *testing.T) {
 	root := t.TempDir()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Restore(ctx, dest, snap.Name, "k", root, false)
+		_, err := restoreFast(ctx, dest, snap.Name, "k", root, false)
 		done <- err
 	}()
 

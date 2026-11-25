@@ -16,7 +16,6 @@ package chat
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/question"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 const waitTimeout = 10 * time.Second
@@ -41,20 +41,12 @@ var testTimings = Timings{
 	EditInterval:         50 * time.Millisecond,
 	GuestQuestionTimeout: 5 * time.Second,
 	SendRetry:            time.Millisecond,
+	StopGrace:            100 * time.Millisecond,
 }
 
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-	return st
+	return storetest.Open(t)
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {

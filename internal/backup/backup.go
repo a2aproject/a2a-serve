@@ -113,11 +113,15 @@ func (e *RetentionError) Unwrap() error { return e.Err }
 // fails, Take returns the stored snapshot with a *RetentionError, which
 // carries a hint at the missing permission.
 func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.Time) (Snapshot, error) {
+	return take(ctx, d, dest, cfg, now, scryptN)
+}
+
+func take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.Time, n int) (Snapshot, error) {
 	snap := Snapshot{Name: snapshotName(cfg.Agent, now), Agent: cfg.Agent, Taken: now.UTC().Truncate(time.Second)}
 	pr, pw := io.Pipe()
 	var writer sync.WaitGroup
 	writer.Go(func() {
-		enc, err := Encrypt(pw, cfg.Key)
+		enc, err := encryptWith(pw, cfg.Key, n)
 		if err != nil {
 			pw.CloseWithError(err)
 			return
@@ -223,6 +227,10 @@ var committedFiles = []string{pathConfig, pathRecipeLock, ".gitignore"}
 // state directory without agent data, such as one that commands created,
 // is moved aside, and the notes say where.
 func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (notes []string, err error) {
+	return restore(ctx, dest, name, key, root, takeOver, scryptN)
+}
+
+func restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool, n int) (notes []string, err error) {
 	if err := checkSnapshot(ctx, dest, name); err != nil {
 		return nil, err
 	}
@@ -261,7 +269,7 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return nil, err
 	}
 	defer closeLogged(rc)
-	plain, err := Decrypt(rc, key)
+	plain, err := decryptWith(rc, key, n)
 	if err != nil {
 		return nil, err
 	}

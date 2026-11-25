@@ -1122,7 +1122,7 @@ func TestChatTurnsShowsTheEndOfATurnThatEndedLongAfterTheStop(t *testing.T) {
 	fx.sender.nextStream(t)
 
 	fx.cancel()
-	time.Sleep(stopGrace + time.Second)
+	time.Sleep(2 * testTimings.StopGrace)
 	close(fx.sender.turnEnd)
 
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
@@ -1139,7 +1139,7 @@ func TestChatTurnsShowsTheEndOfATurnThatEndedLongAfterItsLastOutput(t *testing.T
 
 	fx.cancel()
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText("Working"))
-	time.Sleep(stopGrace + time.Second)
+	time.Sleep(2 * testTimings.StopGrace)
 	close(fx.sender.turnEnd)
 
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText(serverStoppedText))
