@@ -47,6 +47,8 @@ func (claude) projectConfigFiles() []string   { return projectfiles.ClaudeConfig
 func (claude) readsParentConfig() bool        { return false }
 func (copilot) projectConfigFiles() []string  { return projectfiles.CopilotConfigFiles }
 func (copilot) readsParentConfig() bool       { return true }
+func (agy) projectConfigFiles() []string      { return projectfiles.AgyConfigFiles }
+func (agy) readsParentConfig() bool           { return true }
 
 // configFiles returns the project configuration files p reads, and whether
 // it reads them above its working directory: all of them, also above, for

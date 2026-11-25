@@ -170,6 +170,8 @@ func exampleKey(harness string) string {
 		return agentprofile.ClaudeKeys()[0]
 	case "copilot":
 		return agentprofile.CopilotKeys()[0]
+	case "agy":
+		return agentprofile.AgyKeys()[0]
 	}
 	return "OPENROUTER_API_KEY"
 }

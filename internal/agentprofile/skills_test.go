@@ -90,6 +90,14 @@ func TestLinkSkills(t *testing.T) {
 			},
 		},
 		{
+			name:    "agy gets the skills of folders besides .agents",
+			harness: "agy",
+			dir:     ".gemini/config/skills",
+			want: func(root string) map[string]string {
+				return map[string]string{"lint": filepath.Join(root, ".opencode/skills/lint"), "mine": ""}
+			},
+		},
+		{
 			name:    "opencode reads every folder",
 			harness: "opencode",
 			dir:     ".config/opencode/skills",

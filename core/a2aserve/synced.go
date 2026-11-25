@@ -1033,16 +1033,7 @@ func skipped(p string) bool {
 // skippedOut reports whether p is a file that a sandbox hides from the
 // agent and puts a placeholder for, which the sync doesn't write back.
 func skippedOut(p string) bool {
-	if p == projectfiles.MCPFile {
-		return true
-	}
-	for _, f := range projectfiles.AgentConfigFiles {
-		name, isDir := strings.CutSuffix(f, "/")
-		if p == name || isDir && strings.HasPrefix(p, name+"/") {
-			return true
-		}
-	}
-	return false
+	return p == projectfiles.MCPFile || projectfiles.IsAgentConfig(p)
 }
 
 // placeholderDirs returns the directories of local that hold placeholders

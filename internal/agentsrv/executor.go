@@ -97,8 +97,11 @@ func explainFailure(cfg *agentdir.Config, granted []string, reported string) str
 		return "The owner hasn't given this agent a model key. The agent reported: " + text
 	}
 	if !modelNotFound(text) {
-		if cfg.Harness == "copilot" && !hasEnv(cfg, "COPILOT_PROVIDER_BASE_URL") {
+		switch {
+		case cfg.Harness == "copilot" && !hasEnv(cfg, "COPILOT_PROVIDER_BASE_URL"):
 			return text + "; give the agent a GitHub token with the Copilot Requests permission: `a2a-serve config set --secret COPILOT_GITHUB_TOKEN --restart`"
+		case cfg.Harness == "agy":
+			return text + "; give the agent a Gemini API key: `a2a-serve config set --secret GEMINI_API_KEY --restart`"
 		}
 		return text
 	}
@@ -125,9 +128,9 @@ func authFailed(text string) bool { return authFailedText.MatchString(text) }
 
 // modelNotFoundText matches the failures of an agent or its provider that
 // doesn't know the model, as in "model not found: google/x", "models/x is
-// not found for API version v1beta", "The model `x` does not exist" or
-// Anthropic's not_found_error for "model: x".
-var modelNotFoundText = regexp.MustCompile("(?i)\\bmodels?[/: `][^\\n]*?\\b(?:not found|does not exist)|not_found_error[^\\n]*?\\bmodel\\b")
+// not found for API version v1beta", "The model `x` does not exist",
+// Anthropic's not_found_error for "model: x" or agy's "Unknown model ID: x".
+var modelNotFoundText = regexp.MustCompile("(?i)\\bmodels?[/: `][^\\n]*?\\b(?:not found|does not exist)|not_found_error[^\\n]*?\\bmodel\\b|\\bunknown model id\\b")
 
 func modelNotFound(text string) bool { return modelNotFoundText.MatchString(text) }
 

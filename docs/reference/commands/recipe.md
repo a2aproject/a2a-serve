@@ -44,7 +44,7 @@ a2a-serve recipe --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
-| `--agent string` |  | Agent: claude, copilot, opencode, or acp with --command |
+| `--agent string` |  | Agent: agy, claude, copilot, opencode, or acp with --command |
 | `--backup string` |  | Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix |
 | `--backup-interval duration` |  | Time between snapshots, a duration such as 30m or 1h (default 24h) |
 | `--backup-key string` |  | Passphrase the snapshots are encrypted with; keep a copy away from the backups (secret value: env:VAR, -, or the value) |
@@ -53,7 +53,7 @@ a2a-serve recipe --dry-run
 | `--description string` |  | Agent description for its card |
 | `--dir string` |  | Agent directory: a new agent's, or the agent to update (default: the agent here, or ./&lt;name&gt; for a new one) |
 | `--dry-run` |  | Fetch the recipe and print the review without saving |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 | `--task-ttl duration` |  | How long finished tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 | `--voice service` |  | Speech service that transcribes voice notes and speaks replies: openai, gemini, or the URL of a server with the OpenAI audio API, such as http://localhost:8000/v1 |

@@ -395,7 +395,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Harness }, func(s *Settings) *string { return &s.Harness }),
 		flag:   "agent", path: "agent", place: placeAgent, scope: scopeAgent, section: SectionGeneral,
-		usage:  "Agent: claude, copilot, opencode, or acp with --command",
+		usage:  "Agent: agy, claude, copilot, opencode, or acp with --command",
 		values: append(slices.Clone(Harnesses), HarnessACP),
 	},
 	{
@@ -425,7 +425,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Model }, func(s *Settings) *string { return &s.Model }),
 		flag:   "model", path: "model", scope: scopeAgent, section: SectionGeneral,
-		usage: "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's)",
+		usage: "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's)",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Image }, func(s *Settings) *string { return &s.Image }),

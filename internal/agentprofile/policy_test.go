@@ -131,6 +131,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 		{name: "agent of unknown kind", profile: custom{name: "acp", argv: []string{"fakeacp"}}, want: true},
 		{name: "opencode", profile: opencode{}},
 		{name: "copilot, whose image has its policy", profile: copilot{}},
+		{name: "agy", profile: agy{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

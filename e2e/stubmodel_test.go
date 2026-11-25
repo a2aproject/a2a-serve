@@ -17,6 +17,7 @@
 package e2e
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +29,9 @@ import (
 	"testing"
 )
 
-// stubModel is an OpenAI-compatible chat completions API that plays a model
-// from a script. It records the requests, so that tests see what the model
-// got.
+// stubModel is an OpenAI-compatible chat completions API, and the Gemini
+// API's generateContent, that plays a model from a script. It records the
+// requests, so that tests see what the model got.
 type stubModel struct {
 	t      *testing.T
 	script modelScript
@@ -66,23 +67,27 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Stream   bool          `json:"stream"`
 	Messages []chatMessage `json:"messages"`
-	Tools    []struct {
-		Function struct {
-			Name string `json:"name"`
-		} `json:"function"`
-	} `json:"tools"`
+	Tools    []chatTool    `json:"tools"`
+}
+
+type chatTool struct {
+	Function chatFunction `json:"function"`
+}
+
+type chatFunction struct {
+	Name string `json:"name"`
 }
 
 type chatMessage struct {
 	Role       string          `json:"role"`
 	Content    json.RawMessage `json:"content"`
 	ToolCallID string          `json:"tool_call_id"`
-	ToolCalls  []struct {
-		ID       string `json:"id"`
-		Function struct {
-			Name string `json:"name"`
-		} `json:"function"`
-	} `json:"tool_calls"`
+	ToolCalls  []chatToolCall  `json:"tool_calls"`
+}
+
+type chatToolCall struct {
+	ID       string       `json:"id"`
+	Function chatFunction `json:"function"`
 }
 
 // text returns the content of m, a string or a list of text parts.
@@ -142,6 +147,10 @@ func defaultRouteIP() (string, error) {
 }
 
 func (m *stubModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1beta/models/") {
+		m.serveGemini(w, r)
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)
 		return
@@ -296,4 +305,98 @@ func completionBody(model, text string, call *toolCall, step int) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+// geminiRequest is a request to the Gemini API's generateContent.
+type geminiRequest struct {
+	Contents []struct {
+		Role  string       `json:"role"`
+		Parts []geminiPart `json:"parts"`
+	} `json:"contents"`
+	Tools []struct {
+		FunctionDeclarations []chatFunction `json:"functionDeclarations"`
+	} `json:"tools"`
+}
+
+type geminiPart struct {
+	Text         string `json:"text"`
+	FunctionCall *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"functionCall"`
+	FunctionResponse *struct {
+		ID       string          `json:"id"`
+		Name     string          `json:"name"`
+		Response json.RawMessage `json:"response"`
+	} `json:"functionResponse"`
+}
+
+// chat returns g as a chat completions request, which the script and the
+// records read: function calls are tool calls, and their responses are
+// tool messages.
+func (g geminiRequest) chat() chatRequest {
+	var req chatRequest
+	for _, t := range g.Tools {
+		for _, f := range t.FunctionDeclarations {
+			req.Tools = append(req.Tools, chatTool{Function: f})
+		}
+	}
+	for _, c := range g.Contents {
+		for _, p := range c.Parts {
+			switch {
+			case p.FunctionCall != nil:
+				id := cmp.Or(p.FunctionCall.ID, p.FunctionCall.Name)
+				req.Messages = append(req.Messages, chatMessage{Role: "assistant", ToolCalls: []chatToolCall{{ID: id, Function: chatFunction{Name: p.FunctionCall.Name}}}})
+			case p.FunctionResponse != nil:
+				id := cmp.Or(p.FunctionResponse.ID, p.FunctionResponse.Name)
+				req.Messages = append(req.Messages, chatMessage{Role: "tool", ToolCallID: id, Content: jsonString(string(p.FunctionResponse.Response))})
+			case c.Role == "user" && p.Text != "":
+				req.Messages = append(req.Messages, chatMessage{Role: "user", Content: jsonString(p.Text)})
+			}
+		}
+	}
+	return req
+}
+
+// serveGemini answers a request to the Gemini API's generateContent or
+// streamGenerateContent with the next message of the script.
+func (m *stubModel) serveGemini(w http.ResponseWriter, r *http.Request) {
+	var g geminiRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&g); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req := g.chat()
+	m.mu.Lock()
+	m.requests = append(m.requests, req)
+	m.mu.Unlock()
+	if m.script.status != 0 {
+		m.write(w, m.script.status, "application/json", m.script.body)
+		return
+	}
+	text, call, _ := m.reply(req)
+	part := map[string]any{"text": text}
+	if call != nil {
+		part = map[string]any{"functionCall": map[string]any{"name": call.name, "args": call.args}}
+	}
+	data, err := json.Marshal(map[string]any{
+		"candidates":    []any{map[string]any{"index": 0, "content": map[string]any{"role": "model", "parts": []any{part}}, "finishReason": "STOP"}},
+		"usageMetadata": map[string]any{"promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2},
+	})
+	if err != nil {
+		panic(err)
+	}
+	if strings.HasSuffix(r.URL.Path, ":streamGenerateContent") {
+		m.write(w, http.StatusOK, "text/event-stream", "data: "+string(data)+"\n\n")
+		return
+	}
+	m.write(w, http.StatusOK, "application/json", string(data))
+}
+
+func jsonString(s string) json.RawMessage {
+	data, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

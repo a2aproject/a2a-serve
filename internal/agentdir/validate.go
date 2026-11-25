@@ -41,7 +41,7 @@ const HarnessACP = "acp"
 
 // Harnesses are the harnesses with a profile, which need no command. They
 // mirror the profiles of the harness package, which imports this one.
-var Harnesses = []string{"claude", "copilot", "opencode"}
+var Harnesses = []string{"agy", "claude", "copilot", "opencode"}
 
 // ReservedHarnesses are the names of the test servers, `a2a-serve <name>`,
 // which no harness may take.
