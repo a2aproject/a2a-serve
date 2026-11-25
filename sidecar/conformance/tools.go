@@ -182,7 +182,7 @@ func testAfterTool(t *testing.T, c *hosttools.Client) {
 // testSandboxOrigin sends the hooks as the agent would, through the proxy
 // of a2a-serve-sidecar, which marks them as requests of the sandbox.
 func testSandboxOrigin(t *testing.T, ep hosttools.Endpoint, hooks hosttools.HookSupport) {
-	c, err := hosttools.DialThrough(toolsCtx(t), ep, "conformance", ep.Proxy())
+	c, err := hosttools.DialThrough(toolsCtx(t), ep, "conformance", ep.Proxy().For("conformance", func() string { return "task-1" }))
 	if err != nil {
 		t.Fatalf("initialize from the sandbox: %v", err)
 	}

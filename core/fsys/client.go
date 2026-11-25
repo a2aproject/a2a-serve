@@ -32,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // ClientOptions configures [ClientWithOptions].
@@ -39,6 +41,10 @@ type ClientOptions struct {
 	// Header holds extra headers sent on every request to the file server,
 	// such as an authentication token.
 	Header http.Header
+	// RequestHeader, if set, returns more headers for the request of ctx,
+	// such as who the request is for. A request whose headers a header
+	// can't carry fails without being sent.
+	RequestHeader func(ctx context.Context) http.Header
 }
 
 // Client returns the tree that a file server serves at rawURL with the
@@ -80,7 +86,7 @@ func ClientWithOptions(rawURL string, opts ClientOptions) (FS, error) {
 		IdleConnTimeout:       time.Minute,
 		ResponseHeaderTimeout: MaxChangesWait + time.Minute,
 	}
-	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}, header: opts.Header.Clone()}
+	c := &client{http: &http.Client{Transport: transport, CheckRedirect: noRedirects}, header: opts.Header.Clone(), requestHeader: opts.RequestHeader}
 	switch u.Scheme {
 	case "http", "https":
 		if u.Host == "" {
@@ -114,9 +120,10 @@ type client struct {
 	base string
 	// shown names the server in errors: its scheme and host, or its
 	// socket, without the path, which may carry a secret.
-	shown  string
-	header http.Header
-	http   *http.Client
+	shown         string
+	header        http.Header
+	requestHeader func(context.Context) http.Header
+	http          *http.Client
 }
 
 // requestError is the error of a request that got no answer. Unlike the
@@ -161,6 +168,14 @@ func (c *client) do(ctx context.Context, op, p, method, route string, query url.
 	}
 	for k, vals := range c.header {
 		req.Header[http.CanonicalHeaderKey(k)] = slices.Clone(vals)
+	}
+	if c.requestHeader != nil {
+		for k, vals := range c.requestHeader(ctx) {
+			if !httpguts.ValidHeaderFieldName(k) || slices.ContainsFunc(vals, func(v string) bool { return !httpguts.ValidHeaderFieldValue(v) }) {
+				return nil, &fs.PathError{Op: op, Path: p, Err: c.requestErr(method, errors.New("a request header has a character that a header can't carry"))}
+			}
+			req.Header[http.CanonicalHeaderKey(k)] = slices.Clone(vals)
+		}
 	}
 	maps.Copy(req.Header, header)
 	resp, err := c.http.Do(req)

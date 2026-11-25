@@ -386,7 +386,7 @@ func TestProxySendsRequestsToTheEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := ep.Proxy().RoundTrip(req)
+	resp, err := ep.Proxy().For("", nil).RoundTrip(req)
 	if err != nil {
 		t.Fatalf("Proxy().RoundTrip() error = %v", err)
 	}
@@ -431,7 +431,7 @@ func TestProxyRefusesWhatIsNotTheEndpoint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp, err := ep.Proxy().RoundTrip(req)
+			resp, err := ep.Proxy().For("", nil).RoundTrip(req)
 			if err != nil {
 				t.Fatalf("Proxy().RoundTrip() error = %v", err)
 			}
@@ -460,7 +460,7 @@ func TestProxyMarksTheSandboxOrigin(t *testing.T) {
 	req.Header["A2a_Sidecar_Origin"] = []string{hosttools.OriginSidecar}
 	req.Header.Set("A2A-Sidecar-Context", "another")
 	req.Header.Set("X-Other", "kept")
-	resp, err := ep.Proxy().RoundTrip(req)
+	resp, err := ep.Proxy().For("", nil).RoundTrip(req)
 	if err != nil {
 		t.Fatalf("Proxy().RoundTrip() error = %v", err)
 	}
@@ -476,6 +476,51 @@ func TestProxyMarksTheSandboxOrigin(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{http.CanonicalHeaderKey(hosttools.HeaderOrigin) + "=" + hosttools.OriginSandbox}, sidecarHeaders); diff != "" || h.Get("X-Other") != "kept" {
 		t.Fatalf("headers that reached the endpoint wrong result (-want +got) diff = %s, X-Other %q", diff, h.Get("X-Other"))
+	}
+}
+
+func TestProxySendsTheContextAndTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		contextID   string
+		task        func() string
+		wantContext string
+		wantTask    string
+	}{
+		{name: "turn in progress", contextID: "ctx-1", task: func() string { return "task-1" }, wantContext: "ctx-1", wantTask: "task-1"},
+		{name: "no turn", contextID: "ctx-1", task: func() string { return "" }, wantContext: "ctx-1"},
+		{name: "no task func", contextID: "ctx-1", wantContext: "ctx-1"},
+		{name: "no context", task: func() string { return "task-1" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := make(chan http.Header, 1)
+			ep := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got <- r.Header.Clone()
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://tools.sidecar.internal/mcp", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set(hosttools.HeaderContext, "spoofed")
+			req.Header.Set(hosttools.HeaderTask, "spoofed")
+
+			resp, err := ep.Proxy().For(tc.contextID, tc.task).RoundTrip(req)
+			if err != nil {
+				t.Fatalf("Proxy().For().RoundTrip() error = %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			h := <-got
+			if h.Get(hosttools.HeaderContext) != tc.wantContext || h.Get(hosttools.HeaderTask) != tc.wantTask {
+				t.Fatalf("Proxy().For(%q).RoundTrip() sent context %q and task %q, want %q and %q", tc.contextID, h.Get(hosttools.HeaderContext), h.Get(hosttools.HeaderTask), tc.wantContext, tc.wantTask)
+			}
+		})
 	}
 }
 
@@ -579,7 +624,7 @@ func TestEndpointWithTokenAuthenticatesClientAndProxy(t *testing.T) {
 		t.Fatalf("Client.Hooks() = %+v, want %+v", got, allHooks)
 	}
 
-	proxyClient := &http.Client{Transport: ep.Proxy()}
+	proxyClient := &http.Client{Transport: ep.Proxy().For("", nil)}
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://tools.sidecar.internal/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent"}}}`))
 	if err != nil {
 		t.Fatal(err)

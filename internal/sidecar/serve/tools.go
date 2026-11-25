@@ -60,6 +60,8 @@ type hostTools struct {
 	ep     hosttools.Endpoint
 	client *hosttools.Client
 	hooks  *hosttools.Hooks
+	// proxy forwards the agent's requests from the sandbox.
+	proxy *hosttools.Proxy
 }
 
 // startTools starts a session with the tools endpoint ep, and reads which
@@ -74,7 +76,7 @@ func startTools(ctx context.Context, ep hosttools.Endpoint, version string, log 
 	hooks := hosttools.NewHooks(c, hosttools.DefaultHookTimeouts, log)
 	s := hooks.Support()
 	log.Info("connected to the tools endpoint", "endpoint", ep.String(), "beforeTool", s.BeforeTool, "afterTool", s.AfterTool)
-	return &hostTools{ep: ep, client: c, hooks: hooks}, nil
+	return &hostTools{ep: ep, client: c, hooks: hooks, proxy: ep.Proxy()}, nil
 }
 
 // server returns the MCP server of the tools endpoint as the agent
@@ -93,18 +95,19 @@ func (t *hostTools) server(sandbox string) a2aserve.MCPServer {
 }
 
 // wrapRouter returns the wrapper that routes ToolsHost of a router to the
-// tools endpoint, or nil without t.
-func (t *hostTools) wrapRouter() func(egress.Router) egress.Router {
+// tools endpoint, or nil without t. task returns the task of the process of
+// a context.
+func (t *hostTools) wrapRouter(task func(contextID string) string) func(egress.Router) egress.Router {
 	if t == nil {
 		return nil
 	}
-	return t.router
+	return func(next egress.Router) egress.Router { return t.router(next, task) }
 }
 
 // router returns next, which also routes ToolsHost to the tools endpoint.
 // It intercepts the hosts that next does.
-func (t *hostTools) router(next egress.Router) egress.Router {
-	r := toolsRouter{next: next, proxy: t.ep.Proxy()}
+func (t *hostTools) router(next egress.Router, task func(contextID string) string) egress.Router {
+	r := toolsRouter{next: next, proxy: t.proxy, task: task}
 	if ih, ok := next.(egress.InterceptHosts); ok {
 		return interceptingToolsRouter{toolsRouter: r, hosts: ih}
 	}
@@ -136,14 +139,17 @@ func (s *Server) closeTools(ctx context.Context) error {
 	t := s.tools
 	s.tools = nil
 	t.hooks.Close(ctx)
+	defer t.proxy.CloseIdleConnections()
 	return t.client.Close(ctx)
 }
 
 // toolsRouter routes plain HTTP to ToolsHost:80 to the tools endpoint
-// through proxy, and other connections by next.
+// through proxy, with the context and task of the process, and other
+// connections by next.
 type toolsRouter struct {
 	next  egress.Router
-	proxy http.RoundTripper
+	proxy *hosttools.Proxy
+	task  func(contextID string) string
 }
 
 func (r toolsRouter) Route(ctx context.Context, f egress.Flow) (egress.Route, error) {
@@ -153,7 +159,9 @@ func (r toolsRouter) Route(ctx context.Context, f egress.Flow) (egress.Route, er
 	if f.Port != 80 {
 		return egress.Refuse(http.StatusForbidden, "the tools endpoint is at port 80"), nil
 	}
-	return egress.HTTP(func(http.RoundTripper) http.RoundTripper { return r.proxy }), nil
+	key := f.Key
+	rt := r.proxy.For(key, func() string { return r.task(key) })
+	return egress.HTTP(func(http.RoundTripper) http.RoundTripper { return rt }), nil
 }
 
 // interceptingToolsRouter is a toolsRouter whose next router names the

@@ -60,6 +60,9 @@ type ToolsConfig struct {
 type Record struct {
 	Method string
 	Params json.RawMessage
+	// Context and Task are the request's [hosttools.HeaderContext] and
+	// [hosttools.HeaderTask].
+	Context, Task string
 }
 
 // Tools is the reference host's tools endpoint: an MCP server over
@@ -155,7 +158,7 @@ func (h *Tools) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.record(m)
+	h.record(Record{Method: m.Method, Params: m.Params, Context: r.Header.Get(hosttools.HeaderContext), Task: r.Header.Get(hosttools.HeaderTask)})
 	if len(m.ID) == 0 {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -244,8 +247,7 @@ func (h *Tools) handle(m message) (any, *rpcError) {
 	return nil, &rpcError{-32601, "method not found: " + m.Method}
 }
 
-func (h *Tools) record(m message) {
-	rec := Record{Method: m.Method, Params: m.Params}
+func (h *Tools) record(rec Record) {
 	h.mu.Lock()
 	if len(h.records) >= maxToolRecords {
 		h.records = slices.Delete(h.records, 0, 1)

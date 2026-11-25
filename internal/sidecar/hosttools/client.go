@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/a2aproject/a2a-serve/core/egress"
 )
 
 const (
@@ -43,6 +45,11 @@ const (
 	// HeaderToken carries the run-scoped authentication token on requests
 	// to a loopback HTTP tools endpoint.
 	HeaderToken = "A2A-Sidecar-Token"
+	// HeaderContext carries the A2A context of the agent process that sent
+	// a request from the sandbox.
+	HeaderContext = egress.ProxyHeaderContext
+	// HeaderTask carries the task that the agent process works on.
+	HeaderTask = egress.ProxyHeaderTask
 	// OriginSidecar is the origin of a2a-serve-sidecar's own session.
 	OriginSidecar = "a2a-serve-sidecar"
 	// OriginSandbox is the origin of the agent's requests, which a2a-serve-sidecar
