@@ -17,7 +17,6 @@ package schedules
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 // fakeTurns records the turns schedules post, which tests accept or refuse.
@@ -75,15 +75,7 @@ type schedulesFixture struct {
 
 func newSchedulesFixture(t *testing.T) *schedulesFixture {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	st := storetest.Open(t)
 	chain := &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
 	turns := &fakeTurns{}
 	sc := New(t.Context(), Deps{Store: st, Turns: turns, Supervisor: noMessengers{}, Chain: chain, Now: time.Now})

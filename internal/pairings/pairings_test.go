@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 // frozenClock keeps the limiter's backoffs and windows from expiring
@@ -48,15 +49,7 @@ func (a fakeAds) Advertised(name string) bool {
 
 func newService(t *testing.T, opts ...func(*Deps)) *Service {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	st := storetest.Open(t)
 	deps := Deps{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter(frozenClock)}
 	for _, o := range opts {
 		o(&deps)

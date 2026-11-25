@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/store/storetest"
 )
 
 // Prompts a fakeContact runs. A message to a task that waits for input is
@@ -94,16 +94,7 @@ func postOversized(t *testing.T, u, authorization string) int {
 
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := st.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-	return st
+	return storetest.Open(t)
 }
 
 // waitTimeout bounds how long tests wait for something to happen.
