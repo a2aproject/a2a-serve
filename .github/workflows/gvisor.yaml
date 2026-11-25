@@ -5,9 +5,30 @@ name: gVisor
 on:
   push:
     branches: [ "main", "release/**" ]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - 'docs/**'
+      - 'site/**'
+      - 'review/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
 
   pull_request:
     branches: [ "main", "release/**" ]
+    paths:
+      - 'core/sandbox/**'
+      - 'core/egress/**'
+      - 'internal/sandboxrt/**'
+      - 'internal/sidecar/**'
+      - 'internal/boundary/**'
+      - 'internal/egressrules/**'
+      - 'internal/fsysmask/**'
+      - 'cmd/a2a-serve-sidecar/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/actions/setup/**'
+      - '.github/workflows/gvisor.yaml'
 
   workflow_dispatch:
 
@@ -26,6 +47,8 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     # As https://gvisor.dev/docs/user_guide/install/ describes. The launcher
     # reaches the egress socket, a socket of the host, only with
