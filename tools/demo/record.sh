@@ -113,12 +113,24 @@ REAL_HOME="$HOME"
 mkdir -p "$DEMO_WORK/you" "$DEMO_WORK/bin"
 
 if [[ -n "$BUILD" ]]; then
-  echo "[demo] building a2a-serve" >&2
-  (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/a2a-serve" .)
+  if [[ -n "${DEMO_BIN_DIR:-}" && -x "$DEMO_BIN_DIR/a2a-serve" ]]; then
+    cp "$DEMO_BIN_DIR/a2a-serve" "$DEMO_WORK/bin/a2a-serve"
+  else
+    echo "[demo] building a2a-serve" >&2
+    (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/a2a-serve" .)
+  fi
   # Release archives put the Agent Mesh network provider next to a2a-serve.
-  (cd "$REPO_ROOT/providers/agentmesh" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/netprovider-agentmesh" .)
+  if [[ -n "${DEMO_BIN_DIR:-}" && -x "$DEMO_BIN_DIR/netprovider-agentmesh" ]]; then
+    cp "$DEMO_BIN_DIR/netprovider-agentmesh" "$DEMO_WORK/bin/netprovider-agentmesh"
+  else
+    (cd "$REPO_ROOT/providers/agentmesh" && CGO_ENABLED=0 go build -o "$DEMO_WORK/bin/netprovider-agentmesh" .)
+  fi
   if [[ -n "$DEMO_FAKE" ]]; then
-    (cd "$REPO_ROOT" && go build -o "$DEMO_WORK/bin/fakeacp" ./internal/agentsrv/testdata/fakeacp)
+    if [[ -n "${DEMO_BIN_DIR:-}" && -x "$DEMO_BIN_DIR/fakeacp" ]]; then
+      cp "$DEMO_BIN_DIR/fakeacp" "$DEMO_WORK/bin/fakeacp"
+    else
+      (cd "$REPO_ROOT" && go build -o "$DEMO_WORK/bin/fakeacp" ./internal/agentsrv/testdata/fakeacp)
+    fi
   fi
 fi
 export PATH="$DEMO_WORK/bin:$PATH"

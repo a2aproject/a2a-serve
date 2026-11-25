@@ -5,9 +5,30 @@ name: Docker AppArmor
 on:
   push:
     branches: [ "main", "release/**" ]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - 'docs/**'
+      - 'site/**'
+      - 'review/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
 
   pull_request:
     branches: [ "main", "release/**" ]
+    paths:
+      - 'core/sandbox/**'
+      - 'core/egress/**'
+      - 'internal/sandboxrt/**'
+      - 'internal/sidecar/**'
+      - 'internal/boundary/**'
+      - 'internal/egressrules/**'
+      - 'internal/fsysmask/**'
+      - 'cmd/a2a-serve-sidecar/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/actions/setup/**'
+      - '.github/workflows/docker-apparmor.yaml'
 
   workflow_dispatch:
 
@@ -26,6 +47,8 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     - name: Check that Docker applies AppArmor
       run: docker info --format '{{.SecurityOptions}}' | grep -q name=apparmor

@@ -1,6 +1,16 @@
 name: Setup
 description: Setup the environment
 
+inputs:
+  cache-profile:
+    description: 'Cache profile name for the Go build cache'
+    required: false
+    default: 'default'
+  working-directory:
+    description: 'Working directory for go mod download'
+    required: false
+    default: '.'
+
 outputs:
   go-version:
     description: 'Go version'
@@ -16,18 +26,33 @@ runs:
         go-version-file: 'go.mod'
         cache: false # wrapper for actions/cache that doesn't support all functionality
 
-    - name: Load Go cache
+    - name: Load Go module cache
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-build-${{ hashFiles('**/go.mod', '**/go.sum') }}
-        restore-keys: ${{ runner.os }}-go-build-
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-mod-${{ hashFiles('**/go.mod', '**/go.sum') }}
+        restore-keys: ${{ runner.os }}-go-mod-
+
+    - name: Load Go build cache
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/go-build
+        key: ${{ runner.os }}-go-build-${{ inputs.cache-profile }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
+        restore-keys: ${{ runner.os }}-go-build-${{ inputs.cache-profile }}-
+
+    - name: Restore Go build cache
+      if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/go-build
+        key: ${{ runner.os }}-go-build-${{ inputs.cache-profile }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
+        restore-keys: ${{ runner.os }}-go-build-${{ inputs.cache-profile }}-
 
     # The module proxy occasionally resets streams; retry so later steps run against a warm cache.
     - name: Download modules
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         for attempt in 1 2 3; do
           go mod download && exit 0

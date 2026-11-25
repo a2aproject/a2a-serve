@@ -6,9 +6,25 @@ name: E2E
 on:
   push:
     branches: [ "main", "release/**" ]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - 'docs/**'
+      - 'site/**'
+      - 'review/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
 
   pull_request:
     branches: [ "main", "release/**" ]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - 'docs/**'
+      - 'site/**'
+      - 'review/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
 
   workflow_dispatch:
 
@@ -27,6 +43,8 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     - name: E2E
       run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
@@ -39,6 +57,8 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     - name: E2E
       env:
@@ -53,6 +73,8 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     # Ubuntu restricts unprivileged user namespaces with AppArmor, and its
     # profile for bwrap strips the capabilities that the launcher takes in
@@ -72,9 +94,37 @@ jobs:
         E2E_SANDBOX: bwrap
       run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
 
+  demo-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+      with:
+        cache-profile: cgo0
+
+    - name: Build demo binaries
+      run: |
+        mkdir -p "$RUNNER_TEMP/demo-bin"
+        CGO_ENABLED=0 go build -mod=readonly -o "$RUNNER_TEMP/demo-bin/a2a-serve" .
+        (cd providers/agentmesh && CGO_ENABLED=0 go build -mod=readonly -o "$RUNNER_TEMP/demo-bin/netprovider-agentmesh" .)
+        CGO_ENABLED=0 go build -mod=readonly -o "$RUNNER_TEMP/demo-bin/fakeacp" ./internal/agentsrv/testdata/fakeacp
+        version="$(sed -n 's/^const MinVersion = "\(.*\)"$/\1/p' internal/a2acli/a2acli.go)"
+        GOBIN="$RUNNER_TEMP/demo-bin" CGO_ENABLED=0 go install "github.com/a2aproject/a2a-cli@$version"
+        mv "$RUNNER_TEMP/demo-bin/a2a-cli" "$RUNNER_TEMP/demo-bin/a2a"
+
+    - name: Upload demo binaries
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: demo-bin
+        path: ${{ runner.temp }}/demo-bin
+        retention-days: 1
+
   # Runs the example READMEs as demo scenarios with fakeacp, so that a change
   # to a command or its output that the examples show fails here.
   demo:
+    needs: demo-build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -83,15 +133,48 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-    - name: Setup
-      uses: ./.github/actions/setup
+    - name: Download demo binaries
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: demo-bin
+        path: ${{ runner.temp }}/demo-bin
 
-    - name: Install tools
+    - name: Expose demo binaries
       run: |
-        version="$(sed -n 's/^const MinVersion = "\(.*\)"$/\1/p' internal/a2acli/a2acli.go)"
-        GOBIN="$RUNNER_TEMP/bin" go install "github.com/a2aproject/a2a-cli@$version"
-        mv "$RUNNER_TEMP/bin/a2a-cli" "$RUNNER_TEMP/bin/a2a"
-        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        chmod +x "$RUNNER_TEMP/demo-bin/"*
+        echo "$RUNNER_TEMP/demo-bin" >> "$GITHUB_PATH"
+
+    - name: Setup
+      if: matrix.scenario != '01-agent-server'
+      uses: ./.github/actions/setup
+      with:
+        cache-profile: ${{ matrix.scenario == '07-slim-network' && 'slim' || 'cgo0' }}
+        working-directory: ${{ matrix.scenario == '07-slim-network' && 'providers/slim' || '.' }}
+
+    - name: Restore agentmesh-one cache
+      if: matrix.scenario == '03-agentmesh-relay'
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/a2a-serve/agentmesh-v*
+        key: ${{ runner.os }}-agentmesh-${{ hashFiles('internal/agentmesh/agentmesh.go') }}
+
+    - name: Expose agentmesh-one
+      if: matrix.scenario == '03-agentmesh-relay'
+      run: |
+        for dir in ~/.cache/a2a-serve/agentmesh-v*; do
+          if [ -x "$dir/agentmesh-one" ]; then
+            echo "$dir" >> "$GITHUB_PATH"
+          fi
+        done
+
+    - name: Cache SLIM native library
+      if: matrix.scenario == '07-slim-network'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/go/.cgo-cache/slim-bindings
+        key: ${{ runner.os }}-slim-bindings-${{ hashFiles('providers/slim/go.sum') }}
 
     - name: Run ${{ matrix.scenario }}
+      env:
+        DEMO_BIN_DIR: ${{ runner.temp }}/demo-bin
       run: tools/demo/record.sh ${{ matrix.scenario }} --fake --no-record --speed 20 --out "$RUNNER_TEMP/demo"

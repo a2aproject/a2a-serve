@@ -18,17 +18,90 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      agentmesh: ${{ steps.filter.outputs.agentmesh }}
+      slim: ${{ steps.filter.outputs.slim }}
+    steps:
+    - name: Detect changed files
+      id: filter
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          {
+            echo "go=true"
+            echo "agentmesh=true"
+            echo "slim=true"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if ! files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+          {
+            echo "go=true"
+            echo "agentmesh=true"
+            echo "slim=true"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -z "$files" ]; then
+          {
+            echo "go=true"
+            echo "agentmesh=true"
+            echo "slim=true"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        go=false
+        agentmesh=false
+        slim=false
+        while IFS= read -r f; do
+          case "$f" in
+            docs/*|site/*|review/*|CHANGELOG.md|.release-please-manifest.json) ;;
+            */*) go=true ;;
+            *.md) ;;
+            *) go=true ;;
+          esac
+          case "$f" in
+            providers/agentmesh/*|netprovider/*|internal/agentmesh/*|internal/relay/*|go.mod|go.sum|.github/workflows/go.yaml|.github/actions/setup/*)
+              agentmesh=true
+              ;;
+          esac
+          case "$f" in
+            providers/slim/*|netprovider/*|examples/07-slim-network/*|go.mod|go.sum|.github/workflows/go.yaml|.github/actions/setup/*)
+              slim=true
+              ;;
+          esac
+        done <<< "$files"
+        {
+          echo "go=$go"
+          echo "agentmesh=$agentmesh"
+          echo "slim=$slim"
+        } >> "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - if: needs.changes.outputs.go == 'true'
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Setup
+      if: needs.changes.outputs.go == 'true'
       uses: ./.github/actions/setup
+      with:
+        cache-profile: default
 
     # Tidy also fetches test dependencies of dependencies; retry download errors, fail on a diff.
     - name: Tidy
+      if: needs.changes.outputs.go == 'true'
       run: |
         for attempt in 1 2 3; do
           if diff=$(go mod tidy -diff); then exit 0; fi
@@ -39,14 +112,23 @@ jobs:
         exit 1
 
     - name: Build
-      run: go build -mod=readonly -v ./...
+      if: needs.changes.outputs.go == 'true'
+      run: go build -mod=readonly ./...
 
     - name: Test
-      run: go test -mod=readonly -count=10 -shuffle=on ./...
+      if: needs.changes.outputs.go == 'true'
+      run: |
+        COUNT=10
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          COUNT=3
+        fi
+        go test -mod=readonly -count=$COUNT -shuffle=on ./...
 
   # The network providers are modules of their own, so the core go.mod has
   # none of their dependencies.
   provider-agentmesh:
+    needs: changes
+    if: needs.changes.outputs.agentmesh == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -56,6 +138,9 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: agentmesh
+        working-directory: providers/agentmesh
 
     - name: Tidy
       run: go mod tidy -diff
@@ -71,6 +156,8 @@ jobs:
   # The SLIM provider links the SLIM bindings' native library with cgo, and
   # its integration tests join a SLIM node in Docker.
   provider-slim:
+    needs: changes
+    if: needs.changes.outputs.slim == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -80,11 +167,22 @@ jobs:
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: slim
+        working-directory: providers/slim
 
     - name: Tidy
       run: go mod tidy -diff
 
+    - name: Cache SLIM native library
+      id: slim-bindings-cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/go/.cgo-cache/slim-bindings
+        key: ${{ runner.os }}-slim-bindings-${{ hashFiles('providers/slim/go.sum') }}
+
     - name: Native library
+      if: steps.slim-bindings-cache.outputs.cache-hit != 'true'
       run: go run github.com/agntcy/slim-bindings-go/v3/cmd/slim-bindings-setup
 
     - name: SLIM node
@@ -97,26 +195,37 @@ jobs:
         go test -race -mod=readonly -count=1 -shuffle=on ./...
 
   race:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Setup
       uses: ./.github/actions/setup
+      with:
+        cache-profile: race
 
     - name: Test Race
+      env:
+        GORACE: atexit_sleep_ms=0
       run: go test -race -mod=readonly -v -count=1 -shuffle=on ./...
 
   lint:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - if: needs.changes.outputs.go == 'true'
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Setup
+      if: needs.changes.outputs.go == 'true'
       uses: ./.github/actions/setup
+      with:
+        cache-profile: lint
 
     - name: Lint
+      if: needs.changes.outputs.go == 'true'
       uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
       with:
-        install-mode: goinstall
-        version: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5 # v2.11.4
+        version: v2.11.4
