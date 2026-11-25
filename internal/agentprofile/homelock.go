@@ -28,10 +28,17 @@ import (
 // The configuration of the agents in their homes which can change what they
 // run and approve: settings, and definitions that grant tools or run code.
 // opencode also merges the config of the servers that "wellknown" entries
-// of its auth.json name. Directories end with a slash.
+// of its auth.json name. Copilot keeps the folders it trusts in config.json
+// and the approvals it saved in permissions-config.json. Directories end
+// with a slash.
 var (
 	claudeHomeConfig   = []string{".claude/settings.json", ".claude/agents/", ".claude/commands/", ".claude/skills/"}
 	opencodeHomeConfig = []string{".config/opencode/", ".opencode/", ".local/share/opencode/auth.json"}
+	copilotHomeConfig  = []string{
+		".copilot/settings.json", ".copilot/config.json", ".copilot/permissions-config.json", ".copilot/mcp-config.json",
+		".copilot/lsp-config.json", ".copilot/providers.json", ".copilot/hooks/", ".copilot/agents/", ".copilot/skills/",
+		".copilot/extensions/", ".copilot/installed-plugins/", ".agents/skills/",
+	}
 )
 
 // opencodeGitignore is what opencode writes into a configuration folder
@@ -48,6 +55,7 @@ type homeConfigReader interface {
 
 func (opencode) homeConfig() []string { return opencodeHomeConfig }
 func (claude) homeConfig() []string   { return claudeHomeConfig }
+func (copilot) homeConfig() []string  { return copilotHomeConfig }
 
 // lockHomeConfig returns the mounts that make the agent's configuration in
 // its home read-only. It creates the missing entries, since docker would
@@ -66,7 +74,7 @@ func lockHomeConfig(spec Spec) ([]sandboxrt.Mount, error) {
 	if c, ok := p.(custom); ok && c.base != nil {
 		p = c.base
 	}
-	readers := []homeConfigReader{claude{}, opencode{}}
+	readers := []homeConfigReader{claude{}, opencode{}, copilot{}}
 	if r, ok := p.(homeConfigReader); ok {
 		readers = []homeConfigReader{r}
 	}

@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/projectfiles"
 )
 
@@ -43,7 +44,8 @@ type Result struct {
 
 // apiKeys are the variables harnesses commonly need, in order of preference.
 var apiKeys = map[string][]string{
-	"claude":   {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
+	"claude":   agentprofile.ClaudeKeys(),
+	"copilot":  agentprofile.CopilotKeys(),
 	"opencode": {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"},
 }
 

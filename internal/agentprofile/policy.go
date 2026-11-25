@@ -99,6 +99,14 @@ func claudeServerName(name string) string {
 	return server
 }
 
+// imagePolicy is a policy reader whose agent reads its policy only from a
+// file that root owns. Its image has the policy, since a mounted file shows
+// the owner of the host file with rootful Docker. Bubblewrap gets the
+// mounted one, which root owns in the sandbox behind its launcher.
+type imagePolicy interface {
+	policyInImage() bool
+}
+
 // policyOf returns the policy reader of p: Claude Code's for an agent of
 // unknown kind.
 func policyOf(p Profile) (policyReader, bool) {
@@ -138,6 +146,9 @@ func WritePolicy(p Profile, dir string, policy Policy) error {
 func policyMount(spec Spec) (string, error) {
 	r, ok := policyOf(spec.Profile)
 	if !ok {
+		return "", nil
+	}
+	if b, ok := r.(imagePolicy); ok && b.policyInImage() && spec.Sandbox != SandboxBwrap {
 		return "", nil
 	}
 	dst, file := r.policyPath()

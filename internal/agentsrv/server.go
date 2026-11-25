@@ -622,7 +622,7 @@ func (s *Server) interceptors() []a2asrv.CallInterceptor {
 // observe wraps the executor of the agent with what the server does around
 // each execution.
 func (s *Server) observe(ctx context.Context, inner a2asrv.AgentExecutor) a2asrv.AgentExecutor {
-	return &observedExecutor{inner: inner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, proxy: s.proxy, store: s.store, notes: s.notes, call: s.call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued}
+	return &observedExecutor{inner: inner, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, proxy: s.proxy, store: s.store, notes: s.notes, call: s.call, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}, voice: s.voice, queued: s.queued, harness: func() string { return s.rt.Config().Harness }}
 }
 
 // boundCallers checks the requests of callers with the interceptor that

@@ -937,6 +937,18 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"running", StatusWarn}},
 		},
 		{
+			name: "project MCP servers turned off for Copilot without a sandbox",
+			cfg:  agentdir.Config{Name: "coder", Harness: "copilot", Sandbox: agentdir.SandboxLocal, MCP: agentdir.MCPConfig{Disabled: []string{"github"}}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["copilot"] = "/usr/bin/copilot"
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp"}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, projectfiles.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
 			name: "turned off MCP server missing from the project",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, MCP: agentdir.MCPConfig{Disabled: []string{"gone"}}},
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {

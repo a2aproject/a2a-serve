@@ -35,6 +35,9 @@ jobs:
           # accept Anthropic's Commercial Terms.
           - harness: claude
             publish: false
+          # Built on each machine; the project doesn't publish a Copilot image.
+          - harness: copilot
+            publish: false
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

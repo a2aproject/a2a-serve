@@ -11,7 +11,7 @@ The agent runs in a Docker container that sees your project and nothing else on 
 
 The server refuses a workspace or mount that is your home directory or `/`, because the agent could read your credentials there. Use a project directory.
 
-The image comes from `ghcr.io/a2aproject`. The `claude` image is built on your machine on the first start. `--image` uses another one.
+The image comes from `ghcr.io/a2aproject`. The `claude` and `copilot` images are built on your machine on the first start. `--image` uses another one.
 
 `--sandbox local` runs the agent on the host, as you, with no isolation. Use it only when you trust the agent and everyone who can call it.
 
@@ -113,6 +113,7 @@ The agent then reaches only the hosts you list. Include the API of its model pro
 | --- | --- |
 | opencode | `models.opencode.ai:443`, `registry.npmjs.org:443`, and the API of its provider |
 | Claude Code | `api.anthropic.com:443` |
+| GitHub Copilot CLI | `api.github.com:443`, `api.githubcopilot.com:443`, `api.individual.githubcopilot.com:443` |
 | Google (Gemini) | `generativelanguage.googleapis.com:443` |
 | OpenAI | `api.openai.com:443` |
 | Anthropic | `api.anthropic.com:443` |

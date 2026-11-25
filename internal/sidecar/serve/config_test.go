@@ -45,7 +45,7 @@ func TestStartRefusesInvalidFlags(t *testing.T) {
 		edit func(*serve.Config)
 		want string
 	}{
-		{name: "no agent", edit: func(c *serve.Config) { c.Agent = "" }, want: "no agent: pass --agent claude or --agent opencode"},
+		{name: "no agent", edit: func(c *serve.Config) { c.Agent = "" }, want: "no agent: pass --agent with claude, copilot, opencode, or --command"},
 		{name: "unknown agent", edit: func(c *serve.Config) { c.Agent = "gemini" }, want: `unknown --agent "gemini"`},
 		{name: "unparsable command", edit: func(c *serve.Config) { c.Command = `"unterminated` }, want: "invalid --command"},
 		{name: "custom agent in docker without an image", edit: func(c *serve.Config) { c.Agent, c.Command, c.Sandbox = "", "fakeacp", "" }, want: "--command without --agent needs --image with --sandbox docker"},

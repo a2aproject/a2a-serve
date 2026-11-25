@@ -1017,6 +1017,22 @@ func TestExplainFailure(t *testing.T) {
 			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY --restart`; the agent reported: model not found: google/gemini-old",
 		},
 		{name: "agent that takes its model in its command", cfg: &agentdir.Config{Harness: "acp"}, reported: "model not found: x", want: "model not found: x"},
+		{
+			name: "copilot without a token", cfg: &agentdir.Config{Harness: "copilot"}, reported: "creating acp session: Authentication required (code -32000)",
+			want: "the agent failed: creating acp session: Authentication required; give the agent a GitHub token with the Copilot Requests permission: `a2a-serve config set --secret COPILOT_GITHUB_TOKEN --restart`",
+		},
+		{
+			name: "copilot with a token it refuses", cfg: &agentdir.Config{Harness: "copilot", Secrets: []string{"GH_TOKEN"}}, granted: []string{"GH_TOKEN"}, reported: "creating acp session: Authentication required (code -32000)",
+			want: "the agent failed: creating acp session: Authentication required; give the agent a GitHub token with the Copilot Requests permission: `a2a-serve config set --secret COPILOT_GITHUB_TOKEN --restart`",
+		},
+		{
+			name: "copilot with its own model provider", cfg: &agentdir.Config{Harness: "copilot", Env: []string{"COPILOT_PROVIDER_BASE_URL=http://m/v1"}}, reported: "creating acp session: Authentication required (code -32000)",
+			want: "the agent failed: creating acp session: Authentication required",
+		},
+		{
+			name: "copilot without the token in its sandbox", cfg: &agentdir.Config{Harness: "copilot", Secrets: []string{"GH_TOKEN"}}, reported: "creating acp session: Authentication required (code -32000)",
+			want: "The owner hasn't given this agent a model key. The agent reported: the agent failed: creating acp session: Authentication required",
+		},
 		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},
 		{name: "missing model file", cfg: opencode, reported: "src/model.go: not found", want: "src/model.go: not found"},
 		{name: "other failure", cfg: opencode, reported: "the agent reached its token limit", want: "the agent reached its token limit"},
@@ -1026,6 +1042,43 @@ func TestExplainFailure(t *testing.T) {
 			t.Parallel()
 			if got := explainFailure(tc.cfg, tc.granted, tc.reported); got != tc.want {
 				t.Fatalf("explainFailure(%q) = %q, want %q", tc.reported, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCopilotTakesCommandsOnlyFromTheOwner(t *testing.T) {
+	t.Parallel()
+	member := auth.Principal{ID: "anna", Role: auth.RoleMember}
+	tests := []struct {
+		name    string
+		harness string
+		caller  auth.Principal
+		text    string
+		want    []string
+	}{
+		{name: "copilot command of a member", harness: "copilot", caller: member, text: "/allow-all on", want: []string{callerTextNote, "/allow-all on"}},
+		{name: "copilot command after spaces", harness: "copilot", caller: member, text: "  /add-dir /", want: []string{callerTextNote, "  /add-dir /"}},
+		{name: "copilot command of the owner", harness: "copilot", caller: auth.Owner(), text: "/compact", want: []string{"/compact"}},
+		{name: "copilot command after a byte order mark", harness: "copilot", caller: member, text: "\ufeff/allow-all on", want: []string{callerTextNote, "\ufeff/allow-all on"}},
+		{name: "copilot message of a member", harness: "copilot", caller: member, text: "fix the build", want: []string{callerTextNote, "fix the build"}},
+		{name: "opencode command of a member", harness: "opencode", caller: member, text: "/allow-all on", want: []string{"/allow-all on"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := auth.WithPrincipal(context.Background(), tc.caller)
+			execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(tc.text))}
+			got := withPlainCommands(ctx, tc.harness, execCtx)
+			var texts []string
+			for _, p := range got.Message.Parts {
+				texts = append(texts, p.Text())
+			}
+			if diff := cmp.Diff(tc.want, texts); diff != "" {
+				t.Fatalf("withPlainCommands() parts wrong result (-want +got) diff = %s", diff)
+			}
+			if tc.text != execCtx.Message.Parts[0].Text() || len(execCtx.Message.Parts) != 1 {
+				t.Fatalf("withPlainCommands() changed the caller's message to %v, want it kept", execCtx.Message.Parts)
 			}
 		})
 	}

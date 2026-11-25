@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentprofile"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
@@ -55,9 +56,9 @@ agent is stopped. The Docker sandbox refuses your home directory or / as the
 workspace unless --allow-broad-mount names it.
 
 ` + flagparse.SecretHelp,
-		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY
+		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret %[2]s
   a2a-serve start %[1]s --private tailscale --allow-tools read,search --detach
-  a2a-serve start %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
+  a2a-serve start %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name, exampleKey(name)),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := harnessDir(sf.dir)
@@ -159,4 +160,16 @@ func harnessDirFrom(wd, dir string) (agentdir.Dir, error) {
 		return agentdir.Dir{}, err
 	}
 	return agentdir.Dir{}, clierr.Usage(fmt.Sprintf("%s is inside the agent in %s; start that agent with `a2a-serve start`, or pass --dir . to create a separate agent here", d.Root, parent.Root))
+}
+
+// exampleKey is the secret that the examples of the start command of
+// harness pass: the key of its model provider.
+func exampleKey(harness string) string {
+	switch harness {
+	case "claude":
+		return agentprofile.ClaudeKeys()[0]
+	case "copilot":
+		return agentprofile.CopilotKeys()[0]
+	}
+	return "OPENROUTER_API_KEY"
 }

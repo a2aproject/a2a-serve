@@ -238,6 +238,10 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 	return results
 }
 
+// readsProjectMCP names the agents that start the servers of the project's
+// .mcp.json themselves, also those the config turns off.
+var readsProjectMCP = map[string]string{"claude": "Claude Code", "copilot": "Copilot"}
+
 // checkMCP reports the MCP servers of the project's .mcp.json which reference
 // variables without a value, since the harness doesn't get them, and
 // servers the config turns off which .mcp.json doesn't have.
@@ -285,11 +289,11 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 			Fix:     "a2a-serve config set " + strings.Join(fix, " "),
 		})
 	}
-	if off > 0 && cfg.Sandbox == agentdir.SandboxLocal && cfg.Harness == "claude" {
+	if name, ok := readsProjectMCP[cfg.Harness]; ok && off > 0 && cfg.Sandbox == agentdir.SandboxLocal {
 		results = append(results, Result{
 			ID:      "mcp",
 			Status:  StatusWarn,
-			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", projectfiles.MCPFile),
+			Message: fmt.Sprintf("%s without a sandbox may start the servers of %s that are off", name, projectfiles.MCPFile),
 			Detail:  "the docker sandbox hides " + projectfiles.MCPFile + " from the agent",
 			Fix:     "a2a-serve config unset sandbox",
 		})

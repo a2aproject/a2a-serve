@@ -300,3 +300,32 @@ test -S "$A2ACLI_UNIX_SOCKET" && echo socket=yes
 		t.Fatalf("Prepare() sandbox wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestPrepareBwrapMountsCopilotPolicy(t *testing.T) {
+	t.Parallel()
+	ws, home, policy := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "policy")
+	if err := WritePolicy(copilot{}, policy, Policy{}); err != nil {
+		t.Fatalf("WritePolicy() error = %v", err)
+	}
+	b := &recordingBackend{}
+	if _, err := Prepare(context.Background(), Spec{
+		Profile:    copilot{},
+		Sandbox:    SandboxBwrap,
+		Backend:    b,
+		Base:       sandboxrt.Spec{Name: "a2a-test"},
+		Mounts:     []Mount{{Src: ws, Dst: ws}},
+		Home:       home,
+		PolicyDir:  policy,
+		EgressMode: egressrules.ModeUnrestricted,
+	}); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	specs := b.prepared()
+	if len(specs) != 1 {
+		t.Fatalf("Prepare() prepared %d sandboxes, want 1", len(specs))
+	}
+	want := sandboxrt.Mount{Src: policy, Dst: copilotPolicyDir, ReadOnly: true}
+	if !slices.Contains(specs[0].Mounts, want) {
+		t.Fatalf("Prepare() mounts %+v, want %+v", specs[0].Mounts, want)
+	}
+}

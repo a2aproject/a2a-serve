@@ -83,9 +83,9 @@ func newRunCmd(std IO) *cobra.Command {
 	cmd.AddCommand(newAppArmorCmd(std))
 	f := cmd.Flags()
 	f.SortFlags = false
-	f.StringVar(&cfg.Agent, "agent", "", "Agent to serve, a `name`: claude or opencode")
+	f.StringVar(&cfg.Agent, "agent", "", "Agent to serve, a `name`: claude, copilot or opencode")
 	f.StringVar(&cfg.Command, "command", "", "Command line of the agent, as shell `words`: replaces the command of --agent, or without --agent starts any agent that speaks ACP on stdio")
-	f.StringVar(&cfg.Model, "model", "", "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's)")
+	f.StringVar(&cfg.Model, "model", "", "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's)")
 	f.StringVar(&cfg.Image, "image", "", "Container image of the agent (default: the image of --agent); only applies to --sandbox docker and gvisor")
 	f.StringVar(&cfg.Sandbox, "sandbox", serve.SandboxDocker, "Where the agent runs: docker, gvisor for Docker containers under gVisor's runtime runsc, bwrap for bubblewrap on this machine, with the agent and the a2a CLI that this machine has, or local for this machine without isolation")
 	f.StringVar(&cfg.Egress, "egress", "", "Where the sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts) or allowlist (only the --egress-allow hosts, the hosts of --inject-model-key and --egress-inject-header, and the --egress-middleware hosts) (default internet)")
