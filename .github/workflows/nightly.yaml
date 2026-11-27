@@ -64,7 +64,7 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
       with:
-        cache-profile: default
+        cache-profile: e2e
 
     - name: Build the opencode image
       run: docker build -t a2a-harness-opencode:e2e internal/agentprofile/images/opencode
@@ -85,7 +85,7 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
       with:
-        cache-profile: default
+        cache-profile: e2e
 
     - name: Build the copilot image
       run: docker build -t a2a-harness-copilot:e2e internal/agentprofile/images/copilot
@@ -112,7 +112,7 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
       with:
-        cache-profile: default
+        cache-profile: e2e
 
     - name: Check secrets
       run: |
