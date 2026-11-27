@@ -11,8 +11,8 @@ your mailbox and wakes you by POSTing a JSON envelope to your webhook. You answe
 the `a2a-serve` CLI or plain HTTPS. The agent keeps all task state, so you don't
 need to remember anything between wakes: every wake carries its task ID.
 
-The same node token also lets you call the agent: send it a task with
-`a2a send` whenever you need it (see "Call the agent").
+The same node token also lets you call the hosting agent and its advertised sibling nodes: list them with
+`a2a-serve mailbox peers` and send tasks with `a2a send` whenever you need them (see "Call other agents").
 
 ## Install
 
@@ -105,13 +105,19 @@ history with `./a2a-serve mailbox get <taskId>`.
     ./a2a-serve mailbox list          # wakes not delivered, or tasks still waiting for you
     ./a2a-serve mailbox list --all    # the last 200 wakes
 
-## Call the agent
+## Call other agents
 
-Your node token also works as an A2A token for the agent, as a member: you
-can send it tasks, but not approve its tool calls. `a2a send` attaches the
-token saved by `a2a-serve pair join`, or $A2A_NODE_TOKEN, through a2a-serve's
-credential helper. A2ACLI_CREDENTIAL_HELPER takes the path of a program
-without arguments, so wrap `a2a-serve credential` in a script:
+Your node token also works as an A2A token for the hosting agent and any
+advertised sibling webhook nodes hosted beside you, as a member: you can send
+them tasks, and answer approvals on your own tasks. List the peers you can call
+and their skills:
+
+    ./a2a-serve mailbox peers
+
+`a2a send` attaches the token saved by `a2a-serve pair join`, or $A2A_NODE_TOKEN,
+through a2a-serve's credential helper for {{BASE}} and any peer URL under it.
+A2ACLI_CREDENTIAL_HELPER takes the path of a program without arguments, so wrap
+`a2a-serve credential` in a script:
 
     printf '#!/bin/sh\nexec "%s/a2a-serve" credential "$@"\n' "$PWD" > a2a-credential && chmod +x a2a-credential
     export A2ACLI_CREDENTIAL_HELPER="$PWD/a2a-credential"
@@ -119,23 +125,25 @@ without arguments, so wrap `a2a-serve credential` in a script:
     ./a2a send -a {{BASE}} "Summarize what changed today"
     ./a2a send -a {{BASE}} --async "Run the test suite"   # returns the task ID at once
     ./a2a task get -a {{BASE}} <taskId>
+    ./a2a send -a <peer-url> "Ask a sibling peer a question"
 
-You can do this during a wake or on your own schedule. Don't call the agent
+You can do this during a wake or on your own schedule. Don't call an agent
 to answer a task it sent you: reply to that task instead.
 
 ## Without the CLI
 
 Send the header Authorization: Bearer $A2A_NODE_TOKEN and JSON bodies, only
-to {{BASE}}.
+to {{BASE}} and paths under it.
 
     POST {{BASE}}/pair                          {"code": "K7QF-M2XD"}   (no token; returns it)
     POST {{BASE}}/mailbox/api/tasks/<id>/events {"state": "completed", "text": "…", "idempotencyKey": "<unique>"}
     GET  {{BASE}}/mailbox/api/tasks/<id>
     GET  {{BASE}}/mailbox/api/inbox[?all=1]
     GET  {{BASE}}/mailbox/api/node
+    GET  {{BASE}}/mailbox/api/peers
 
-To call the agent, POST A2A JSON-RPC to {{BASE}}/ with the same token and the
-header A2A-Version: 1.0:
+To call the hosting agent or a peer returned by `/mailbox/api/peers`, POST A2A
+JSON-RPC to that peer's URL with the same token and the header `A2A-Version: 1.0`:
 
     {"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
      "params": {"message": {"messageId": "<unique>", "role": "ROLE_USER", "parts": [{"text": "…"}]}}}

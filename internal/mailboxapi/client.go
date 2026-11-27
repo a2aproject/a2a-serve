@@ -113,6 +113,12 @@ func (c *Client) Inbox(ctx context.Context, all bool) (*Inbox, error) {
 	return &out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// Peers lists the agents the node can call with its node token.
+func (c *Client) Peers(ctx context.Context) (*Peers, error) {
+	var out Peers
+	return &out, c.do(ctx, http.MethodGet, "/api/peers", nil, &out)
+}
+
 func closeBody(resp *http.Response) {
 	if err := resp.Body.Close(); err != nil {
 		slog.Debug("closing response body", "error", err)

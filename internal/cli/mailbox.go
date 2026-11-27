@@ -54,6 +54,7 @@ The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the toke
 	cmd.AddCommand(
 		newMailboxListCmd(cfg),
 		newMailboxGetCmd(cfg),
+		newMailboxPeersCmd(cfg),
 		newMailboxReplyCmd(cfg),
 		newMailboxVerifyCmd(cfg),
 	)

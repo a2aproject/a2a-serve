@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -473,4 +474,79 @@ func nodeClient(t *testing.T, ts *testServer, id, token string) *a2aclient.Clien
 		}
 	})
 	return c
+}
+
+func TestNodePeersAndSiblingCall(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ts := startServer(t, serverOpts{
+		name: "me",
+		configure: func(c *agentdir.Config) {
+			c.Description = "Personal holiday coordinator"
+			c.Card.Skills = []agentdir.CardSkill{
+				{ID: "mail-cousin", Name: "Mail cousin", Description: "Reaches Cousin Sam by email."},
+			}
+		},
+	})
+	muse := addNode(t, ts, "muse", 0)
+	instinct := addNode(t, ts, "instinct", 0)
+	instinct.answer = "instinct says"
+	_ = addNode(t, ts, "private", 0)
+	on := true
+	instinctDesc := "Sister's Instinct agent"
+	if _, err := controlapi.NewClient(ts.dir).UpdatePairing(ctx, "muse", controlapi.PairingUpdate{Advertised: &on}); err != nil {
+		t.Fatalf("UpdatePairing(muse) error = %v", err)
+	}
+	if _, err := controlapi.NewClient(ts.dir).UpdatePairing(ctx, "instinct", controlapi.PairingUpdate{Advertised: &on, Description: &instinctDesc}); err != nil {
+		t.Fatalf("UpdatePairing(instinct) error = %v", err)
+	}
+
+	muse.mu.Lock()
+	museAPI := muse.client
+	museToken := muse.client.Token
+	muse.mu.Unlock()
+
+	got, err := museAPI.Peers(ctx)
+	if err != nil {
+		t.Fatalf("muse.Peers() error = %v", err)
+	}
+	want := &mailboxapi.Peers{
+		Peers: []mailboxapi.Peer{
+			{
+				Name:        "me",
+				URL:         ts.localURL(),
+				Description: "Personal holiday coordinator",
+				Skills: []mailboxapi.PeerSkill{
+					{ID: "mail-cousin", Name: "Mail cousin", Description: "Reaches Cousin Sam by email."},
+				},
+			},
+			{
+				Name:        "instinct",
+				URL:         ts.localURL() + "/n/instinct",
+				Description: instinctDesc,
+			},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("muse.Peers() wrong result (-want +got) diff = %s", diff)
+	}
+
+	siblingURL := got.Peers[1].URL
+	hc := contacts.TokenClient(testHTTP, store.Contact{URL: siblingURL, Token: museToken})
+	card, err := agentcard.NewResolver(hc).Resolve(ctx, siblingURL)
+	if err != nil {
+		t.Fatalf("Resolve(%s) error = %v", siblingURL, err)
+	}
+	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
+	if err != nil {
+		t.Fatalf("NewFromCard() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.Destroy(); err != nil {
+			t.Errorf("Destroy() error = %v", err)
+		}
+	})
+
+	task := send(t, c, userText("Can you do Dec 24?", "", ""))
+	wantResult(t, task, a2a.TaskStateCompleted, "instinct says: Can you do Dec 24?")
 }
