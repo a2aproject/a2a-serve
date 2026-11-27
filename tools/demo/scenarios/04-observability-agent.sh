@@ -45,7 +45,7 @@ prepare() {
   if curl -fsS -o /dev/null --max-time 2 http://localhost:3000 2>/dev/null; then
     die "port 3000 is in use; the example runs Grafana there"
   fi
-  # The demo answers n to github, as a reader without a token would.
+  # Leave the optional GitHub connector disabled for this demo.
   unset GITHUB_TOKEN
 
   docker network create "$O11Y_NET" >/dev/null
@@ -87,28 +87,24 @@ layout() {
 scene() {
   say B "2. Create the agent from the recipe"
   run B "cd ~"
-  start B "a2a-serve recipe $O11Y_RECIPE \\
-  --name o11y --model openrouter/~google/gemini-flash-latest"
-  answer B 'Create o11y in \./o11y\? \(y, n\) \[y\]: *$' y
-  answer B 'API keys to pass to the agent .*\]: *$' ""
-  answer B 'Use github .*\? \(y, n\) \[y\]: *$' n
-  answer B 'GRAFANA_SERVICE_ACCOUNT_TOKEN is set in this shell.*\[y\]: *$' y
-  answer B 'GRAFANA_URL is set in this shell.*\[y\]: *$' y
-  wait_ready B
+  run B "a2a-serve recipe $O11Y_RECIPE \\
+  --name o11y --yes $AGENT_FLAGS"
   pause 3
 
   clear_pane B
   say B "3. Describe your environment"
   run B "cd ~/o11y"
   run B "a2a-serve start --detach"
-  run B 'a2a send --history 0 -a "$(a2a-serve status --url)" "Learn the environment."'
+  run B 'a2a send --history 0 -a "$(a2a-serve status --url=local)" "Learn the environment."'
   # The agent may look outside its workspace, such as at its own config.
-  reply_pending B reject '--history 0 -a "$(a2a-serve status --url)"'
+  reply_pending B reject '--history 0 -a "$(a2a-serve status --url=local)"'
+  expect_status B completed
   pause 4
 
   clear_pane B
   say B "6. Ask it"
-  run B 'a2a send --history 0 -a "$(a2a-serve status --url)" "Which services return the most errors this hour?"'
-  reply_pending B reject '--history 0 -a "$(a2a-serve status --url)"'
+  run B 'a2a send --history 0 -a "$(a2a-serve status --url=local)" "Which services return the most errors this hour?"'
+  reply_pending B reject '--history 0 -a "$(a2a-serve status --url=local)"'
+  expect_status B completed
   pause 5
 }
