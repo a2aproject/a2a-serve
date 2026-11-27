@@ -48,7 +48,7 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
       with:
-        cache-profile: default
+        cache-profile: sandbox
 
     - name: Check that Docker applies AppArmor
       run: docker info --format '{{.SecurityOptions}}' | grep -q name=apparmor

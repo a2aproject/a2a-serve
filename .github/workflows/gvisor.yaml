@@ -48,7 +48,7 @@ jobs:
     - name: Setup
       uses: ./.github/actions/setup
       with:
-        cache-profile: default
+        cache-profile: sandbox
 
     # As https://gvisor.dev/docs/user_guide/install/ describes. The launcher
     # reaches the egress socket, a socket of the host, only with
