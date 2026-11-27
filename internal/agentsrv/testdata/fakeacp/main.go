@@ -19,6 +19,7 @@
 //	tool             a tool call with progress
 //	ask              a permission request; the answer decides the reply
 //	ask twice        two permission requests in one turn
+//	ask six times    six permission requests in one turn
 //	ask slow         a permission request, then chunks until canceled
 //	ask big          a permission request with a 20 KiB tool input
 //	ask <d>          a permission request after duration d
@@ -555,6 +556,17 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 				return
 			}
 			a.chunk(sid, "Pushed twice ("+first+", "+second+").")
+			end("end_turn")
+			return
+		}
+		if arg == "six times" {
+			for i := range 6 {
+				if _, ok := a.askPush(sid, fmt.Sprintf("t%d", i+2)); !ok {
+					end("cancelled")
+					return
+				}
+			}
+			a.chunk(sid, "Finished all six approvals.")
 			end("end_turn")
 			return
 		}

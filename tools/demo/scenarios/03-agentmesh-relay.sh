@@ -15,16 +15,8 @@
 # summary: examples/03-agentmesh-relay: two agents on a local Agent Mesh relay (needs --build)
 
 prepare() {
-  if ! command -v agentmesh-one >/dev/null; then
-    log "installing agentmesh-one"
-    # The module proxy occasionally resets streams.
-    for attempt in 1 2 3; do
-      GOBIN="$DEMO_WORK/bin" CGO_ENABLED=0 go install github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0 && break
-      [[ $attempt -lt 3 ]] || die "installing agentmesh-one failed"
-      sleep $((attempt * 15))
-    done
-  fi
-  if curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8443/readyz 2>/dev/null; then
+  command -v jq >/dev/null || die "jq is needed for the relay invites"
+  if curl -sS -o /dev/null --max-time 2 http://127.0.0.1:8443/ 2>/dev/null; then
     die "port 8443 is in use; the example runs the relay there"
   fi
 }
@@ -38,34 +30,19 @@ layout() {
 
 scene() {
   say R "1. Run the relay"
-  run R "mkdir -p ~/a2a-example3/relay"
-  run R "cat > ~/a2a-example3/relay/policy.json <<'JSON'
-{
-  \"roles\": [
-    {\"name\": \"mesh-admin\", \"allowed_services\": [\"*\"], \"allowed_targets\": [\"*\"], \"allowed_ingress\": [{\"services\": [\"*\"]}]},
-    {\"name\": \"mesh:role:router\", \"allowed_services\": [\"*\"], \"allowed_targets\": [\"*\"]},
-    {
-      \"name\": \"mesh:role:node\",
-      \"allowed_services\": [\"*\"], \"allowed_targets\": [\"*\"], \"allowed_publish\": [\"*\"], \"allowed_labels\": [\"*\"],
-      \"allowed_ingress\": [{\"services\": [\"a2a://*\"], \"allowed_auth_modes\": [\"INGRESS_AUTH_MODE_PASSTHROUGH\"]}]
-    }
-  ]
-}
-JSON"
-  clear_pane R
-  start R "agentmesh-one --bind-address 127.0.0.1 --port 8443 \\
-  --data-dir ~/a2a-example3/relay --policy-file ~/a2a-example3/relay/policy.json"
-  until_ok 60 test -s "$HOME/a2a-example3/relay/join-token"
-  until_ok 60 curl -fsS http://127.0.0.1:8443/readyz
+  run R 'mkdir -p ~/a2a-example3/relay && cd ~/a2a-example3/relay'
+  start R 'a2a-serve relay run --url http://127.0.0.1:8443 --listen 127.0.0.1:8443'
+  until_ok 120 bash -o pipefail -c 'a2a-serve relay status --dir "$1" -o json | jq -e ".running"' \
+    _ "$HOME/a2a-example3/relay"
   pause 2
 
   run B 'export RELAY=http://127.0.0.1:8443'
-  run B 'export RELAY_TOKEN="$(cat ~/a2a-example3/relay/join-token)"'
 
   clear_pane B
   say B "2. Join two agents"
   local name
   for name in coder reviewer; do
+    run B "RELAY_TOKEN=\"\$(a2a-serve relay invite $name --dir ~/a2a-example3/relay -o json | jq -er .token)\""
     run B "mkdir -p ~/a2a-example3/$name && cd ~/a2a-example3/$name"
     if [[ "$name" == coder ]]; then
       run B "cat > README.md <<'EOF'
@@ -74,12 +51,13 @@ JSON"
 \`greet\` prints a greeting in the language you pick: \`greet --lang fr\` prints \`Bonjour\`.
 EOF"
     fi
-    run B "a2a-serve config set --agent $AGENT --name $name $AGENT_FLAGS \\
-  --private \"\$RELAY\" --public \"\$RELAY\" --network-token env:RELAY_TOKEN"
+    run B "printf '%s' \"\$RELAY_TOKEN\" | a2a-serve config set --agent $AGENT --name $name $AGENT_FLAGS \\
+  --private \"\$RELAY\" --public \"\$RELAY\" --network-token -"
     run B "a2a-serve start --detach"
   done
   clear_pane B
   run B "cd ~/a2a-example3/coder && a2a-serve status"
+  run B "a2a-serve relay members --dir ~/a2a-example3/relay"
   pause 3
 
   # A new agent can take half a minute to show up on the relay.
@@ -103,10 +81,11 @@ EOF"
   code="$(last_match B 'code [A-Z0-9]{4}-[A-Z0-9]{4}')"
   pause 2
   run B "a2a-serve pair join \"\$PUBLIC\" ${code#code }"
-  run B "a2a send -a \"\$PUBLIC\" \"$(fake 'What does this project do?' hello)\""
-  approve_pending B '-a "$PUBLIC"'
+  run B "a2a send -a \"\$PUBLIC\" \"$(fake 'What does this project do?' 'ask six times')\""
+  approve_pending B '-a "$PUBLIC"' 10
   expect_status B completed
   pause 3
 
   run B "a2a-serve stop --dir ~/a2a-example3/coder && a2a-serve stop --dir ~/a2a-example3/reviewer"
+  interrupt R
 }

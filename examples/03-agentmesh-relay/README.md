@@ -119,6 +119,14 @@ a2a-serve pair join "$PUBLIC" <code>
 a2a send -a "$PUBLIC" "What does this project do?"
 ```
 
+If the agent asks for approval before reading a file, use the task ID
+printed by the last command. Repeat for each request until the task
+completes:
+
+```bash
+a2a send -a "$PUBLIC" --task-id <task-id> once
+```
+
 ## 5. Clean up
 
 ```bash
