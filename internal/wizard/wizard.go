@@ -46,6 +46,7 @@ type Result struct {
 var apiKeys = map[string][]string{
 	"claude":   agentprofile.ClaudeKeys(),
 	"copilot":  agentprofile.CopilotKeys(),
+	"agy":      agentprofile.AgyKeys(),
 	"opencode": {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"},
 }
 

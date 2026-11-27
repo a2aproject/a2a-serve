@@ -206,8 +206,9 @@ func (f Files) match(name string) string {
 		return dir + " → " + path.Join(path.Dir(resolved), entry.Link)
 	}
 	if isDir {
+		// The sandbox keeps the skills of the folders it hides.
 		for p := range f {
-			if strings.HasPrefix(p, resolved+"/") {
+			if strings.HasPrefix(p, resolved+"/") && !strings.HasPrefix(p, resolved+"/skills/") {
 				return name
 			}
 		}

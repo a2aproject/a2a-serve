@@ -94,7 +94,7 @@ A new entry also decides the approvals that already wait, and the task's history
 
 So a new `--deny-tools` entry stops what people allowed for themselves.
 
-Rules and grants see only the calls that the agent asks about. opencode doesn't ask before tools that change nothing, such as reading files. Claude Code asks in its default mode, which runs some read-only shell commands without asking. Copilot doesn't ask before reads in the workspace and shell commands it recognizes as read-only.
+Rules and grants see only the calls that the agent asks about. opencode doesn't ask before tools that change nothing, such as reading files. Claude Code asks in its default mode, which runs some read-only shell commands without asking. Copilot doesn't ask before reads in the workspace and shell commands it recognizes as read-only. Antigravity CLI doesn't ask before reads in the workspace and writes in its temporary folder.
 
 ## Who answers
 

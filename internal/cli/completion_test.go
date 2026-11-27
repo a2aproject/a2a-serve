@@ -56,7 +56,7 @@ func TestCompletion(t *testing.T) {
 		{name: "private access", args: []string{"start", "opencode", "--private-allow-incoming", ""}, want: []string{"everyone", "paired"}},
 		{name: "public access", args: []string{"config", "set", "--public-allow-incoming", ""}, want: []string{"paired", "anyone"}},
 		{name: "sandbox", args: []string{"start", "claude", "--sandbox", ""}, want: []string{"docker", "bwrap", "local"}},
-		{name: "agent", args: []string{"config", "set", "--agent", ""}, want: []string{"claude", "copilot", "opencode", "acp"}},
+		{name: "agent", args: []string{"config", "set", "--agent", ""}, want: []string{"agy", "claude", "copilot", "opencode", "acp"}},
 		{name: "messenger kinds", args: []string{"messenger", "rm", ""}, want: []string{"telegram", "discord", "email"}},
 		{name: "kind", args: []string{"pair", "set", "anna", "--kind", ""}, want: []string{"person", "device", "agent"}},
 		{name: "joined agents", args: []string{"pair", "rm", "--dir", "/nonexistent-a2a-agent", ""}, want: []string{agentURL}},

@@ -47,7 +47,11 @@ func NewCall(kind, title string, input any, servers []string) Call {
 	}
 	if kind == KindExecute {
 		if m, ok := input.(map[string]any); ok {
-			cmd, _ := m["command"].(string)
+			// Antigravity CLI calls the command CommandLine.
+			cmd, ok := m["command"].(string)
+			if !ok {
+				cmd, _ = m["CommandLine"].(string)
+			}
 			c.Command = strings.TrimSpace(cmd)
 		}
 	}
@@ -55,16 +59,25 @@ func NewCall(kind, title string, input any, servers []string) Call {
 }
 
 // mcpTool returns the <server>.<tool> name of an agent's tool name: Claude
-// Code names MCP tools mcp__<server>__<tool>, and opencode
-// <server>_<tool>, with the characters besides letters, digits, _ and -
-// replaced by _ in both. The title comes from the agent, so a name with
-// other characters isn't taken for an MCP tool.
+// Code names MCP tools mcp__<server>__<tool>, opencode <server>_<tool>,
+// and Antigravity CLI mcp_<server>_<tool> in titles that start with "Run ",
+// with the characters besides letters, digits, _ and - replaced by _ in
+// all. The title comes from the agent, so a name with other characters
+// isn't taken for an MCP tool.
 func mcpTool(title string, servers []string) (string, bool) {
+	// Longer names first, so that a server named a_b wins over a.
+	sorted := slices.SortedFunc(slices.Values(servers), func(a, b string) int { return cmp.Compare(len(b), len(a)) })
+	if rest, ok := strings.CutPrefix(title, "Run mcp_"); ok && sanitize(rest) == rest {
+		for _, s := range sorted {
+			if tool, ok := strings.CutPrefix(rest, sanitize(s)+"_"); ok && tool != "" {
+				return s + "." + tool, true
+			}
+		}
+		return "", false
+	}
 	if title == "" || sanitize(title) != title {
 		return "", false
 	}
-	// Longer names first, so that a server named a_b wins over a.
-	sorted := slices.SortedFunc(slices.Values(servers), func(a, b string) int { return cmp.Compare(len(b), len(a)) })
 	if rest, ok := strings.CutPrefix(title, "mcp__"); ok {
 		for _, s := range sorted {
 			if tool, ok := strings.CutPrefix(rest, sanitize(s)+"__"); ok && tool != "" {

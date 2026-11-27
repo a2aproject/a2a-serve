@@ -14,7 +14,7 @@ The tools endpoint is an [MCP](https://modelcontextprotocol.io/specification/202
 | `http://host:port/path`, `https://...` | The URL, with its path and query |
 | `unix:///path/to.sock` | HTTP on the Unix socket, with the MCP endpoint at `/` |
 
-Every new agent session gets the endpoint as the MCP server `host`. The agent names its tools as it names other MCP tools: `host_echo` in opencode, `mcp__host__echo` in Claude Code, `host-echo` in Copilot.
+Every new agent session gets the endpoint as the MCP server `host`. The agent names its tools as it names other MCP tools: `host_echo` in opencode, `mcp__host__echo` in Claude Code, `host-echo` in Copilot, `mcp_host_echo` in Antigravity CLI.
 
 In a Docker sandbox, the agent reaches the server at `http://tools.sidecar.internal` with the path of the URL. `a2a-serve-sidecar` sends these requests to the endpoint with the endpoint's own host in `Host` and the query of the URL, so the sandbox needs no port of the host machine and never sees the query. It answers requests to other paths with 403, and methods other than `POST`, `GET` and `DELETE` with 405, without sending them. With `--egress-proxy`, these requests don't reach the egress proxy. With `--sandbox local`, the agent connects to the URL itself, so `--tools` must be an `http://` or `https://` URL there. The agent then gets the host's token in the headers of the MCP server `host`.
 
@@ -90,7 +90,7 @@ The result decides the call:
 
 A hook that fails denies the call: an error, an answer after the timeout, or a result without a valid `decision`.
 
-The hook sees the calls that the agent asks permission for. `a2a-serve-sidecar` configures opencode to ask before every tool but those that only read the workspace, such as `read`, `grep` and `list`, and before every MCP tool. Claude Code asks before edits, web requests, MCP tools and the shell commands that its default mode asks about. Copilot asks before edits, web requests, MCP tools and the shell commands that aren't read-only, and names an MCP tool in its permission request by the tool's name alone, such as `echo`.
+The hook sees the calls that the agent asks permission for. `a2a-serve-sidecar` configures opencode to ask before every tool but those that only read the workspace, such as `read`, `grep` and `list`, and before every MCP tool. Claude Code asks before edits, web requests, MCP tools and the shell commands that its default mode asks about. Copilot asks before edits, web requests, MCP tools and the shell commands that aren't read-only, and names an MCP tool in its permission request by the tool's name alone, such as `echo`. Antigravity CLI asks before file writes, web requests, MCP tools, shell commands and reads outside the workspace.
 
 ## hooks/afterTool
 

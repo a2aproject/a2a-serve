@@ -68,7 +68,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**
@@ -87,6 +87,100 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the ACP agent, as shell words, such as "gemini --experimental-acp" |
+| `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (the network of Docker, or with --sandbox bwrap of this machine, the LAN and the tailnet included) (default internet) |
+| `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
+| `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--inject-header host=Name: value` |  | Header the server adds to the sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
+| `--inject-model-key provider=NAME` |  | API key the server adds to the sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
+| `--sandbox string` |  | Where the agent runs: docker (default), bwrap for bubblewrap on Linux, with the agent and the a2a CLI that this machine has, or local for this machine without isolation |
+
+**Network flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--network-provider string` |  | Network provider that joins the network URL of --private and --public: agentmesh, slim, a release URL or a path (default agentmesh) |
+| `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
+| `--private string` |  | Private network: tailscale, none, or a network URL, such as an Agent Mesh relay at https://relay.example.com; --network-provider says which provider joins it |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or a network URL that gives the agent a public URL, such as an Agent Mesh relay |
+
+**Access flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow-email email` |  | People who may call the agent as members by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--guest-secrets names` |  | Secrets the agent container of guests gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
+| `--guest-storage string` |  | What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
+| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone) |
+| `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
+| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired) |
+
+**Approvals flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
+| `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
+| `--owner-chat messenger[:who]` |  | Where an owner answers the approvals of tasks nobody watches: messenger[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
+
+**Run flags (not saved)**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detach` |  | Run the agent in the background |
+| `--dir string` |  | Agent directory (default: the current directory) |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
+| `--service` |  | Install and start the agent as a launchd or systemd user service |
+| `--yes` |  | Install the network provider of --network-provider from a release URL or a path without asking |
+
+## a2a-serve start agy
+
+Start an agy agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
+existing agent, the flags change them like `a2a-serve config set`. In a
+subdirectory of an agent, pass --dir to create a separate agent while that
+agent is stopped. The Docker sandbox refuses your home directory or / as the
+workspace unless --allow-broad-mount names it.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve start agy [flags]
+```
+
+**Examples**
+
+```bash
+a2a-serve start agy --name coder --secret GEMINI_API_KEY
+a2a-serve start agy --private tailscale --allow-tools read,search --detach
+a2a-serve start agy --workspace ~/src/app --mount ~/docs:/docs:ro
+```
+
+**General flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--description string` |  | Agent description for its card |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
+| `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
+
+**Workspace flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow-broad-mount path` |  | Let the sandbox mount a path that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it (repeatable) |
+| `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
+| `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
+| `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets outside config.yaml; the agent can read it, unless --inject-header or --inject-model-key adds it; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
+| `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
+
+**Sandbox flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--command words` |  | Command line of the agent, as shell words, such as "gemini --experimental-acp"; replaces its default command |
 | `--egress mode` |  | Where the sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (the network of Docker, or with --sandbox bwrap of this machine, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
@@ -162,7 +256,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**
@@ -256,7 +350,7 @@ a2a-serve start copilot --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**
@@ -422,7 +516,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, or a Copilot model for copilot, such as gpt-6.2-sol (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, a Claude model for claude, such as sonnet, a Copilot model for copilot, such as gpt-6.2-sol, or a Gemini model for agy, such as gemini-3.6-flash (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**

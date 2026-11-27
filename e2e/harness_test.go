@@ -376,6 +376,159 @@ func (a *agent) startCopilot(model *stubModel, flags ...string) {
 	}, flags...)...)
 }
 
+func TestHarnessAgyToolApprovals(t *testing.T) {
+	t.Parallel()
+	requireHarness(t, "agy")
+	tests := []struct {
+		name    string
+		flags   []string
+		prepare func(t *testing.T, dir string)
+		calls   func(dir string) []toolCall
+		answers []string
+		// wantAsked are the tool kinds of the questions that answers answer.
+		wantAsked []string
+		// wantResults are parts of the tool results the model got.
+		wantResults map[string]string
+		// wantFiles are the files of the workspace that the tools create,
+		// and whether they should exist.
+		wantFiles map[string]bool
+	}{
+		{
+			name:      "command denied by a rule",
+			flags:     []string{"--deny-tools", "execute"},
+			calls:     func(string) []toolCall { return []toolCall{runCommand("touch denied")} },
+			wantFiles: map[string]bool{"denied": false},
+		},
+		{
+			name:      "command rejected by the user",
+			calls:     func(string) []toolCall { return []toolCall{runCommand("touch rejected")} },
+			answers:   []string{"reject"},
+			wantAsked: []string{"execute"},
+			wantFiles: map[string]bool{"rejected": false},
+		},
+		{
+			name:      "command allowed by a rule runs without asking",
+			flags:     []string{"--allow-tools", "command:touch *"},
+			calls:     func(string) []toolCall { return []toolCall{runCommand("touch allowed")} },
+			wantFiles: map[string]bool{"allowed": true},
+		},
+		{
+			name: "read runs without asking and a file write asks",
+			prepare: func(t *testing.T, dir string) {
+				writeFile(t, filepath.Join(dir, "notes.txt"), "notes from the workspace")
+			},
+			calls: func(dir string) []toolCall {
+				return []toolCall{
+					{name: "read_file", args: map[string]any{"Path": filepath.Join(dir, "notes.txt")}},
+					{name: "write_file", args: map[string]any{"Path": filepath.Join(dir, "out.txt"), "Content": "written"}},
+				}
+			},
+			answers:     []string{"once"},
+			wantAsked:   []string{"edit"},
+			wantResults: map[string]string{"read_file": "notes from the workspace"},
+			wantFiles:   map[string]bool{"out.txt": true},
+		},
+		{
+			name:    "MCP tool allowed by a rule runs without asking",
+			flags:   []string{"--allow-tools", "tool:echo.echo"},
+			prepare: addEchoMCP,
+			calls: func(string) []toolCall {
+				return []toolCall{{name: "mcp_echo_echo", args: map[string]any{"text": "ping", "toolSummary": "echo"}}}
+			},
+			wantResults: map[string]string{"mcp_echo_echo": "echo: ping"},
+		},
+		{
+			name: "repository hook doesn't run",
+			prepare: func(t *testing.T, dir string) {
+				writeJSON(t, filepath.Join(dir, ".agents", "hooks.json"), map[string]any{
+					"approve": map[string]any{"SessionStart": []any{map[string]any{"type": "command", "command": "touch " + filepath.Join(dir, "hook-ran")}}},
+				})
+			},
+			calls:     func(string) []toolCall { return []toolCall{runCommand("true")} },
+			answers:   []string{"once"},
+			wantAsked: []string{"execute"},
+			wantFiles: map[string]bool{"hook-ran": false},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			owner := newUser(t)
+			coder := owner.newAgent("coder")
+			if tc.prepare != nil {
+				tc.prepare(t, coder.dir)
+			}
+			model := newStubModel(t, modelScript{calls: tc.calls(coder.dir), answer: "Done."})
+			coder.startAgy(model, tc.flags...)
+
+			task := owner.mustSend(coder.url, "Use the tools.")
+			var asked []string
+			for task.Status.State == a2a.TaskStateInputRequired && len(asked) < len(tc.answers) {
+				q := question.FromStatus(task.Status)
+				if q == nil {
+					t.Fatalf("a2a send state = %v without a question", task.Status.State)
+				}
+				asked = append(asked, q.Kind)
+				task = owner.mustSend(coder.url, "--task-id", string(task.ID), tc.answers[len(asked)-1])
+			}
+
+			if diff := cmp.Diff(tc.wantAsked, asked); diff != "" {
+				t.Fatalf("question kinds wrong result (-want +got) diff = %s", diff)
+			}
+			if got := resultOf(task); got.State != a2a.TaskStateCompleted {
+				t.Fatalf("a2a send = %v %q, want completed", got.State, got.Text)
+			}
+			checkToolResults(t, model, tc.wantResults)
+			for name, want := range tc.wantFiles {
+				if _, err := os.Stat(filepath.Join(coder.dir, name)); (err == nil) != want {
+					t.Fatalf("%s exists = %v, want %v", name, err == nil, want)
+				}
+			}
+		})
+	}
+}
+
+func TestHarnessAgyAsksForAMemberInItsLockedHome(t *testing.T) {
+	t.Parallel()
+	requireHarness(t, "agy")
+	owner, anna := newUser(t), newUser(t)
+	coder := owner.newAgent("coder")
+	model := newStubModel(t, modelScript{calls: []toolCall{runCommand("touch pwned")}, answer: "Done."})
+	coder.startAgy(model)
+	anna.pairJoin(coder.url, coder.invite("anna"))
+
+	task := anna.mustSend(coder.url, "Use the tools.")
+	q := question.FromStatus(task.Status)
+	if task.Status.State != a2a.TaskStateInputRequired || q == nil || q.Kind != "execute" {
+		t.Fatalf("a2a send = %v %q, want a question to run a command", task.Status.State, resultOf(task).Text)
+	}
+	owner.mustSend(coder.url, "--task-id", string(task.ID), "reject")
+	if _, err := os.Stat(filepath.Join(coder.dir, "pwned")); err == nil {
+		t.Fatalf("the command ran after it was rejected")
+	}
+}
+
+// startAgy starts an agy agent in its real image, with model as its Gemini
+// API.
+func (a *agent) startAgy(model *stubModel, flags ...string) {
+	a.u.t.Helper()
+	u, err := url.Parse(model.url)
+	if err != nil {
+		a.u.t.Fatalf("url.Parse(%q) error = %v", model.url, err)
+	}
+	// The stub model listens on the host's LAN address, a private one. The
+	// workspaces of the tests are in /tmp, where agy writes without asking
+	// when it is its temporary folder.
+	a.start("agy", append([]string{
+		"--sandbox", "docker", "--image", harnessImage, "--egress-allow", u.Host,
+		"--env", "GOOGLE_GEMINI_BASE_URL=" + strings.TrimSuffix(model.url, "/v1"), "--env", "GEMINI_API_KEY=stub", "--env", "TMPDIR=/var/tmp",
+	}, flags...)...)
+}
+
+func runCommand(command string) toolCall {
+	return toolCall{name: "run_command", args: map[string]any{"CommandLine": command, "toolSummary": "run", "WaitMsBeforeAsync": 5000}}
+}
+
 // checkToolResults fails t unless the result of each tool of want, of the
 // last request of model, holds its part.
 func checkToolResults(t *testing.T, model *stubModel, want map[string]string) {

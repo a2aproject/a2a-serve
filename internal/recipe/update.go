@@ -253,16 +253,10 @@ func entryOf(root *os.Root, name string) (*File, error) {
 	return &File{Hash: notAFile}, nil
 }
 
-// riskyFiles decide what the agent runs and approves: the MCP servers and
-// the agent's own configuration.
-var riskyFiles = append([]string{projectfiles.MCPFile}, projectfiles.AgentConfigFiles...)
-
-// IsRisky reports whether the file at p decides what the agent runs.
+// IsRisky reports whether the file at p decides what the agent runs and
+// approves: the MCP servers and the agent's own configuration.
 func IsRisky(p string) bool {
-	return slices.ContainsFunc(riskyFiles, func(r string) bool {
-		dir, isDir := strings.CutSuffix(r, "/")
-		return p == r || isDir && strings.HasPrefix(p, dir+"/")
-	})
+	return p == projectfiles.MCPFile || projectfiles.IsAgentConfig(p)
 }
 
 // LocalEdits returns the files of the recipe at base that decide what the

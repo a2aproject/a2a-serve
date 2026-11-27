@@ -75,6 +75,7 @@ var profiles = map[string]func() Profile{
 	"opencode": Opencode,
 	"claude":   Claude,
 	"copilot":  Copilot,
+	"agy":      Agy,
 }
 
 // Lookup returns the profile of a harness. A non-empty command replaces the
@@ -102,6 +103,9 @@ func Claude() Profile { return claude{} }
 
 // Copilot returns the profile of GitHub Copilot CLI.
 func Copilot() Profile { return copilot{} }
+
+// Agy returns the profile of Antigravity CLI.
+func Agy() Profile { return agy{} }
 
 // Custom returns a profile that starts argv, with no image and no home
 // setup.
@@ -134,6 +138,9 @@ func ClaudeKeys() []string { return []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_O
 // CopilotKeys are the variables copilot reads its GitHub token from, in the
 // order it prefers them.
 func CopilotKeys() []string { return []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} }
+
+// AgyKeys are the variables agy reads its Gemini API key from.
+func AgyKeys() []string { return []string{"GEMINI_API_KEY"} }
 
 // withProviderKeys returns env with the key of each opencode provider also
 // in the variable opencode reads, when env holds it only in another of the
@@ -371,7 +378,28 @@ func writeJSONIfMissing(home, name string, v any) (err error) {
 // setJSONKey sets key in the JSON object in the file name in home, keeping
 // the other keys. Like [writeJSONIfMissing], it refuses symlinks that lead
 // out of home. It skips a file that isn't regular or is too large to read.
-func setJSONKey(home, name, key string, v any) (err error) {
+func setJSONKey(home, name, key string, v any) error {
+	return setJSONPath(home, name, []string{key}, v)
+}
+
+// clearJSON empties the JSON object in the file name in home, which the
+// server writes whole. Like [writeJSONIfMissing], it refuses symlinks that
+// lead out of home.
+func clearJSON(home, name string) (err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	if _, err := root.Stat(name); err != nil {
+		return err
+	}
+	return fsutil.WriteRegular(root, name, []byte(emptyConfig), 0o600)
+}
+
+// setJSONPath sets the key at the end of path in the JSON object in the
+// file name in home, as [setJSONKey] does, creating the objects on the way.
+func setJSONPath(home, name string, path []string, v any) (err error) {
 	root, err := os.OpenRoot(home)
 	if err != nil {
 		return err
@@ -397,12 +425,22 @@ func setJSONKey(home, name, key string, v any) (err error) {
 	if err != nil {
 		return err
 	}
-	if cur, ok := obj[key]; ok {
+	parent := obj
+	for _, k := range path[:len(path)-1] {
+		child, ok := parent[k].(map[string]any)
+		if !ok {
+			child = map[string]any{}
+			parent[k] = child
+		}
+		parent = child
+	}
+	key := path[len(path)-1]
+	if cur, ok := parent[key]; ok {
 		if got, err := json.Marshal(cur); err == nil && bytes.Equal(got, want) {
 			return nil
 		}
 	}
-	obj[key] = v
+	parent[key] = v
 	if data, err = json.MarshalIndent(obj, "", "  "); err != nil {
 		return err
 	}

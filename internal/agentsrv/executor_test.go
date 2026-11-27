@@ -1033,6 +1033,14 @@ func TestExplainFailure(t *testing.T) {
 			name: "copilot without the token in its sandbox", cfg: &agentdir.Config{Harness: "copilot", Secrets: []string{"GH_TOKEN"}}, reported: "creating acp session: Authentication required (code -32000)",
 			want: "The owner hasn't given this agent a model key. The agent reported: the agent failed: creating acp session: Authentication required",
 		},
+		{
+			name: "agy without a key", cfg: &agentdir.Config{Harness: "agy"}, reported: "creating acp session: Authentication required (code -32000)",
+			want: "the agent failed: creating acp session: Authentication required; give the agent a Gemini API key: `a2a-serve config set --secret GEMINI_API_KEY --restart`",
+		},
+		{
+			name: "agy with an unknown model", cfg: &agentdir.Config{Harness: "agy", Model: "gemini-old"}, reported: `configuring acp session: setting "model": Unknown model ID: gemini-old (code -32602)`,
+			want: `the agent failed: setting "model": Unknown model ID: gemini-old` + claudeHint,
+		},
 		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},
 		{name: "missing model file", cfg: opencode, reported: "src/model.go: not found", want: "src/model.go: not found"},
 		{name: "other failure", cfg: opencode, reported: "the agent reached its token limit", want: "the agent reached its token limit"},

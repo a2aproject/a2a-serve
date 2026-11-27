@@ -68,9 +68,9 @@ Starting an agent runs what its files say. Read the files you didn't write befor
 - **`.a2a/state/`** holds secrets, pairings and the network identity. Delete a `state/` that came with a repository before you start the agent.
 - **`.a2a/recipe.lock`** names the repository that `a2a-serve recipe` fetches. Check that you trust it.
 - **`.mcp.json`** decides which MCP servers the agent starts and which URLs it calls.
-- **Agent settings files**, such as `opencode.json`, `.claude/settings.json` and `.github/hooks/`, change what the agent runs and approves.
+- **Agent settings files**, such as `opencode.json`, `.claude/settings.json`, `.github/hooks/` and `.agents/`, change what the agent runs and approves.
 - **Skills and instruction files**, such as `AGENTS.md`, instruct the agent. Commands they suggest still wait for approval.
 
-In the Docker and bubblewrap sandboxes, the agent can't read or edit `.mcp.json` or its settings files, and Claude Code and Copilot run no hooks. Copilot runs hooks with `--sandbox bwrap --egress unrestricted`. With `sandbox: local`, the agent can edit them, and the hooks and `allowed-tools` of skills run without asking.
+In the Docker and bubblewrap sandboxes, the agent can't read or edit `.mcp.json` or its settings files, and Claude Code and Copilot run no hooks. Copilot runs hooks with `--sandbox bwrap --egress unrestricted`. Antigravity CLI runs the hooks of its home directory. With `sandbox: local`, the agent can edit them, and the hooks and `allowed-tools` of skills run without asking.
 
 `a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups.

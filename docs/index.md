@@ -1,6 +1,6 @@
 # A2A Serve
 
-Turn opencode, Claude Code, GitHub Copilot CLI, or any ACP coding agent into a sandboxed [A2A](https://a2a-protocol.org) agent that people, messengers, and other agents can call.
+Turn opencode, Claude Code, GitHub Copilot CLI, Antigravity CLI, or any ACP coding agent into a sandboxed [A2A](https://a2a-protocol.org) agent that people, messengers, and other agents can call.
 
 > [!WARNING]
 > A2A Serve is pre-1.0. Commands, flags, and `config.yaml` keys may change; stored state always migrates forward. Read [Security](advanced/security.md) and [Things to Know](#things-to-know) before exposing an agent to other people.

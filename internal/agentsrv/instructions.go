@@ -53,6 +53,7 @@ var instructionFiles = []string{
 	filepath.Join(".config", "opencode", "AGENTS.md"),
 	filepath.Join(".claude", "CLAUDE.md"),
 	filepath.Join(".copilot", "copilot-instructions.md"),
+	filepath.Join(".gemini", "AGENTS.md"),
 }
 
 const (

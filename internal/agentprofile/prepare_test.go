@@ -969,22 +969,27 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			filepath.Join(home, ".local", "share", "opencode", "auth.json") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode", "auth.json") + ":ro",
 		}
 	}
-	copilotWant := func(home string) []string {
-		var out []string
-		seen := map[string]bool{}
-		add := func(rel, suffix string) {
-			if !seen[rel] {
-				seen[rel] = true
-				out = append(out, filepath.Join(home, rel)+":"+filepath.Join(ContainerHome, rel)+suffix)
+	entriesWant := func(entries []string) func(home string) []string {
+		return func(home string) []string {
+			var out []string
+			seen := map[string]bool{}
+			add := func(rel, suffix string) {
+				if !seen[rel] {
+					seen[rel] = true
+					out = append(out, filepath.Join(home, rel)+":"+filepath.Join(ContainerHome, rel)+suffix)
+				}
 			}
+			for _, entry := range entries {
+				parts := strings.Split(strings.TrimSuffix(entry, "/"), "/")
+				for i := 1; i < len(parts); i++ {
+					add(filepath.Join(parts[:i]...), "")
+				}
+				add(filepath.Join(parts...), ":ro")
+			}
+			return out
 		}
-		for _, entry := range copilotHomeConfig {
-			name := strings.TrimSuffix(entry, "/")
-			add(filepath.Dir(name), "")
-			add(name, ":ro")
-		}
-		return out
 	}
+	copilotWant, agyWant := entriesWant(copilotHomeConfig), entriesWant(agyHomeConfig)
 	tests := []struct {
 		name    string
 		profile Profile
@@ -1019,11 +1024,23 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			wantCreated: []string{filepath.Join(".copilot", "config.json"), filepath.Join(".copilot", "hooks"), filepath.Join(".agents", "skills")},
 		},
 		{
+			name:    "agy",
+			profile: agy{},
+			lock:    true,
+			want:    agyWant,
+			wantCreated: []string{
+				filepath.Join(".gemini", "antigravity-cli", "settings.json"),
+				filepath.Join(".gemini", "config", "hooks.json"),
+				filepath.Join(".gemini", "config", "projects"),
+				filepath.Join(".gemini", "skills"),
+			},
+		},
+		{
 			name:    "agent of unknown kind",
 			profile: custom{name: "acp", argv: []string{"fakeacp"}},
 			lock:    true,
 			want: func(home string) []string {
-				return slices.Concat(claudeWant(home), opencodeWant(home), copilotWant(home))
+				return slices.Concat(claudeWant(home), opencodeWant(home), copilotWant(home), agyWant(home))
 			},
 			wantCreated: []string{filepath.Join(".claude", "settings.json"), filepath.Join(".opencode", ".gitignore")},
 		},
@@ -1138,6 +1155,50 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 			want:    `[]`,
 			kept:    "firstLaunchAt",
 		},
+		{
+			name:    "agy permission rules",
+			profile: agy{},
+			file:    filepath.Join(".gemini", "antigravity-cli", "settings.json"),
+			content: `{"permissions": {"allow": ["command(*)"]}, "toolPermission": "always-proceed", "modelProvider": "gemini"}`,
+			key:     "permissions",
+			want:    `{"ask": ["write_file(*)"]}`,
+			kept:    "modelProvider",
+		},
+		{
+			name:    "agy mode",
+			profile: agy{},
+			file:    filepath.Join(".gemini", "antigravity-cli", "settings.json"),
+			content: `{"toolPermission": "always-proceed", "modelProvider": "gemini"}`,
+			key:     "toolPermission",
+			want:    `"request-review"`,
+			kept:    "modelProvider",
+		},
+		{
+			name:    "agy permissions for all projects",
+			profile: agy{},
+			file:    filepath.Join(".gemini", "config", "config.json"),
+			content: `{"userSettings": {"globalPermissionGrants": {"allow": ["command(*)"]}, "conversationWidth": "wide"}, "plugins": {}}`,
+			key:     "userSettings",
+			want:    `{"globalPermissionGrants": {}, "conversationWidth": "wide"}`,
+			kept:    "plugins",
+		},
+		{
+			name:    "agy permissions of a project",
+			profile: agy{},
+			file:    filepath.Join(".gemini", "config", "projects", "p.json"),
+			content: `{"id": "p", "permissionGrants": {"permissionGrants": {"allow": ["command(*)"]}}}`,
+			key:     "permissionGrants",
+			want:    `{}`,
+			kept:    "id",
+		},
+		{
+			name:    "agy hooks",
+			profile: agy{},
+			file:    filepath.Join(".gemini", "config", "hooks.json"),
+			content: `{"approve": {"PreToolUse": [{"hooks": [{"command": "echo '{\"decision\":\"auto_approve\"}'"}]}]}}`,
+			key:     "approve",
+			want:    `null`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1176,7 +1237,7 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 			if diff := cmp.Diff(want, got[tc.key]); diff != "" {
 				t.Fatalf("Prepare() %s of %s wrong result (-want +got) diff = %s", tc.key, tc.file, diff)
 			}
-			if _, ok := got[tc.kept]; !ok {
+			if _, ok := got[tc.kept]; tc.kept != "" && !ok {
 				t.Fatalf("Prepare() left %s = %s, want %s kept", tc.file, data, tc.kept)
 			}
 		})

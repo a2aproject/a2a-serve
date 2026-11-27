@@ -75,7 +75,7 @@ func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key s
 // ModelKeyWithheld returns the model provider and the variable of its key
 // when the agent gets one from cfg, but a container that gets only the
 // secrets granted has none. It returns "" otherwise. It knows the keys of
-// opencode's providers, of claude and of copilot.
+// opencode's providers, of claude, of copilot and of agy.
 func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key string) {
 	var keys []string
 	switch cfg.Harness {
@@ -89,6 +89,8 @@ func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key str
 		provider, keys = "anthropic", agentprofile.ClaudeKeys()
 	case "copilot":
 		provider, keys = "github", agentprofile.CopilotKeys()
+	case "agy":
+		provider, keys = "google", agentprofile.AgyKeys()
 	default:
 		return "", ""
 	}

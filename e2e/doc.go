@@ -22,7 +22,7 @@
 //
 // Set E2E_A2A_CLI to the path of an a2a binary to skip installing the CLI,
 // and E2E_SANDBOX=docker to run the agents in Docker, or E2E_SANDBOX=bwrap
-// to run them with bubblewrap. E2E_HARNESS=opencode or copilot runs the
+// to run them with bubblewrap. E2E_HARNESS=opencode, copilot or agy runs the
 // harness tests, which drive the real image of that agent against a
 // scripted model.
 package e2e

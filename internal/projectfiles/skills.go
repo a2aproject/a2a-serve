@@ -28,10 +28,12 @@ import (
 // being a <name>/SKILL.md inside one.
 var SkillDirs = []string{".claude/skills", ".opencode/skills", ".agents/skills"}
 
-// ClaudeConfigFiles, OpencodeConfigFiles and CopilotConfigFiles are the
-// project files of the agents' own configuration, which can change what the
-// agent runs and approves. Copilot also reads the hooks of Claude Code's
-// files. Directories end with a slash.
+// ClaudeConfigFiles, OpencodeConfigFiles, CopilotConfigFiles and
+// AgyConfigFiles are the project files of the agents' own configuration,
+// which can change what the agent runs and approves. Copilot also reads the
+// hooks of Claude Code's files. Antigravity CLI reads the same folder under
+// four names, and .gemini/config.json can point it to another one.
+// Directories end with a slash.
 var (
 	ClaudeConfigFiles   = []string{".claude/settings.json", ".claude/settings.local.json"}
 	OpencodeConfigFiles = []string{"opencode.json", "opencode.jsonc", ".opencode/"}
@@ -39,10 +41,28 @@ var (
 		".github/copilot/", ".github/hooks/", ".github/extensions/", ".github/mcp.json", ".github/lsp.json",
 		".claude/settings.json", ".claude/settings.local.json",
 	}
+	AgyConfigFiles = []string{".agents/", ".agent/", "_agents/", "_agent/", ".gemini/config.json"}
 )
 
 // AgentConfigFiles are the configuration files of every agent.
-var AgentConfigFiles = agentConfigFiles(ClaudeConfigFiles, OpencodeConfigFiles, CopilotConfigFiles)
+var AgentConfigFiles = agentConfigFiles(ClaudeConfigFiles, OpencodeConfigFiles, CopilotConfigFiles, AgyConfigFiles)
+
+// IsAgentConfig reports whether p, a slash-separated path in a project, is
+// an entry of [AgentConfigFiles] or in one of its folders. The skills
+// folders of those folders don't count: the sandbox hides the rest of the
+// folder from the agent and keeps its skills.
+func IsAgentConfig(p string) bool {
+	for _, f := range AgentConfigFiles {
+		dir, isDir := strings.CutSuffix(f, "/")
+		if p == dir && !isDir {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(p, dir+"/"); ok && isDir && rest != "skills" && !strings.HasPrefix(rest, "skills/") {
+			return true
+		}
+	}
+	return false
+}
 
 func agentConfigFiles(lists ...[]string) []string {
 	var out []string
