@@ -33,3 +33,7 @@ Run a SLIM node in Docker and join two agents to it with the SLIM network provid
 ### 8. Run a Sandboxed Agent for Your Program: [`08-sidecar-host/`](08-sidecar-host/)
 
 Serve opencode in Docker to a program with `a2a-serve-sidecar`. The program serves the agent's tools and decides its tool calls, gets the files the agent changed back with each task, and offers it another agent to call.
+
+### 9. Go ADK Host with `a2a-serve-sidecar`: [`09-adk-sidecar/`](09-adk-sidecar/)
+
+Embed opencode inside a Go ADK host (`A2AServeBackend` and `SandboxAgent`) with MCP host tools, `GuardrailPlugin` model and tool callbacks, and per-session workspaces synced to ADK artifacts.

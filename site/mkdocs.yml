@@ -97,6 +97,7 @@ nav:
       - Talk to Your Agent on Telegram: examples/06-telegram-voice/index.md
       - SLIM Network: examples/07-slim-network/index.md
       - Run a Sandboxed Agent for Your Program: examples/08-sidecar-host/index.md
+      - Go ADK Host with a2a-serve-sidecar: examples/09-adk-sidecar/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md

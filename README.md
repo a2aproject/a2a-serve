@@ -64,6 +64,7 @@ Without Docker, install the agent on your machine and add `--sandbox bwrap` on L
 6. **[Talk to Your Agent on Telegram](./examples/06-telegram-voice/README.md):** send voice notes to the agent and get voice replies.
 7. **[SLIM Network](./examples/07-slim-network/README.md):** connect two agents through a SLIM node, and call one from any SLIM client.
 8. **[Run a Sandboxed Agent for Your Program](./examples/08-sidecar-host/README.md):** serve an agent to a program with `a2a-serve-sidecar`, give it the program's tools, and get its files back with each task.
+9. **[Go ADK Host with `a2a-serve-sidecar`](./examples/09-adk-sidecar/README.md):** embed opencode in a Go ADK host with MCP tools, model and tool guardrail plugins, and per-session workspaces.
 
 ## User Guide
 
