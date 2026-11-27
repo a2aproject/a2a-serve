@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -70,6 +71,30 @@ func TestProcsReserveRefusesStartOverLimit(t *testing.T) {
 	u.exited(u.get(userKey(0)), closers[0])
 	if _, err := u.reserve(u.get(userKey(testMax))); err != nil {
 		t.Fatalf("procs.reserve() after a process exited error = %v", err)
+	}
+}
+
+func TestHoldStartsKeepsKeysUntilTheirProcessesStop(t *testing.T) {
+	t.Parallel()
+	u := &procs{}
+	startUsers(t, u, 1)
+	releaseStart, err := u.reserve(u.get(userKey(1)))
+	if err != nil {
+		t.Fatalf("reserve() error = %v", err)
+	}
+	defer releaseStart()
+	ending := u.get(userKey(2))
+	ending.startMu.Lock()
+	defer ending.startMu.Unlock()
+	endTurn := u.turn(userKey(3))
+	defer endTurn()
+	u.get(userKey(4))
+
+	keys, release := u.holdStarts()
+	defer release()
+	slices.Sort(keys)
+	if diff := cmp.Diff([]string{userKey(0), userKey(1), userKey(2), userKey(3)}, keys); diff != "" {
+		t.Fatalf("holdStarts() wrong keys (-want +got) diff = %s", diff)
 	}
 }
 

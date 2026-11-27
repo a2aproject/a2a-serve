@@ -9,6 +9,7 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | Memory, CPUs and processes of a container | 4 GB, 2 CPUs and 512 processes. `--memory`, `--cpus` and `--pids` change them. |
 | Member containers running at once | 10 |
 | Homes for the people behind one calling agent | 32. Past that, a new person takes the home of the person whose last task is oldest. |
+| Home of a member without a pairing or webhook node | Deleted once its process is stopped and it has no tasks or sessions left. |
 | Directories the server searches for other agents in a mount | 500,000 |
 | Size of an `own` copy of the workspace | 1 GiB in 200,000 entries |
 | `own` copies | 100. A copy of a caller without a pairing is deleted after 30 days without use. |

@@ -39,6 +39,8 @@ type procs struct {
 
 	mu   sync.Mutex
 	keys map[string]*proc
+	// startsMu holds new reservations while the frontend retires process homes.
+	startsMu sync.Mutex
 	// starting counts the processes that start now.
 	starting int
 }
@@ -143,6 +145,8 @@ func (u *procs) forget(key string) {
 // reserve counts a process of a as starting until release, or returns an
 // [AgentsBusyError] if max processes run or start.
 func (u *procs) reserve(a *proc) (release func(), err error) {
+	u.startsMu.Lock()
+	defer u.startsMu.Unlock()
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.max > 0 && u.runningLocked()+u.starting >= u.max {
@@ -159,6 +163,20 @@ func (u *procs) reserve(a *proc) (release func(), err error) {
 			a.starting = false
 		})
 	}, nil
+}
+
+func (u *procs) holdStarts() (keys []string, release func()) {
+	u.startsMu.Lock()
+	u.mu.Lock()
+	for key, a := range u.keys {
+		if a.proc != nil || a.starting || a.turns > 0 || !a.startMu.TryLock() {
+			keys = append(keys, key)
+			continue
+		}
+		a.startMu.Unlock()
+	}
+	u.mu.Unlock()
+	return keys, u.startsMu.Unlock
 }
 
 func (u *procs) runningLocked() int {
