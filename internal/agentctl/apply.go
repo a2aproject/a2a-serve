@@ -98,12 +98,41 @@ type Step func(cfg *agentdir.Config) error
 
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
+	var warning string
 	res, err := Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+		warning = retainedAgentSettings(cfg, s)
 		old := cfg.Clone()
 		store, err := s.Apply(cfg, d)
 		return store, agentdir.DroppedSecrets(old, cfg), err
 	}, dryRun)
+	if res != nil && warning != "" {
+		res.Warnings = append(res.Warnings, warning)
+	}
 	return withNameNote(res, s.Name), err
+}
+
+func retainedAgentSettings(cfg *agentdir.Config, s agentdir.Settings) string {
+	if cfg.Harness == "" || s.Harness == "" || cfg.Harness == s.Harness {
+		return ""
+	}
+	var kept, commands []string
+	for _, field := range []struct {
+		name     string
+		retained bool
+	}{
+		{"command", len(cfg.Command) > 0 && s.Command == ""},
+		{"model", cfg.Model != "" && s.Model == ""},
+		{"image", cfg.Image != "" && s.Image == ""},
+	} {
+		if field.retained {
+			kept = append(kept, field.name)
+			commands = append(commands, "`a2a-serve config unset "+field.name+"`")
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("switching from %s to %s keeps %s; remove them with %s", cfg.Harness, s.Harness, strings.Join(kept, ", "), strings.Join(commands, ", "))
 }
 
 // withNameNote adds a warning to res, if set, when the name given was

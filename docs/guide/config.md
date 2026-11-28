@@ -42,3 +42,5 @@ $ a2a-serve config set --secret API_A
 Change messengers with `a2a-serve messenger add` and `a2a-serve messenger rm`. List settings such as `--secret`, `--env` and `--mount` replace an existing entry with the same name. [Secrets](secrets.md) covers `--secret` and the flags that take tokens.
 
 `config set --agent opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.
+
+On an existing agent, `config set --agent claude` switches the agent and keeps its other settings. It warns when the previous command, model or image stays set. Keep overrides you still need, or remove each with `a2a-serve config unset command`, `a2a-serve config unset model` or `a2a-serve config unset image`.
