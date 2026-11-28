@@ -490,6 +490,50 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 	}
 }
 
+func TestChatTurnsStrangerReplyLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		allow     bool
+		wantReply bool
+	}{
+		{name: "allowed reply is sent", allow: true, wantReply: true},
+		{name: "refused reply is not sent", allow: false, wantReply: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newTurnsFixture(t)
+			asked := make(chan string, 1)
+			fx.ch.StrangerReplies = func(identity string) bool {
+				asked <- identity
+				return tc.allow
+			}
+
+			fx.ch.Write("telegram:9", "dm9", "hello")
+
+			select {
+			case got := <-asked:
+				if got != "telegram:9" {
+					t.Fatalf("AllowStrangerReply() identity = %q, want %q", got, "telegram:9")
+				}
+			case <-time.After(waitTimeout):
+				t.Fatalf("AllowStrangerReply() not called")
+			}
+			fx.cancel()
+			ctx, stop := context.WithTimeout(context.Background(), waitTimeout)
+			defer stop()
+			if err := fx.turns.Wait(ctx); err != nil {
+				t.Fatalf("ChatTurns.Wait() error = %v", err)
+			}
+			replied := slices.ContainsFunc(fx.ch.Transcript(), messengertest.HasText("I don't know you yet"))
+			if replied != tc.wantReply {
+				t.Fatalf("replied = %v, want %v; transcript:\n%s", replied, tc.wantReply, fx.ch.Dump())
+			}
+		})
+	}
+}
+
 func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)

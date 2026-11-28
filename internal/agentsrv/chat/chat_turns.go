@@ -204,6 +204,17 @@ func (c *ChatTurns) dispatch(ctx context.Context) {
 	}
 }
 
+// mayReplyToStranger asks a messenger that limits the replies to senders who
+// aren't linked whether the server may reply to the sender of in.
+func mayReplyToStranger(ch messenger.Messenger, in messenger.Inbound) bool {
+	limiter, ok := ch.(messenger.StrangerReplies)
+	if !ok || limiter.AllowStrangerReply(in.Identity) {
+		return true
+	}
+	slog.Info("not replying to a sender who isn't linked: reply limit reached", "messenger", ch.Name())
+	return false
+}
+
 func (c *ChatTurns) reply(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, text string) {
 	if _, err := ch.Send(ctx, messenger.Outbound{Conv: in.Conv, Text: text, ReplyTo: messenger.Ref{Conv: in.Conv, ID: in.MessageID}}); err != nil {
 		slog.Warn("replying in messenger", "messenger", ch.Name(), "error", err)
@@ -268,7 +279,7 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	}
 	p, err := c.chain.Authenticate(ctx, auth.Request{Messenger: &in})
 	if auth.Refused(err) {
-		if in.Direct && in.Authentic {
+		if in.Direct && in.Authentic && mayReplyToStranger(ch, in) {
 			c.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a-serve pair invite <you>`), then send: join <code>")
 		}
 		return

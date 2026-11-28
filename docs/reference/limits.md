@@ -106,6 +106,7 @@ This page lists the limits, caps and timeouts of the server, the relay and `a2a-
 | --- | --- |
 | Attachment size | 20 MiB. The chat says when an attachment isn't passed to the agent. |
 | Pairing code | Works once, for 15 minutes |
+| Email replies to senders that aren't linked | 1 an hour for each sender, 20 an hour in all |
 | Conversations `/conversations` lists for each person in a chat | 10 |
 
 ## Voice

@@ -42,6 +42,9 @@ type Messenger struct {
 	Failures int
 	// SendDelay is how long Send returns after the message is visible.
 	SendDelay time.Duration
+	// StrangerReplies, if set, decides whether the server may reply to a
+	// sender who isn't linked. Unset, every reply is allowed.
+	StrangerReplies func(identity string) bool
 
 	mu    sync.Mutex
 	in    chan<- messenger.Inbound
@@ -52,9 +55,10 @@ type Messenger struct {
 }
 
 var (
-	_ messenger.Messenger = (*Messenger)(nil)
-	_ messenger.Describer = (*Messenger)(nil)
-	_ messenger.Linker    = (*Messenger)(nil)
+	_ messenger.Messenger       = (*Messenger)(nil)
+	_ messenger.Describer       = (*Messenger)(nil)
+	_ messenger.Linker          = (*Messenger)(nil)
+	_ messenger.StrangerReplies = (*Messenger)(nil)
 )
 
 // seq numbers the messages of all messengers.
@@ -84,6 +88,11 @@ func (c *Messenger) Describe() string { return "@fake_bot" }
 
 // LinkHint implements [messenger.Describer].
 func (c *Messenger) LinkHint(code string) string { return "/start " + code }
+
+// AllowStrangerReply implements [messenger.StrangerReplies].
+func (c *Messenger) AllowStrangerReply(identity string) bool {
+	return c.StrangerReplies == nil || c.StrangerReplies(identity)
+}
 
 // Linked implements [messenger.Linker].
 func (c *Messenger) Linked(_ context.Context, in messenger.Inbound) error {

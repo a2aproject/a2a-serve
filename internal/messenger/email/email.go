@@ -91,19 +91,21 @@ const (
 
 // Messenger is a mailbox.
 type Messenger struct {
-	cfg     Config
-	kv      messenger.KV
-	dial    imapDialer
-	tokens  oauth2.TokenSource
-	threads *threads
+	cfg       Config
+	kv        messenger.KV
+	dial      imapDialer
+	tokens    oauth2.TokenSource
+	threads   *threads
+	strangers *strangerReplies
 
 	mu sync.Mutex
 }
 
 var (
-	_ messenger.Messenger = (*Messenger)(nil)
-	_ messenger.Describer = (*Messenger)(nil)
-	_ messenger.Linker    = (*Messenger)(nil)
+	_ messenger.Messenger       = (*Messenger)(nil)
+	_ messenger.Describer       = (*Messenger)(nil)
+	_ messenger.Linker          = (*Messenger)(nil)
+	_ messenger.StrangerReplies = (*Messenger)(nil)
 )
 
 // imapDialer connects to the IMAP server at addr. Ending ctx aborts the
@@ -126,7 +128,7 @@ func newMessenger(cfg Config, kv messenger.KV, dial imapDialer) *Messenger {
 	if cfg.MaxMessage == 0 {
 		cfg.MaxMessage = defaultMaxMessage
 	}
-	c := &Messenger{cfg: cfg, kv: kv, dial: dial, threads: &threads{kv: kv}}
+	c := &Messenger{cfg: cfg, kv: kv, dial: dial, threads: &threads{kv: kv}, strangers: newStrangerReplies(time.Now)}
 	if cfg.OAuth != nil {
 		c.tokens = newTokenSource(*cfg.OAuth)
 	}
@@ -135,6 +137,12 @@ func newMessenger(cfg Config, kv messenger.KV, dial imapDialer) *Messenger {
 
 // Name implements [messenger.Messenger].
 func (c *Messenger) Name() string { return "email" }
+
+// AllowStrangerReply implements [messenger.StrangerReplies]. Each reply
+// opens an SMTP session and counts against the mailbox's daily send quota.
+func (c *Messenger) AllowStrangerReply(identity string) bool {
+	return c.strangers.allow(identity)
+}
 
 // Caps implements [messenger.Messenger]. Email sends questions and the final
 // result, not a stream.
